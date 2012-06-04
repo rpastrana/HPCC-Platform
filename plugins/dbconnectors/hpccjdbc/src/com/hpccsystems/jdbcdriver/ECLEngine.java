@@ -714,26 +714,17 @@ public class ECLEngine
 			sb.append(URLEncoder.encode("submit_type_=xml", "UTF-8"));
 			sb.append("&").append(URLEncoder.encode("S1=Submit", "UTF-8"));
 
-			//ArrayList<HPCCColumnMetaData> storeProcInParams = dbMetadata.getStoredProcInColumns("",eclqueryname);
 			ArrayList<HPCCColumnMetaData> storeProcInParams = hpccquery.getAllInFields();
 			String[] procInParamValues = parser.getStoredProcInParamVals();
+
+			if (procInParamValues.length != storeProcInParams.size())
+				throw new Exception("Invalid number of parameter passed in.");
 
 			for (int i = 0; i < procInParamValues.length; i++)
 			{
 				String key = storeProcInParams.get(i).getColumnName();
-				{
-					sb.append("&").append(key).append("=").append(procInParamValues[i]);
-				}
+				sb.append("&").append(key).append("=").append(procInParamValues[i]);
 			}
-
-			//if (parameters.size() > 0)
-			//{
-			//	for (Object key : parameters.keySet())
-			//	{
-			//		Object value = parameters.get(key);
-			//		sb.append("&").append(key).append("=").append(value);
-			//	}
-			//}
 
 			long startTime = System.currentTimeMillis();
 			// Send data
