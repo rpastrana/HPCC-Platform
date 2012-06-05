@@ -292,7 +292,37 @@ public class ECLEngine
 							}
 							selectstruct.append(" );");
 						}
+						else if (col.getColumnName().equalsIgnoreCase("SUM"))
+						{
+							eclEnteties.put("SUMFN", "TRUE");
+							selectstruct.append(col.getAlias() + " := ");
 
+							if (parser.hasGroupByColumns())
+							{
+								selectstruct.append("SUM( GROUP ");
+							}
+							else
+							{
+								selectstruct.append("SUM( ").append(datasource);
+								if (eclEnteties.size() > 0)
+									addFilterClause(selectstruct, eclEnteties);
+							}
+
+							List<HPCCColumnMetaData> funccols = col.getFunccols();
+							if (funccols.size() > 0)
+							{
+								String paramname = funccols.get(0).getColumnName();
+								eclEnteties.put("FNCOLS", paramname);
+								if (!paramname.equals("*") && funccols.get(0).getColumnType() != HPCCColumnMetaData.COLUMN_TYPE_CONSTANT)
+								{
+									selectstruct.append(", ");
+									selectstruct.append(datasource);
+									selectstruct.append(".");
+									selectstruct.append(paramname);
+								}
+							}
+							selectstruct.append(" );");
+						}
 					}
 					else
 						selectstruct.append(col.getEclType()).append(" ").append(col.getColumnName()).append(" := ").append(datasource).append(".").append(col.getColumnName()).append("; ");
@@ -449,7 +479,16 @@ public class ECLEngine
 							addFilterClause(sb, parameters);
 						sb.append(");");
 					}
+					if (parameters.containsKey("SUMFN"))
+					{
+						sb.append("scalarout := SUM(fileds");
+						if (parameters.size() > 0)
+							addFilterClause(sb, parameters);
 
+						sb.append(" , fileds.");
+						sb.append(parameters.get("FNCOLS"));
+						sb.append(");");
+					}
 					if (parameters.containsKey("MAXFN"))
 					{
 						sb.append("scalarout := MAX(fileds");
@@ -470,6 +509,7 @@ public class ECLEngine
 						sb.append(parameters.get("FNCOLS"));
 						sb.append(");");
 					}
+					sb.append("\n");
 				}
 
 				if (parameters.containsKey("SCALAROUTNAME"))
@@ -530,6 +570,12 @@ public class ECLEngine
 						if (parameters.containsKey("COUNTFN"))
 						{
 							sb.append("scalarout := COUNT(idxds");
+							sb.append(", KEYED);\n");
+						}
+						if (parameters.containsKey("SUMFN"))
+						{
+							sb.append("scalarout := SUM(idxds");
+							sb.append(parameters.get("FNCOLS"));
 							sb.append(", KEYED);\n");
 						}
 						if (parameters.containsKey("MAXFN"))
@@ -593,6 +639,12 @@ public class ECLEngine
 					{
 						if (parameters.containsKey("COUNTFN"))
 							sb.append("scalarout := COUNT(idxds);");
+						if (parameters.containsKey("SUMFN"))
+						{
+							sb.append("scalarout := SUM(idxds, fileds.");
+							sb.append(parameters.get("FNCOLS"));
+							sb.append(");");
+						}
 						if (parameters.containsKey("MAXFN"))
 						{
 							sb.append("scalarout := MAX(idxds, fileds.");
