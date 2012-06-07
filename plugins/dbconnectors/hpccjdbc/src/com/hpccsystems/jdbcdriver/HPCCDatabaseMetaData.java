@@ -895,7 +895,7 @@ public class HPCCDatabaseMetaData implements DatabaseMetaData {
 
 	@Override
 	public boolean supportsOuterJoins() throws SQLException {
-		return true;
+		return false;
 	}
 
 	@Override
@@ -1214,6 +1214,7 @@ public class HPCCDatabaseMetaData implements DatabaseMetaData {
 		if (!isQuerySetMetaDataCached())
 			setQuerySetMetaDataCached(fetchHPCCQueriesInfo());
 
+		boolean wildprocsearch = procedureNamePattern == null || procedureNamePattern.length()==0 || procedureNamePattern.contains("*") || procedureNamePattern.contains("%");
 		System.out.println("ECLDATABASEMETADATA GETPROCS catalog: " + catalog +", schemaPattern: " + schemaPattern + ", procedureNamePattern: " + procedureNamePattern);
 
 		metacols.add(new HPCCColumnMetaData("PROCEDURE_CAT", 1, java.sql.Types.VARCHAR));
@@ -1231,19 +1232,22 @@ public class HPCCDatabaseMetaData implements DatabaseMetaData {
 			HPCCQuery query = (HPCCQuery) queries.nextElement();
 			String queryname = query.getName();
 
-				//if(!wildproceduresearch && !procedureNamePattern.equalsIgnoreCase(queryname))
-				//	continue;
+			if(!wildprocsearch && !query.isQueryNameMatch(procedureNamePattern))
+				continue;
 
-				ArrayList rowValues = new ArrayList();
-				procedures.add(rowValues);
-				rowValues.add("");
-				rowValues.add(query.getQuerySet());
-				rowValues.add(query.getQuerySet()+"::"+queryname);
-				rowValues.add("");
-				rowValues.add("");
-				rowValues.add("");
-				rowValues.add("QuerySet: " + query.getQuerySet());
-				rowValues.add(procedureResultUnknown);
+			ArrayList rowValues = new ArrayList();
+			procedures.add(rowValues);
+			rowValues.add("");
+			rowValues.add(query.getQuerySet());
+			rowValues.add(query.getQuerySet()+"::"+queryname);
+			rowValues.add("");
+			rowValues.add("");
+			rowValues.add("");
+			rowValues.add("QuerySet: " + query.getQuerySet());
+			rowValues.add(procedureResultUnknown);
+
+			if(!wildprocsearch)
+				break;
 		}
 
 		return new HPCCResultSet(procedures, metacols, "Procedures");
@@ -1259,8 +1263,6 @@ public class HPCCDatabaseMetaData implements DatabaseMetaData {
 
 		if (!isQuerySetMetaDataCached())
 			setQuerySetMetaDataCached(fetchHPCCQueriesInfo());
-
-		System.out.println("ECLDATABASEMETADATA GETPROCS catalog: " + catalog +", schemaPattern: " + schemaPattern + ", procedureNamePattern: " + procedureNamePattern);
 
 		boolean wildprocsearch = procedureNamePattern == null || procedureNamePattern.length()==0 || procedureNamePattern.contains("*") || procedureNamePattern.contains("%");
 		boolean wildcolumnsearch = columnNamePattern == null || columnNamePattern.length()==0 || columnNamePattern.contains("*") || columnNamePattern.contains("%");
@@ -1285,24 +1287,22 @@ public class HPCCDatabaseMetaData implements DatabaseMetaData {
 		while(queries.hasMoreElements())
 		{
 			HPCCQuery query = (HPCCQuery)queries.nextElement();
-			String eclqueryname = query.getName();
-			if(!wildprocsearch && !procedureNamePattern.equalsIgnoreCase(eclqueryname))
+
+			if(!wildprocsearch && !query.isQueryNameMatch(procedureNamePattern))
 				continue;
 
-			String tablename = query.getDefaultTableName();
+			Iterator<HPCCColumnMetaData> queryfields = query.getAllFields().iterator();
 
-			Iterator<HPCCColumnMetaData> e = query.getAllFields().iterator();
-
-			while (e.hasNext())
+			while (queryfields.hasNext())
 			{
-				HPCCColumnMetaData col = (HPCCColumnMetaData)e.next();
+				HPCCColumnMetaData col = (HPCCColumnMetaData)queryfields.next();
 				String fieldname = col.getColumnName();
 				if(!wildcolumnsearch && !columnNamePattern.equalsIgnoreCase(fieldname))
 					continue;
 
-				coltype = getProcFieldType(eclqueryname,tablename, fieldname);
+				coltype = col.getSqlType();
 
-				System.out.println("Proc col Found: "  + eclqueryname+"#"+tablename+"."+fieldname + " of type: " + coltype + "("+convertSQLtype2JavaClassName(coltype)+")");
+				System.out.println("Proc col Found: "  + query.getName() + "." + fieldname + " of type: " + coltype + "("+convertSQLtype2JavaClassName(coltype)+")");
 
 				ArrayList rowValues = new ArrayList();
 				procedurecols.add(rowValues);
