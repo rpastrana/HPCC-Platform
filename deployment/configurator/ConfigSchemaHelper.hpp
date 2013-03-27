@@ -5,75 +5,51 @@
 #include "jutil.hpp"
 #include "jarray.hpp"
 #include "jhash.hpp"
-#include "ComponentAttributes.hpp"
+#include "SchemaAttributes.hpp"
+#include "SchemaElement.hpp"
+#include "SchemaSchema.hpp"
+#include "BuildSet.hpp"
 
-static const char* DEFAULT_BUILD_SET_XML_PATH("/opt/HPCCSystems/componentfiles/configxml/buildset.xml");
-
-class CBuildSet : public CInterface
+class CConfigSchemaHelper : public CInterface
 {
 public:
 
     IMPLEMENT_IINTERFACE
 
-    CBuildSet(const char* pInstallSet = NULL, const char* pName = NULL, const char* pProcessName = NULL, const char* pSchema = NULL) : m_pInstallSet(pInstallSet), m_pName(pName), m_pProcessName(pProcessName), m_pSchema(pSchema)
-    {
-    }
+    static CConfigSchemaHelper* getInstance();
 
-    virtual ~CBuildSet()
-    {
-    }
-
-    const char* getInstallSet() const
-    {
-        return m_pInstallSet;
-    }
-    const char* getName() const
-    {
-        return m_pName;
-    }
-    const char* getProcessName() const
-    {
-        return m_pProcessName;
-    }
-    const char* getSchema() const
-    {
-        return m_pSchema;
-    }
-
-protected:
-
-    CBuildSet();
-    CBuildSet(const CBuildSet& buildSet);
-
-    const char* m_pInstallSet;
-    const char* m_pName;
-    const char* m_pProcessName;
-    const char* m_pSchema;
-
-private:
-
-};
-
-class CConfigSchemaHelper : public CComponentAttributes
-{
-public:
-
-    CConfigSchemaHelper(const char* pBuildSetPath = DEFAULT_BUILD_SET_XML_PATH);
     virtual ~CConfigSchemaHelper();
 
     void getBuildSetComponents(StringArray& buildSetArray) const;
-    const CComponentAttributeArray* getComponentAttributes(const char*);
+    //const CAttributeArray* getComponentAttributes(const char*);
+    //const CAttributeGroupArray* getComponentAttributeGroups(const char*);
     bool populateBuildSet();
-    bool populateComponentAttributes();
-    bool populateAttributeGroups();
+    //bool populateComponentAttributes();
+    //bool populateComponentAttributeGroups();
+    //bool populateElements();
+    bool populateSchema();
+    void printConfigSchema() const;
+
+    CSchema* getSchemaForXSD(const char* pComponent)
+    {
+        return m_componentSchemaArrayMap.getValue(pComponent);
+    }
+
+    //test purposes
+    bool getXMLFromSchema(StringBuffer& strXML, const char* pXSD);
 
     IPropertyTree* getSchema(const char* );
 
 protected:
 
+    CConfigSchemaHelper(const char* pBuildSetPath = DEFAULT_BUILD_SET_XML_PATH);
+
     Owned<IPropertyTree> m_buildSetTree;
     CIArrayOf<CBuildSet> m_buildSetArray; // buildset
-    MapStringToMyClass<CComponentAttributeArray> m_componentSchemaAttributesArrayMap;
+    //MapStringToMyClass<CAttributeArray> m_componentAttributesArrayMap;
+    //MapStringToMyClass<CAttributeGroupArray> m_componentAttributesGroupMap;
+    //MapStringToMyClass<CElementArray> m_componentElementArrayMap;
+    MapStringToMyClass<CSchema> m_componentSchemaArrayMap;
     StringBuffer m_buildSetPath;
 
 private:
