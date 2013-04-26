@@ -19,13 +19,21 @@ int main(int argc, char *argv[])
     schemaHelper.populateBuildSet();
     schemaHelper.getBuildSetComponents(buildSetCompArray);
     schemaHelper.populateSchema();
-    schemaHelper.printConfigSchema();
+    //schemaHelper.printConfigSchema();
 
     StringBuffer strXML;
 
-    if (schemaHelper.getXMLFromSchema(strXML, NULL) == true)
+/*    if (schemaHelper.getXMLFromSchema(strXML, NULL) == true)
     {
         std::cout << strXML.str();
     }
+*/
+    StringBuffer str;
+    schemaHelper.printConfigSchema(str);
+    {
+        std::cout << str.str();
+    }
+
+    //std::cout << t
     return 0;
 }

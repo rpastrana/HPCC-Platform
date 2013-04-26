@@ -140,8 +140,30 @@ const CAttributeGroupArray* CConfigSchemaHelper::getComponentAttributeGroups(con
     return ptr;
 }
 */
-void CConfigSchemaHelper::printConfigSchema() const
+void CConfigSchemaHelper::printConfigSchema(StringBuffer &strXML) const
 {
+    const char *pComponent = NULL;
+    CSchema* pSchema = NULL;
+    LOOP_THRU_BUILD_SET
+    {
+        if (pComponent == NULL || strcmp(pComponent, m_buildSetArray.item(idx).getSchema()) == 0)
+        {
+            const char* pXSDSchema = m_buildSetArray.item(idx).getSchema();
+
+            if (pXSDSchema == NULL)
+            {
+                continue;
+            }
+
+            pSchema = m_componentSchemaArrayMap.getValue(m_buildSetArray.item(idx).getSchema());
+
+            if (pSchema != NULL)
+            {
+                //strXML.append(pSchema->dump(std::cout));
+                pSchema->dump(std::cout);
+            }
+        }
+    }
 /*    CElementArray *pElemArray;
 
     LOOP_THRU_BUILD_SET

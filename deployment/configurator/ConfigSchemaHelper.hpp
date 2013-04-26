@@ -28,7 +28,7 @@ public:
     //bool populateComponentAttributeGroups();
     //bool populateElements();
     bool populateSchema();
-    void printConfigSchema() const;
+    void printConfigSchema(StringBuffer &str) const;
 
     CSchema* getSchemaForXSD(const char* pComponent)
     {
