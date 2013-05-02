@@ -139,7 +139,6 @@ private:
     Owned<IAuthMap>         m_setting_authmap;
 
     Owned<IPTree>           m_subservices;
-    StringAttr              m_defaultSvcVersion;
 
     StringAttrMapping desc_map;
     StringAttrMapping help_map;
@@ -148,6 +147,7 @@ protected:
     MethodInfoArray m_methods;
     bool                    m_includeSoapTest;
     StringBuffer            m_challenge_realm;
+    StringAttr              m_defaultSvcVersion;
 
 public:
     EspHttpBinding(IPropertyTree* cfg, const char *bindname=NULL, const char *procname=NULL);
@@ -174,6 +174,7 @@ public:
     virtual const char* getRootPage() {return NULL;}
 
     virtual StringBuffer &generateNamespace(IEspContext &context, CHttpRequest* request, const char *serv, const char *method, StringBuffer &ns);
+    virtual void getSchemaLocation(IEspContext &context, CHttpRequest* request, StringBuffer &schemaLocation );
 
     virtual StringBuffer &getRequestPath(){return m_reqPath;}
     static int formatHtmlResultSet(IEspContext &context, const char *serv, const char *method, const char *resultsXml, StringBuffer &html);
