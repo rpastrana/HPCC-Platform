@@ -120,8 +120,8 @@ bool CConfigSchemaHelper::populateSchema()
 
         if (pSchemaFile != NULL)
         {
-            CSchema *pSchema = CSchema::load(pSchemaFile);
-            m_componentSchemaArrayMap.setValue(pSchemaFile, pSchema);
+            CSchema *pSchema = CSchema::load(pSchemaFile, NULL);
+            m_schemaMap.setValue(pSchemaFile, pSchema);
         }
     }
 
@@ -155,7 +155,7 @@ void CConfigSchemaHelper::printConfigSchema(StringBuffer &strXML) const
                 continue;
             }
 
-            pSchema = m_componentSchemaArrayMap.getValue(m_buildSetArray.item(idx).getSchema());
+            pSchema = m_schemaMap.getValue(m_buildSetArray.item(idx).getSchema());
 
             if (pSchema != NULL)
             {
@@ -233,7 +233,7 @@ bool CConfigSchemaHelper::getXMLFromSchema(StringBuffer& strXML, const char* pCo
                 continue;
             }
 
-            pSchema = m_componentSchemaArrayMap.getValue(m_buildSetArray.item(idx).getSchema());
+            pSchema = m_schemaMap.getValue(m_buildSetArray.item(idx).getSchema());
 
             if (pSchema != NULL)
             {
@@ -248,4 +248,124 @@ bool CConfigSchemaHelper::getXMLFromSchema(StringBuffer& strXML, const char* pCo
     //std::cout << ">\n</XML>";
 
     //return false;
+}
+
+CSchema* CConfigSchemaHelper::getSchemaForXSD(const char* pComponent)
+{
+    return m_schemaMap.getValue(pComponent);
+}
+
+void CConfigSchemaHelper::setSchemaForXSD(const char* pComponent, CSchema *pSchema)
+{
+    assert(pSchema != NULL);
+
+    if (pSchema != NULL)
+    {
+        m_schemaMap.setValue(pComponent, pSchema);
+    }
+}
+
+CSimpleType* CConfigSchemaHelper::getSimpleTypeWithName(const char* pName)
+{
+    assert(pName != NULL);
+
+    if (pName == NULL)
+    {
+        return NULL;
+    }
+
+    CSimpleType *pSimpleType = NULL;
+
+    pSimpleType = *(m_simpleTypePtrMap.getValue(pName));
+
+    assert(pSimpleType != NULL);
+
+    return pSimpleType;
+}
+
+void CConfigSchemaHelper::setSimpleTypeWithName(const char* pName, CSimpleType *pSimpleType)
+{
+    assert (pSimpleType != NULL);
+    //assert (pName != NULL);
+
+    if (pName == NULL || pSimpleType == NULL)
+    {
+        return;
+    }
+
+    m_simpleTypePtrMap.setValue(pName, pSimpleType);
+}
+
+CComplexType* CConfigSchemaHelper::getComplexTypeWithName(const char* pName)
+{
+    assert(pName != NULL);
+
+    if (pName == NULL)
+    {
+        return NULL;
+    }
+
+    CComplexType *pComplexType = NULL;
+
+    pComplexType = *(m_complexTypePtrsMap.getValue(pName));
+
+    assert(pComplexType != NULL);
+
+    return pComplexType;
+}
+
+void CConfigSchemaHelper::setComplexTypeWithName(const char* pName, CComplexType *pComplexType)
+{
+    assert (pComplexType != NULL);
+    //assert (pName != NULL);
+
+    if (pName == NULL || pComplexType == NULL)
+    {
+        return;
+    }
+
+    m_complexTypePtrsMap.setValue(pName, pComplexType);
+}
+
+void CConfigSchemaHelper::addExtensionToBeProcessed(CExtension *pExtension)
+{
+    assert(pExtension != NULL);
+
+    if (pExtension != NULL)
+    {
+        m_extensionArray.append(*pExtension);
+    }
+}
+
+void CConfigSchemaHelper::processExtensionArray()
+{
+    int length = m_extensionArray.length();
+
+    for (int idx = 0; idx < length; idx++)
+    {
+        CExtension &Extension = (m_extensionArray.item(idx));
+        const char *pName = Extension.getBase();
+
+        assert(pName != NULL);
+
+        if (pName != NULL)
+        {
+            CXSDNodeBase *pNodeBase = NULL;
+
+            pNodeBase = m_simpleTypePtrMap.getValue(pName) != NULL ? dynamic_cast<CSimpleType*>(*(m_simpleTypePtrMap.getValue(pName))) : NULL;
+
+            if (pNodeBase == NULL)
+            {
+                pNodeBase = m_complexTypePtrsMap.getValue(pName) != NULL ? dynamic_cast<CComplexType*>(*(m_complexTypePtrsMap.getValue(pName))) : NULL ;
+            }
+
+            assert(pNodeBase != NULL);
+
+            if (pNodeBase != NULL)
+            {
+                Extension.setBaseNode(pNodeBase);
+            }
+        }
+    }
+
 }

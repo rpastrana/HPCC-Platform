@@ -21,7 +21,7 @@ public:
 
     GETTERSETTER(SchemaLocation)
 
-    const CSchema* getIncludeSchema()
+    const CSchema* getIncludeSchema() const
     {
         return m_pIncludedSchema;
     }

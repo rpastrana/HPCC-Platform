@@ -11,6 +11,7 @@ class IPropertyTree;
 class CChoice;
 class CComplexType;
 class CElementArray;
+class CAttributeGroupArray;
 
 class CComplexType : public CXSDNode
 {
@@ -30,7 +31,7 @@ public:
 
 protected:
 
-    CComplexType(CXSDNodeBase* pParentNode, const char* pName = NULL, CSequence *pSequence = NULL, CComplexContent *pComplexContent = NULL, CAttributeArray *pAttributeArray = NULL, CChoice *pChoice = NULL, CElementArray* pElementArray = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_COMPLEX_TYPE_ARRAY), m_strName(pName), m_pSequence(pSequence), m_pComplexContent(pComplexContent), m_pAttributeArray(pAttributeArray), m_pChoice(pChoice), m_pElementArray(pElementArray)
+    CComplexType(CXSDNodeBase* pParentNode, const char* pName = NULL, CSequence *pSequence = NULL, CComplexContent *pComplexContent = NULL, CAttributeArray *pAttributeArray = NULL, CChoice *pChoice = NULL, CElementArray *pElementArray = NULL, CAttributeGroupArray *pAttributeGroupArray = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_COMPLEX_TYPE_ARRAY), m_strName(pName), m_pSequence(pSequence), m_pComplexContent(pComplexContent), m_pAttributeArray(pAttributeArray), m_pChoice(pChoice), m_pElementArray(pElementArray), m_pAttributeGroupArray(pAttributeGroupArray)
     {
     }
 
@@ -39,6 +40,7 @@ protected:
     CAttributeArray *m_pAttributeArray;
     CElementArray* m_pElementArray;
     CChoice *m_pChoice;
+    CAttributeGroupArray *m_pAttributeGroupArray;
 
 private:
 

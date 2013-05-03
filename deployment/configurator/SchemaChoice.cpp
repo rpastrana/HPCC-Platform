@@ -6,6 +6,8 @@
 
 CChoice* CChoice::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
+    assert(pSchemaRoot != NULL);
+
     if (pSchemaRoot == NULL || xpath == NULL)
     {
         return NULL;

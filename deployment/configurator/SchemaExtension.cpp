@@ -3,6 +3,7 @@
 #include "SchemaExtension.hpp"
 #include "SchemaComplexType.hpp"
 #include "SchemaSchema.hpp"
+#include "ConfigSchemaHelper.hpp"
 
 static const char* DEFAULT_ENVIRONMENT_XSD("Environment.xsd");
 
@@ -12,16 +13,18 @@ void CExtension::dump(std::ostream& cout, unsigned int offset) const
 
     QuickOutHeader(cout, XSD_EXTENSION_STR, offset);
 
+    QUICK_OUT(cout, Base, offset);
+
     if (this->getBaseNode() != NULL)
     {
         this->getBaseNode()->dump(cout, offset);
     }
-    else
+/*    else
     {
         QUICK_OUT(cout, Base, offset);  // must be a built in type ??
-    }
+    }*/
 
-    QuickOutHeader(cout, XSD_EXTENSION_STR, offset);
+    QuickOutFooter(cout, XSD_EXTENSION_STR, offset);
 }
 
 const char* CExtension::getXML(const char* /*pComponent*/)
@@ -34,8 +37,22 @@ const char* CExtension::getXML(const char* /*pComponent*/)
     return NULL;
 }
 
+void CExtension::initExtension()
+{
+    CXSDNodeBase *pBaseNode = this->getNodeByTypeAndNameAscending( (NODE_TYPES)(XSD_SIMPLE_TYPE | XSD_COMPLEX_TYPE), this->getBase());
+
+//    assert(pBaseNode != NULL);  // temporary to catch built in types or not defined types
+
+    if (pBaseNode != NULL)
+    {
+       this->setBaseNode(pBaseNode);
+    }
+}
+
 CExtension* CExtension::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
+    assert(pSchemaRoot != NULL);
+
     if (pSchemaRoot == NULL)
     {
         return NULL;
@@ -59,16 +76,20 @@ CExtension* CExtension::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRo
             pExtension = new CExtension(pParentNode);
             pExtension->setBase(pBase);
 
-            CXSDNodeBase *pBaseNode = pExtension->getNodeByTypeAndNameAscending( XSD_SIMPLE_TYPE | XSD_COMPLEX_TYPE, pBase);
+            /*CXSDNodeBase *pBaseNode = pExtension->getNodeByTypeAndNameAscending( XSD_SIMPLE_TYPE | XSD_COMPLEX_TYPE, pBase);
 
             assert(pBaseNode != NULL);  // temporary to catch built in types or not defined types
 
             if (pBaseNode != NULL)
             {
                 pExtension->setBaseNode(pBaseNode);
-            }
+            }*/
         }
     }
 
+    if (pExtension != NULL)
+    {
+        CConfigSchemaHelper::getInstance()->addExtensionToBeProcessed(pExtension);
+    }
     return pExtension;
 }

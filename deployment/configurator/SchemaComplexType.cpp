@@ -10,6 +10,7 @@
 #include "SchemaComplexType.hpp"
 #include "SchemaElement.hpp"
 #include "SchemaSchema.hpp"
+#include "ConfigSchemaHelper.hpp"
 
 void CComplexType::dump(std::ostream& cout, unsigned int offset) const
 {
@@ -42,6 +43,11 @@ void CComplexType::dump(std::ostream& cout, unsigned int offset) const
     if (m_pElementArray != NULL)
     {
         m_pElementArray->dump(cout, offset);
+    }
+
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->dump(cout, offset);
     }
 
     QuickOutFooter(cout, XSD_COMPLEX_TYPE_STR, offset);
@@ -77,39 +83,135 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
 {
     assert(pSchemaRoot != NULL);
 
+    CComplexContent *pComplexContent = NULL;
+    CAttributeArray *pAttributeArray =  NULL;
+    CChoice *pChoice = NULL;
+    CElementArray *pElementArray = NULL;
+    CSequence *pSequence  = NULL;
+    CAttributeGroupArray *pAttributeGroupArray = NULL;
+
     if (pSchemaRoot == NULL)
     {
         return NULL;
     }
 
-    const char* pName = pSchemaRoot->queryProp(XML_ATTR_NAME);
+
+    IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
+
+    const char* pName = pTree->queryProp(XML_ATTR_NAME);
 
     StringBuffer strXPathExt(xpath);
+
+
+
+
+    ///////////////
+
+
+
+    StringBuffer strXPathExt2(strXPathExt);
+    strXPathExt2.append("*");
+
+    Owned<IPropertyTreeIterator> iter = pSchemaRoot->getElements(strXPathExt2.str());
+
+    ForEach(*iter)
+    {
+        //oTags.appendf("%s,",iter->get().queryName());
+
+        if (strcmp(XSD_TAG_SEQUENCE, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_SEQUENCE);
+            pSequence = CSequence::load(NULL, pSchemaRoot, strXPathExt.str());
+        }
+        else if (strcmp(XSD_TAG_COMPLEX_CONTENT, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_COMPLEX_CONTENT);
+            pComplexContent = CComplexContent::load(NULL, pSchemaRoot, strXPathExt.str());
+        }
+        else if (strcmp(XSD_TAG_ATTRIBUTE, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
+            pAttributeArray = CAttributeArray::load(NULL, pSchemaRoot, strXPathExt.str());
+        }
+        else if (strcmp(XSD_TAG_CHOICE, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_CHOICE);
+            pChoice = CChoice::load(NULL, pSchemaRoot, strXPathExt.str());
+        }
+        else if (strcmp(XSD_TAG_ELEMENT, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_ELEMENT);
+            pElementArray = CElementArray::load(NULL, pSchemaRoot, strXPathExt.str());
+        }
+        else if (strcmp(XSD_TAG_ATTRIBUTE_GROUP, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
+            pAttributeGroupArray = CAttributeGroupArray::load(NULL, pSchemaRoot, strXPathExt.str());
+        }
+    }
+
+
+
+
+    ///////////////
+
+#ifdef false
 
     strXPathExt.append("/").append(XSD_TAG_SEQUENCE);
     CSequence *pSequence = CSequence::load(NULL, pSchemaRoot, strXPathExt.str());
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_COMPLEX_CONTENT);
-    CComplexContent *pComplexContent = CComplexContent::load(NULL, pSchemaRoot, strXPathExt.str());
+
+    if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
+    {
+        pComplexContent = CComplexContent::load(NULL, pSchemaRoot, strXPathExt.str());
+    }
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
-    CAttributeArray *pAttributeArray = CAttributeArray::load(NULL, pSchemaRoot, strXPathExt.str());
+    StringBuffer strTemp(strXPathExt);
+    strTemp.append("[1]");
+
+    //if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
+    if (pSchemaRoot->queryPropTree(strTemp.str()) != NULL)
+    {
+        pAttributeArray = CAttributeArray::load(NULL, pSchemaRoot, strXPathExt.str());
+    }
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_CHOICE);
-    CChoice *pChoice = CChoice::load(NULL, pSchemaRoot, strXPathExt.str());
+
+    if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
+    {
+        pChoice = CChoice::load(NULL, pSchemaRoot, strXPathExt.str());
+    }
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ELEMENT);
-    CElementArray *pElementArray = CElementArray::load(NULL, pSchemaRoot, strXPathExt.str());
+    if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
+    {
+        pElementArray = CElementArray::load(NULL, pSchemaRoot, strXPathExt.str());
+    }
 
-    //assert(pSequence && pComplexContent && pAttributeArray && pChoice && pElementArray);
 
-    CComplexType *pComplexType = new CComplexType(pParentNode, pName, pSequence, pComplexContent, pAttributeArray, pChoice, pElementArray);
+#endif ///////////////////////////////
 
-    SETPARENTNODE(pSequence, pComplexType)
-    SETPARENTNODE(pComplexContent, pComplexType)
-    SETPARENTNODE(pAttributeArray, pComplexType)
-    SETPARENTNODE(pChoice, pComplexType)
-    SETPARENTNODE(pElementArray, pComplexType)
+    CComplexType *pComplexType = new CComplexType(pParentNode, pName, pSequence, pComplexContent, pAttributeArray, pChoice, pElementArray, pAttributeGroupArray);
+
+    assert(pComplexType != NULL);
+
+    if (pComplexType != NULL)
+    {
+
+        SETPARENTNODE(pSequence, pComplexType)
+        SETPARENTNODE(pComplexContent, pComplexType)
+        SETPARENTNODE(pAttributeArray, pComplexType)
+        SETPARENTNODE(pChoice, pComplexType)
+        SETPARENTNODE(pElementArray, pComplexType)
+        SETPARENTNODE(pAttributeGroupArray, pComplexType)
+
+        if (pName != NULL)
+        {
+            CConfigSchemaHelper::getInstance()->setComplexTypeWithName(pName, pComplexType);
+        }
+    }
 
     return pComplexType;
 }
@@ -217,7 +319,12 @@ CComplexTypeArray* CComplexTypeArray::load(CXSDNodeBase* pParentNode, IPropertyT
 
         CComplexType *pComplexType = CComplexType::load(pComplexTypeArray, pSchemaRoot, strXPathExt.str());
 
-        pComplexTypeArray->append(*pComplexType);
+        assert(pComplexType != NULL);
+
+        if (pComplexType != NULL)
+        {
+            pComplexTypeArray->append(*pComplexType);
+        }
 
         count++;
     }

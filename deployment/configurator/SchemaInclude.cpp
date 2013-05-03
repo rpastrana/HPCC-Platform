@@ -12,6 +12,11 @@ void CInclude::dump(std::ostream& cout, unsigned int offset) const
 
     QUICK_OUT(cout, SchemaLocation, offset);
 
+    if (this->getIncludeSchema() != NULL)
+    {
+        this->getIncludeSchema()->dump(cout, offset);
+    }
+
     QuickOutFooter(cout, XSD_INCLUDE_STR, offset);
 }
 
@@ -41,14 +46,16 @@ CInclude* CInclude::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 
         if (pSchemaLocation != NULL)
         {
-            CSchema* pSchema = CConfigSchemaHelper::getInstance()->getSchemaForXSD(pSchemaLocation);
+            /*CSchema* pSchema = CConfigSchemaHelper::getInstance()->getSchemaForXSD(pSchemaLocation);
 
             if (pSchema == NULL)
             {
                 pSchema = CSchema::load(pSchemaLocation, pParentNode);
             }
 
-            pInclude = new CInclude(pParentNode, pSchemaLocation);
+            pInclude = new CInclude(pParentNode, pSchemaLocation);*/
+            CSchema* pSchema = CSchema::load(pSchemaLocation, NULL); // no parent across XSD files
+            pInclude = new CInclude(NULL, pSchemaLocation);
             pInclude->setIncludedSchema(pSchema);
         }
     }

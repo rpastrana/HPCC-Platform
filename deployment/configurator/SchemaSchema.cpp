@@ -1,15 +1,26 @@
 #include "jptree.hpp"
 #include "XMLTags.h"
 #include "SchemaSchema.hpp"
+#include "ConfigSchemaHelper.hpp"
 
 CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, const char* xpath)
 {
-    CSchema* pSchema = new CSchema(pSchemaLocation);
+    assert(pSchemaRoot != NULL);
 
     if (pSchemaRoot == NULL)
     {
         return NULL;
     }
+
+    CConfigSchemaHelper *pSchemaHelper = (CConfigSchemaHelper::getInstance());
+
+    if (pSchemaHelper->getSchemaForXSD(pSchemaLocation) != NULL)  // check to see if the this schema has already been processed
+    {
+        return pSchemaHelper->getSchemaForXSD(pSchemaLocation);
+    }
+
+
+    CSchema* pSchema = new CSchema(pSchemaLocation);
 
     IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
 
@@ -25,7 +36,52 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     StringBuffer strXPathExt(xpath);
 
-    strXPathExt.clear().append(xpath).append(XSD_TAG_INCLUDE);
+
+    CIncludeArray* pIncludeArray = NULL;
+    CSimpleTypeArray* pSimpleTypeArray = NULL;
+    CComplexTypeArray* pComplexTypeArray = NULL;
+    CElementArray* pElemArray = NULL;
+    CAttributeGroupArray* pAttributeGroupArray  = NULL;
+
+    StringBuffer strXPathExt2(strXPathExt);
+    strXPathExt2.append("*");
+
+    Owned<IPropertyTreeIterator> iter = pSchemaRoot->getElements(strXPathExt2.str());
+
+    ForEach(*iter)
+    {
+        //oTags.appendf("%s,",iter->get().queryName());
+
+        if (strcmp(XSD_TAG_INCLUDE, iter->get().queryName()) == 0)
+        {
+
+            strXPathExt.clear().append(xpath).append(XSD_TAG_INCLUDE);
+            pIncludeArray = CIncludeArray::load(pSchema, pSchemaRoot, strXPathExt);
+        }
+        else if (strcmp(XSD_TAG_SIMPLE_TYPE, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_SIMPLE_TYPE);
+            pSimpleTypeArray = CSimpleTypeArray::load(pSchema, pSchemaRoot, strXPathExt);
+        }
+        else if (strcmp(XSD_TAG_COMPLEX_TYPE, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_COMPLEX_TYPE);
+            pComplexTypeArray = CComplexTypeArray::load(pSchema, pSchemaRoot, strXPathExt);
+
+        }
+        else if (strcmp(XSD_TAG_ELEMENT, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_ELEMENT);
+            pElemArray = CElementArray::load(pSchema, pSchemaRoot, strXPathExt.str());
+        }
+        else if (strcmp(XSD_TAG_ATTRIBUTE_GROUP, iter->get().queryName()) == 0)
+        {
+            strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
+            pAttributeGroupArray = CAttributeGroupArray::load(pSchema, pSchemaRoot, strXPathExt);
+        }
+    }
+
+    /*strXPathExt.clear().append(xpath).append(XSD_TAG_INCLUDE);
     CIncludeArray* pIncludeArray = CIncludeArray::load(pSchema, pSchemaRoot, strXPathExt);
 
     strXPathExt.clear().append(xpath).append(XSD_TAG_SIMPLE_TYPE);
@@ -39,9 +95,8 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
     CAttributeGroupArray* pAttributeGroupArray = CAttributeGroupArray::load(pSchema, pSchemaRoot, strXPathExt);
+*/
 
-
-    //CSchema* pSchema = new CSchema(pXMLNS_XS, pElementFormDefault, pAttributeFormDefault, pElemArray, pComplexTypeArray, pAttributeGroupArray, pSimpleTypeArray, pIncludeArray);
     pSchema->m_pElementArray = pElemArray;
     pSchema->m_pComplexTypeArray = pComplexTypeArray;
 
@@ -55,6 +110,8 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
     }
     pSchema->m_pSimpleTypeArray = pSimpleTypeArray;
     pSchema->m_pIncludeArray = pIncludeArray;
+
+    pSchemaHelper->setSchemaForXSD(pSchemaLocation, pSchema);
 
     return pSchema;
 }
@@ -71,7 +128,7 @@ CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode)
 
     schemaPath.appendf("%s%s", DEFAULT_SCHEMA_DIRECTORY, pSchemaLocation);
 
-    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
+    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str(), ipt_ordered));
 
     CSchema *pSchema = CSchema::load(pSchemaLocation, pSchemaRoot, XSD_TAG_SCHEMA);
 
@@ -152,23 +209,23 @@ void CSchema::dump(std::ostream& cout, unsigned int offset) const
 
     if (m_pElementArray != NULL)
     {
-        m_pElementArray->dump(cout);
+        m_pElementArray->dump(cout, offset);
     }
     if (m_pComplexTypeArray != NULL)
     {
-        m_pComplexTypeArray->dump(cout);
+        m_pComplexTypeArray->dump(cout, offset);
     }
     if (m_pAttributeGroupArray != NULL)
     {
-        m_pAttributeGroupArray->dump(cout);
+        m_pAttributeGroupArray->dump(cout, offset);
     }
     if (m_pSimpleTypeArray != NULL)
     {
-        m_pSimpleTypeArray->dump(cout);
+        m_pSimpleTypeArray->dump(cout, offset);
     }
     if (m_pIncludeArray != NULL)
     {
-        m_pIncludeArray->dump(cout);
+        m_pIncludeArray->dump(cout, offset);
     }
 
     QuickOutFooter(cout, XSD_SCHEMA_STR, offset);

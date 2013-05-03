@@ -20,6 +20,7 @@ int main(int argc, char *argv[])
     schemaHelper.getBuildSetComponents(buildSetCompArray);
     schemaHelper.populateSchema();
     //schemaHelper.printConfigSchema();
+    schemaHelper.processExtensionArray();
 
     StringBuffer strXML;
 

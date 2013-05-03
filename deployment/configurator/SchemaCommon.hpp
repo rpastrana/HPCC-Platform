@@ -328,9 +328,7 @@ public:
 
     void setParentNode(CXSDNodeBase *pParentNode)
     {
-        assert(m_pParentNode == NULL); // why would we ever reset this?
-
-        if (m_pParentNode == NULL)  // TODO: do we need this check?
+        if (m_pParentNode == NULL)  // Should only be set once, otherwise it's an external schema and should have parent set
         {
             m_pParentNode = pParentNode;
         }
@@ -392,13 +390,13 @@ public:
         return NULL;
     }
 
-    virtual CXSDNodeBase* getNodeByTypeAndNameAscending(unsigned eNodeType, const char *pName)
+    virtual CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
     {
         assert(this->m_eNodeType != eNodeType); //  Base functionality just blindly searchs upstream
 
         if (this->getParentNode() != NULL)
         {
-            return this->getParentNode()->getNodeByTypeAndNameAscending((NODE_TYPES)eNodeType, pName);
+            return this->getParentNode()->getNodeByTypeAndNameAscending(eNodeType, pName);
         }
 
         return NULL;

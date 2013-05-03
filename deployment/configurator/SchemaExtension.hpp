@@ -20,13 +20,7 @@ public:
 
     virtual const char* getXML(const char* /*pComponent*/);
 
-    static CExtension* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
-
-protected:
-
-    CExtension(CXSDNodeBase* pParentNode, const char* pBase = NULL, CXSDNode *pXSDNode = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_EXTENSION), m_strBase(pBase), m_pXSDNode(pXSDNode)
-    {
-    }
+    virtual void initExtension();
 
     void setBaseNode(CXSDNodeBase* pCXSDNode)
     {
@@ -36,6 +30,14 @@ protected:
         }
 
         m_pXSDNode = pCXSDNode;
+    }
+
+    static CExtension* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
+
+protected:
+
+    CExtension(CXSDNodeBase* pParentNode, const char* pBase = NULL, CXSDNode *pXSDNode = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_EXTENSION), m_strBase(pBase), m_pXSDNode(pXSDNode)
+    {
     }
 
     const CXSDNodeBase* getBaseNode() const

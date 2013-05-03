@@ -2,6 +2,7 @@
 #include "XMLTags.h"
 #include "SchemaSimpleType.hpp"
 #include "SchemaRestriction.hpp"
+#include "ConfigSchemaHelper.hpp"
 
 
 CXSDNodeBase* CSimpleType::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
@@ -49,6 +50,14 @@ CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchema
     const char* pID =  NULL;
 
     pName = pTree->queryProp(XML_ATTR_NAME);
+
+    assert (pName != NULL);
+
+    if (pName == NULL)
+    {
+        return NULL;
+    }
+
     pID = pTree->queryProp(XML_ATTR_ID);
 
     StringBuffer strXPathExt(xpath);
@@ -57,11 +66,24 @@ CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchema
 
 
     CSimpleType* pSimpleType = new CSimpleType(pParentNode, pName,pID/*, pRestriction*/);
+
+    assert(pSimpleType != NULL);
+
+    if (pSimpleType == NULL)
+    {
+        return NULL;
+    }
+
     CRestriction *pRestriction = CRestriction::load(pSimpleType, pSchemaRoot, strXPathExt.str());
 
     if (pRestriction != NULL)
     {
         pSimpleType->setRestriciton(pRestriction);
+    }
+
+    if (pName != NULL)
+    {
+        CConfigSchemaHelper::getInstance()->setSimpleTypeWithName(pName, pSimpleType);
     }
 
     return pSimpleType;

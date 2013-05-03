@@ -8,7 +8,10 @@
 #include "SchemaAttributes.hpp"
 #include "SchemaElement.hpp"
 #include "SchemaSchema.hpp"
+#include "SchemaExtension.hpp"
 #include "BuildSet.hpp"
+
+class CSimpleType;
 
 class CConfigSchemaHelper : public CInterface
 {
@@ -30,26 +33,39 @@ public:
     bool populateSchema();
     void printConfigSchema(StringBuffer &str) const;
 
-    CSchema* getSchemaForXSD(const char* pComponent)
-    {
-        return m_componentSchemaArrayMap.getValue(pComponent);
-    }
+    CSchema* getSchemaForXSD(const char* pComponent);
+
+    void setSchemaForXSD(const char* pComponent, CSchema *pSchema);
+
+
+    CSimpleType* getSimpleTypeWithName(const char* pName);
+
+    void setSimpleTypeWithName(const char* pName, CSimpleType *pSimpleType);
+
+    CComplexType* getComplexTypeWithName(const char* pName);
+
+    void setComplexTypeWithName(const char* pName, CComplexType *pComplexType);
+
+    void addExtensionToBeProcessed(CExtension *pExtension);
 
     //test purposes
     bool getXMLFromSchema(StringBuffer& strXML, const char* pXSD);
 
     IPropertyTree* getSchema(const char* );
 
+    void processExtensionArray();
+
+
 protected:
 
     CConfigSchemaHelper(const char* pBuildSetPath = DEFAULT_BUILD_SET_XML_PATH);
 
     Owned<IPropertyTree> m_buildSetTree;
-    CIArrayOf<CBuildSet> m_buildSetArray; // buildset
-    //MapStringToMyClass<CAttributeArray> m_componentAttributesArrayMap;
-    //MapStringToMyClass<CAttributeGroupArray> m_componentAttributesGroupMap;
-    //MapStringToMyClass<CElementArray> m_componentElementArrayMap;
-    MapStringToMyClass<CSchema> m_componentSchemaArrayMap;
+    CIArrayOf<CBuildSet> m_buildSetArray;
+    MapStringToMyClass<CSchema> m_schemaMap;
+    MapStringTo<CSimpleType*> m_simpleTypePtrMap;
+    MapStringTo<CComplexType*> m_complexTypePtrsMap;
+    CIArrayOf<CExtension> m_extensionArray;
     StringBuffer m_buildSetPath;
 
 private:

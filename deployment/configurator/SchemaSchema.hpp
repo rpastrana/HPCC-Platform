@@ -34,8 +34,8 @@ public:
         return m_pComplexTypeArray;
     }
 
-    static CSchema* load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
-    static CSchema* load(const char* pSchemaLocation, CXSDNodeBase* pParentNode = NULL);
+    static CSchema* load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, const char* xpath);
+    static CSchema* load(const char* pSchemaLocation, CXSDNodeBase* pParentNode);
     //static CSchema* load(const char* pSchemaLocation);
     //static bool AddToComplexTypeArray(CSchema *pSchema, const char* pSchemaLocation);
 
