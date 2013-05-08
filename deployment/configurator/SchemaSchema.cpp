@@ -50,8 +50,6 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     ForEach(*iter)
     {
-        //oTags.appendf("%s,",iter->get().queryName());
-
         if (strcmp(XSD_TAG_INCLUDE, iter->get().queryName()) == 0)
         {
 
@@ -137,66 +135,6 @@ CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode)
     return pSchema;
 }
 
-/*CSchema* CSchema::load(const char* pSchemaLocation)
-{
-    if (pSchemaLocation == NULL)
-    {
-        return NULL;
-    }
-
-    Linked<IPropertyTree> pSchemaRoot;
-
-    StringBuffer schemaPath;
-
-    schemaPath.appendf("%s%s", DEFAULT_SCHEMA_DIRECTORY, pSchemaLocation);
-
-    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
-
-    return CSchema::load(pSchemaLocation, pSchemaRoot, XSD_TAG_SCHEMA);
-}
-*/
-/*bool CSchema::AddToComplexTypeArray(CSchema *pSchema, const char* pSchemaLocation)
-{
-    if (pSchema == NULL || pSchemaLocation == NULL)
-    {
-        return false;
-    }
-
-    Linked<IPropertyTree> pSchemaRoot;
-
-    StringBuffer schemaPath;
-
-    schemaPath.appendf("%s%s", DEFAULT_SCHEMA_DIRECTORY, pSchemaLocation);
-
-    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
-
-    StringBuffer strXPathExt;
-
-    strXPathExt.clear().append(XSD_TAG_COMPLEX_TYPE);
-
-    CComplexTypeArray* pComplexTypeArray = CComplexTypeArray::load(pSchema, pSchemaRoot, strXPathExt);
-
-    if (pComplexTypeArray != NULL)
-    {
-        int length = pComplexTypeArray->length();
-
-        if (pSchema->m_pComplexTypeArray == NULL)
-        {
-            pSchema->m_pComplexTypeArray = pComplexTypeArray;
-        }
-        else
-        {
-            for (int idx = 0; idx < length; idx++)
-            {
-                pSchema->m_pComplexTypeArray->append(pComplexTypeArray->item(idx));
-            }
-        }
-        //pComplexTypeArray->Release();
-    }
-
-    return true;
-}
-*/
 void CSchema::dump(std::ostream& cout, unsigned int offset) const
 {
     offset+= STANDARD_OFFSET_1;
@@ -229,6 +167,58 @@ void CSchema::dump(std::ostream& cout, unsigned int offset) const
     }
 
     QuickOutFooter(cout, XSD_SCHEMA_STR, offset);
+}
+
+void CSchema::getDocumentation(StringBuffer &strDoc) const
+{
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getDocumentation(strDoc);
+    }
+    if (m_pComplexTypeArray != NULL)
+    {
+        m_pComplexTypeArray->getDocumentation(strDoc);
+    }
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->getDocumentation(strDoc);
+    }
+    if (m_pSimpleTypeArray != NULL)
+    {
+        m_pSimpleTypeArray->getDocumentation(strDoc);
+    }
+    if (m_pIncludeArray != NULL)
+    {
+        m_pIncludeArray->getDocumentation(strDoc);
+    }
+}
+
+void CSchema::traverseAndProcessNodes() const
+{
+    CSchema::processEntryHandlers(this);
+
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->traverseAndProcessNodes();
+    }
+    if (m_pComplexTypeArray != NULL)
+    {
+        m_pComplexTypeArray->traverseAndProcessNodes();
+    }
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->traverseAndProcessNodes();
+    }
+    if (m_pSimpleTypeArray != NULL)
+    {
+        m_pSimpleTypeArray->traverseAndProcessNodes();
+    }
+    if (m_pIncludeArray != NULL)
+    {
+        m_pIncludeArray->traverseAndProcessNodes();
+    }
+
+    CSchema::processExitHandlers(this);
 }
 
 const char* CSchema::getXML(const char* /*pComponent*/)

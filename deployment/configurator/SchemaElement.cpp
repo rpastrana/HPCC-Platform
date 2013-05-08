@@ -8,10 +8,14 @@
 #include "SchemaComplexType.hpp"
 #include "SchemaElement.hpp"
 #include "SchemaAttributes.hpp"
+#include "DocumentationMarkup.hpp"
 
-CElement* CElement::load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, const char* xpath)
+CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
-    if (pSchemaRoot == NULL)
+    assert(pSchemaRoot != NULL);
+    assert(pParentNode != NULL);
+
+    if (pSchemaRoot == NULL || pParentNode == NULL)
     {
         return NULL;
     }
@@ -45,13 +49,15 @@ CElement* CElement::load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, co
     StringBuffer strXPathExt(xpath);
 
     strXPathExt.append("/").append(XSD_TAG_ANNOTATION);
-    pElement->m_pAnnotation = CAnnotation::load(pRootNode, pSchemaRoot, strXPathExt.str());
+    pElement->m_pAnnotation = CAnnotation::load(pElement, pSchemaRoot, strXPathExt.str());
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_COMPLEX_TYPE);
-    pElement->m_pComplexTypeArray = CComplexTypeArray::load(pRootNode, pSchemaRoot, strXPathExt.str());
+    pElement->m_pComplexTypeArray = CComplexTypeArray::load(pElement, pSchemaRoot, strXPathExt.str());
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
-    pElement->m_pAttributeArray = CAttributeArray::load(pRootNode, pSchemaRoot, strXPathExt.str());
+    pElement->m_pAttributeArray = CAttributeArray::load(pElement, pSchemaRoot, strXPathExt.str());
+
+    SETPARENTNODE(pElement, pParentNode);
 
     return pElement;
 }
@@ -106,6 +112,69 @@ void CElement::dump(std::ostream &cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_ELEMENT_STR, offset);
 }
 
+void CElement::getDocumentation(StringBuffer &strDoc) const
+{
+    const CXSDNodeBase *pNodeBase = this->getConstParentNode()->getConstParentNode();
+
+    assert(pNodeBase != NULL);
+
+    if (pNodeBase == NULL)
+    {
+        return;
+    }
+
+    if (this->getName() != NULL && stricmp(this->getName(), "Instance") == 0)
+    {
+        return; // don't document instance
+    }
+
+    if (pNodeBase->getNodeType() == XSD_SCHEMA)
+    {
+        strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, this->getName(),"_mod");
+        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
+
+        if (m_pComplexTypeArray != NULL)
+        {
+            m_pComplexTypeArray->getDocumentation(strDoc);
+        }
+
+         strDoc.appendf("</%s>\n", DM_SECT2);
+    }
+    else
+    {
+        strDoc.appendf("<%s>\n<%s>%s</%s>\n", DM_SECT3, DM_TITLE, this->getName(), DM_TITLE);
+        strDoc.appendf("<%s>\n", DM_TABLE_BEGIN);
+
+        if (m_pAnnotation != NULL)
+        {
+            // m_pAnnotation->getDocumentation(strDoc);  // No reason to call this since Annotations don't directly document
+        }
+        if (m_pComplexTypeArray != NULL)
+        {
+            m_pComplexTypeArray->getDocumentation(strDoc);
+        }
+
+        strDoc.appendf("</%s>\n</%s>\n", DM_TABLE_END, DM_SECT3);
+    }
+}
+
+void CElement::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (m_pAnnotation != NULL)
+    {
+        m_pAnnotation->traverseAndProcessNodes();
+    }
+
+    if (m_pComplexTypeArray != NULL)
+    {
+        m_pComplexTypeArray->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
+}
+
 void CElementArray::dump(std::ostream &cout, unsigned int offset) const
 {
     offset+= STANDARD_OFFSET_1;
@@ -116,6 +185,17 @@ void CElementArray::dump(std::ostream &cout, unsigned int offset) const
 
     QuickOutFooter(cout, XSD_ELEMENT_ARRAY_STR, offset);
 }
+
+void CElementArray::getDocumentation(StringBuffer &strDoc) const
+{
+    QUICK_DOC_ARRAY(strDoc);
+}
+
+void CElementArray::traverseAndProcessNodes() const
+{
+    QUICK_TRAVERSE_AND_PROCESS;
+}
+
 const char* CElementArray::getXML(const char* /*pComponent*/)
 {
     if (m_strXML.length() == 0)
@@ -189,6 +269,8 @@ CElementArray* CElementArray::load(CXSDNodeBase* pParentNode, IPropertyTree *pSc
     {
         return NULL;
     }
+
+    SETPARENTNODE(pElemArray, pParentNode);
 
     return pElemArray;
 }

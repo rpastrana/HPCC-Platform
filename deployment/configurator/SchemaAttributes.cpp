@@ -1,28 +1,10 @@
-#include <cassert>
 #include "jptree.hpp"
-#include "SchemaAttributes.hpp"
 #include "SchemaCommon.hpp"
+#include "SchemaAttributes.hpp"
+#include "SchemaAppInfo.hpp"
+#include "DocumentationMarkup.hpp"
 
-/*
- CXSDNodeBase* CAttribute::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
- {
-    return NULL;
 
-    /*if (eNodeType == this->getNodeType() && (pName != NULL ? !strcmp(pname, this->getNodeTypeStr()) : true))
-    {
-        assert(pname != NULL); // for now pName should always be populated
-
-        return this;
-    }
-
-    return NULL;  // terminate recursion
-}
-
- CXSDNodeBase* CAttribute::getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
- {
-     return NULL;
-     //return this->getNodeByTypeAndNameAscending(eNodeType, pName);
-}*/
 const char* CAttribute::getXML(const char* pComponent)
 {
     if (m_strXML.length() == 0)
@@ -50,6 +32,51 @@ void CAttribute::dump(std::ostream& cout, unsigned int offset) const
     }
 
     QuickOutFooter(cout,XSD_ATTRIBUTE_STR, offset);
+}
+
+void CAttribute::getDocumentation(StringBuffer &strDoc) const
+{
+    const char *pName = this->getName();
+    const char *pToolTip = NULL;
+    const char *pDefaultValue = this->getDefault();
+    const char *pRequired = this->getUse();
+
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
+    {
+        const CAppInfo *pAppInfo = m_pAnnotation->getAppInfo();
+        const char* pViewType = pAppInfo->getViewType();
+
+        if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
+        {
+            return; // HIDDEN
+        }
+        else
+        {
+            pToolTip = pAppInfo->getToolTip();
+            if (pAppInfo->getTitle() != NULL && (pAppInfo->getTitle())[0] != 0)
+            {
+                pName = pAppInfo->getTitle();  // if we have a title, then we use instead of the attribute name
+            }
+        }
+    }
+
+    strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+    strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pName, DM_TABLE_ENTRY);
+    strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pToolTip, DM_TABLE_ENTRY);
+    strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pDefaultValue, DM_TABLE_ENTRY);
+    strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pRequired, DM_TABLE_ENTRY);
+    strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+}
+void CAttribute::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (m_pAnnotation != NULL)
+    {
+        m_pAnnotation->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
 }
 
 CAttribute* CAttribute::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
@@ -99,53 +126,6 @@ CAttribute* CAttribute::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRo
     return pAttribute;
 }
 
-/*CXSDNodeBase* CAttributeArray::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
-{
-    CXSDNodeBase* pMatchingNode = NULL;
-
-    len = this->length()-1;
-
-    for (int idx = 0; idx < len; idx++)
-    {
-
-        pMatchingNode = this->getNodeByTypeAndNameDescending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-
-        pMatchingNode = this->item(idx).getNodeByTypeAndNameAscending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-
-    }
-
-    return NULL;  // nothing found
-}
-
-CXSDNodeBase* CAttributeArray::getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
-{
-    CXSDNodeBase* pMatchingNode = NULL;
-
-    len = this->length()-1;
-
-    for (int idx = 0; idx < len; idx++)
-    {
-        pMatchingNode = this->item(idx).getNodeByTypeAndNameDescending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-    }
-
-    return NULL;  // nothing found
-}
-*/
 const char* CAttributeArray::getXML(const char* /*pComponent*/)
 {
     if (m_strXML.length() == 0)
@@ -239,6 +219,16 @@ void CAttributeArray::dump(std::ostream &cout, unsigned int offset) const
 }
 
 
+void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
+{
+    QUICK_DOC_ARRAY(strDoc);
+}
+
+void CAttributeArray::traverseAndProcessNodes() const
+{
+    QUICK_TRAVERSE_AND_PROCESS;
+}
+
 CXSDNodeBase* CAttributeGroup::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
 {
     CXSDNodeBase* pMatchingNode = NULL;
@@ -306,6 +296,22 @@ void CAttributeGroup::dump(std::ostream &cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_ATTRIBUTE_GROUP_STR, offset);
 }
 
+void CAttributeGroup::getDocumentation(StringBuffer &strDoc) const
+{
+    assert(false);  // NOT IMPLEMENTED
+}
+
+void CAttributeGroup::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (m_pAttributeArray != NULL)
+    {
+        m_pAttributeArray->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
+}
 
 const char* CAttributeGroup::getXML(const char* /*pComponent*/)
 {
@@ -355,55 +361,6 @@ CAttributeGroup* CAttributeGroup::load(CXSDNodeBase* pParentNode, IPropertyTree 
 
     return pAttributeGroup;
 }
-
-
-/*virtual CXSDNodeBase* CAttributeGroupArray::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
-{
-    CXSDNodeBase* pMatchingNode = NULL;
-
-    len = this->length()-1;
-
-    for (int idx = 0; idx < len; idx++)
-    {
-
-        pMatchingNode = this->getNodeByTypeAndNameDescending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-
-        pMatchingNode = this->item(idx).getNodeByTypeAndNameAscending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-
-    }
-
-    return NULL;  // nothing found
-}
-
-virtual CXSDNodeBase* CAttributeGroupArray::getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
-{
-    CXSDNodeBase* pMatchingNode = NULL;
-
-    len = this->length()-1;
-
-    for (int idx = 0; idx < len; idx++)
-    {
-        pMatchingNode = this->item(idx).getNodeByTypeAndNameDescending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-    }
-
-    return NULL;  // nothing found
-}*/
-
 
 CAttributeGroupArray::~CAttributeGroupArray()
 {
@@ -474,4 +431,14 @@ void CAttributeGroupArray::dump(std::ostream& cout, unsigned int offset) const
     QUICK_OUT_ARRAY(cout, offset);
 
     QuickOutFooter(cout,XSD_ATTRIBUTE_GROUP_ARRAY_STR, offset);
+}
+
+void CAttributeGroupArray::getDocumentation(StringBuffer &strDoc) const
+{
+    QUICK_DOC_ARRAY(strDoc);
+}
+
+void CAttributeGroupArray::traverseAndProcessNodes() const
+{
+    QUICK_TRAVERSE_AND_PROCESS;
 }

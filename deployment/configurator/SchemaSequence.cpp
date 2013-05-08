@@ -48,3 +48,23 @@ void CSequence::dump(std::ostream& cout, unsigned int offset) const
 
     QuickOutFooter(cout, XSD_SEQUENCE_STR, offset);
 }
+
+void CSequence::getDocumentation(StringBuffer &strDoc) const
+{
+    if (p_mElementArray != NULL)
+    {
+        p_mElementArray->getDocumentation(strDoc);
+    }
+}
+
+void CSequence::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (p_mElementArray != NULL)
+    {
+        p_mElementArray->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
+}

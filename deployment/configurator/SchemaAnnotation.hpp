@@ -17,6 +17,23 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void traverseAndProcessNodes() const;
+
+    const CDocumentation* getDocumentation() const
+    {
+        return m_pDocumentation;
+    }
+
+    virtual void getDocumentation(StringBuffer &strDoc) const
+    {
+        assert(false); // Should not be called directly
+    }
+
+    const CAppInfo* getAppInfo() const
+    {
+        return m_pAppInfo;
+    }
+
     static CAnnotation* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
 
 protected:

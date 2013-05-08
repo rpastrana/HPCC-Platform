@@ -11,6 +11,7 @@
 #include "SchemaElement.hpp"
 #include "SchemaSchema.hpp"
 #include "ConfigSchemaHelper.hpp"
+#include "DocumentationMarkup.hpp"
 
 void CComplexType::dump(std::ostream& cout, unsigned int offset) const
 {
@@ -53,6 +54,91 @@ void CComplexType::dump(std::ostream& cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_COMPLEX_TYPE_STR, offset);
 }
 
+void CComplexType::getDocumentation(StringBuffer &strDoc) const
+{
+    if (m_pSequence != NULL)
+    {
+        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        m_pSequence->getDocumentation(strDoc);
+        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+    }
+
+    if (m_pComplexContent != NULL)
+    {
+        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        m_pComplexContent->getDocumentation(strDoc);
+        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+    }
+
+    if (m_pAttributeArray != NULL)
+    {
+        if (this->getConstParentNode()->getConstParentNode()->getNodeType() == XSD_SCHEMA)
+            strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+
+        m_pAttributeArray->getDocumentation(strDoc);
+
+        if (this->getConstParentNode()->getConstParentNode()->getNodeType() == XSD_SCHEMA)
+            strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+    }
+
+    if (m_pChoice != NULL)
+    {
+      //  strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        m_pChoice->getDocumentation(strDoc);
+        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+    }
+
+    if (m_pElementArray != NULL)
+    {
+        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        m_pElementArray->getDocumentation(strDoc);
+        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+    }
+
+    if (m_pAttributeGroupArray != NULL)
+    {
+        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        m_pAttributeGroupArray->getDocumentation(strDoc);
+        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+    }
+}
+
+void CComplexType::traverseAndProcessNodes() const
+{
+    CComplexType::processEntryHandlers(this);
+
+    if (m_pSequence != NULL)
+    {
+        m_pSequence->traverseAndProcessNodes();
+    }
+
+    if (m_pComplexContent != NULL)
+    {
+        m_pComplexContent->traverseAndProcessNodes();
+    }
+
+    if (m_pAttributeArray != NULL)
+    {
+        m_pAttributeArray->traverseAndProcessNodes();
+    }
+
+    if (m_pChoice != NULL)
+    {
+        m_pChoice->traverseAndProcessNodes();
+    }
+
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->traverseAndProcessNodes();
+    }
+
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->traverseAndProcessNodes();
+    }
+
+    CComplexType::processExitHandlers(this);
+}
 
 const char* CComplexType::getXML(const char* /*pComponent*/)
 {
@@ -95,19 +181,11 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
         return NULL;
     }
 
-
     IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
 
     const char* pName = pTree->queryProp(XML_ATTR_NAME);
 
     StringBuffer strXPathExt(xpath);
-
-
-
-
-    ///////////////
-
-
 
     StringBuffer strXPathExt2(strXPathExt);
     strXPathExt2.append("*");
@@ -150,49 +228,6 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
         }
     }
 
-
-
-
-    ///////////////
-
-#ifdef false
-
-    strXPathExt.append("/").append(XSD_TAG_SEQUENCE);
-    CSequence *pSequence = CSequence::load(NULL, pSchemaRoot, strXPathExt.str());
-
-    strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_COMPLEX_CONTENT);
-
-    if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
-    {
-        pComplexContent = CComplexContent::load(NULL, pSchemaRoot, strXPathExt.str());
-    }
-
-    strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
-    StringBuffer strTemp(strXPathExt);
-    strTemp.append("[1]");
-
-    //if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
-    if (pSchemaRoot->queryPropTree(strTemp.str()) != NULL)
-    {
-        pAttributeArray = CAttributeArray::load(NULL, pSchemaRoot, strXPathExt.str());
-    }
-
-    strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_CHOICE);
-
-    if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
-    {
-        pChoice = CChoice::load(NULL, pSchemaRoot, strXPathExt.str());
-    }
-
-    strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ELEMENT);
-    if (pSchemaRoot->queryPropTree(strXPathExt.str()) != NULL)
-    {
-        pElementArray = CElementArray::load(NULL, pSchemaRoot, strXPathExt.str());
-    }
-
-
-#endif ///////////////////////////////
-
     CComplexType *pComplexType = new CComplexType(pParentNode, pName, pSequence, pComplexContent, pAttributeArray, pChoice, pElementArray, pAttributeGroupArray);
 
     assert(pComplexType != NULL);
@@ -216,54 +251,6 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
     return pComplexType;
 }
 
-/*CXSDNodeBase* CComplexTypeArray::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
-{
-    CXSDNodeBase* pMatchingNode = NULL;
-
-    len = this->length()-1;
-
-    for (int idx = 0; idx < len; idx++)
-    {
-
-        pMatchingNode = this->getNodeByTypeAndNameDescending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-
-        pMatchingNode = this->item(idx).getNodeByTypeAndNameAscending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-
-    }
-
-    return NULL;  // nothing found
-}
-
-
-CXSDNodeBase* CComplexTypeArray::getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
-{
-    CXSDNodeBase* pMatchingNode = NULL;
-
-    len = this->length()-1;
-
-    for (int idx = 0; idx < len; idx++)
-    {
-        pMatchingNode = this->item(idx).getNodeByTypeAndNameDescending(eNodeType, pName);
-
-        if (pMatchingNode != NULL)
-        {
-            return pMatchingNode;
-        }
-    }
-
-    return NULL;  // nothing found
-}*/
-
 void CComplexTypeArray::dump(std::ostream& cout, unsigned int offset) const
 {
     offset+= STANDARD_OFFSET_1;
@@ -273,6 +260,23 @@ void CComplexTypeArray::dump(std::ostream& cout, unsigned int offset) const
     QUICK_OUT_ARRAY(cout, offset);
 
     QuickOutFooter(cout, XSD_COMPLEX_TYPE_ARRAY_STR, offset);
+}
+
+void CComplexTypeArray::getDocumentation(StringBuffer &strDoc) const
+{
+    strDoc.appendf("<%s>\n", DM_TABLE_BEGIN);
+    //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+
+    QUICK_DOC_ARRAY(strDoc);
+
+    strDoc.appendf("</%s>\n</%s>\n", DM_TABLE_END, DM_SECT3);
+    //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+
+}
+
+void CComplexTypeArray::traverseAndProcessNodes() const
+{
+    QUICK_TRAVERSE_AND_PROCESS;
 }
 
 const char* CComplexTypeArray::getXML(const char* /*pComponent*/)

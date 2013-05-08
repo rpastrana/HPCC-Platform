@@ -21,6 +21,10 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
+
     virtual const char* getXML(const char* /*pComponent*/);
 
     static CSimpleType* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
@@ -72,6 +76,10 @@ public:
     }
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
 
     static CSimpleTypeArray* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
 

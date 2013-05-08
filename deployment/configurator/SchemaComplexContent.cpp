@@ -1,4 +1,3 @@
-#include <cassert>
 #include "jptree.hpp"
 #include "XMLTags.h"
 #include "SchemaComplexContent.hpp"
@@ -51,6 +50,27 @@ void CComplexContent::dump(std::ostream& cout, unsigned int offset) const
     }
 
     QuickOutFooter(cout, XSD_COMPLEX_CONTENT_STR, offset);
+}
+
+
+void CComplexContent::getDocumentation(StringBuffer &strDoc) const
+{
+    if (m_pExtension != NULL)
+    {
+        m_pExtension->getDocumentation(strDoc);
+    }
+}
+
+void CComplexContent::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (m_pExtension != NULL)
+    {
+        m_pExtension->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
 }
 
 const char* CComplexContent::getXML(const char* /*pComponent*/)

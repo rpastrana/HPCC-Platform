@@ -13,40 +13,51 @@
                                 QuickOutPad(X,Z+STANDARD_OFFSET_1);                     \
                                 X << idx+1 << "]" << std::endl;                         \
                                 (this->item(idx)).dump(cout,Z);                         \
-                             }                                                          \
+                             }
+
+#define QUICK_DOC_ARRAY(X) for (int idx=0; idx < this->length(); idx++)                 \
+                           {                                                            \
+                                (this->item(idx)).getDocumentation(X);                  \
+                           }
+
+#define QUICK_TRAVERSE_AND_PROCESS  for (int idx=0; idx < this->length(); idx++)        \
+{                                                                                       \
+    CXSDNodeBase::processEntryHandlers(this);                                           \
+    this->item(idx).traverseAndProcessNodes();                                          \
+    CXSDNodeBase::processExitHandlers(this);                                            \
+}
 
 #define GETTER(X) virtual const char* get##X() const { return m_str##X.str(); }
 #define SETTER(X) virtual void set##X(const char* p) { m_str##X.clear().append(p); }
 #define GETTERSETTER(X) protected: StringBuffer m_str##X; public: GETTER(X) SETTER(X) public:
 #define SETPARENTNODE(X, Y) if (X!= NULL && Y != NULL) X->setParentNode(Y);
 
-//static const char* XSD_NODE_BASE("NodeBase");
-//static const char* XSD_NODE("Node");
-
 enum NODE_TYPES
 {
-    XSD_ERROR = 0,
-    XSD_ANNOTATION = 1,
-    XSD_APP_INFO = 2,
-    XSD_ATTRIBUTE = 4,
-    XSD_ATTRIBUTE_ARRAY = 8,
-    XSD_ATTRIBUTE_GROUP = 16,
-    XSD_ATTRIBUTE_GROUP_ARRAY = 32,
-    XSD_CHOICE = 64,
-    XSD_COMPLEX_CONTENT = 128,
-    XSD_COMPLEX_TYPE = 256,
-    XSD_COMPLEX_TYPE_ARRAY = 512,
-    XSD_DOCUMENTATION = 1024,
-    XSD_ELEMENT = 2048,
-    XSD_ELEMENT_ARRAY = 4096,
-    XSD_EXTENSION = 8192,
-    XSD_INCLUDE =  16384,
-    XSD_INCLUDE_ARRAY = 32768,
-    XSD_RESTRICTION = 65536,
-    XSD_SCHEMA = 131072,
-    XSD_SEQUENCE = 262144,
-    XSD_SIMPLE_TYPE = 524288,
-    XSD_SIMPLE_TYPE_ARRAY = 1048576
+    XSD_ERROR = 0x0,
+    XSD_ANNOTATION = 0x1,
+    XSD_APP_INFO = 0x2,
+    XSD_ATTRIBUTE = 0x4,
+    XSD_ATTRIBUTE_ARRAY = 0x8,
+    XSD_ATTRIBUTE_GROUP = 0x10,
+    XSD_ATTRIBUTE_GROUP_ARRAY = 0x20,
+    XSD_CHOICE = 0x40,
+    XSD_COMPLEX_CONTENT = 0x80,
+    XSD_COMPLEX_TYPE = 0x100,
+    XSD_COMPLEX_TYPE_ARRAY = 0x200,
+    XSD_DOCUMENTATION = 0x400,
+    XSD_ELEMENT = 0x800,
+    XSD_ELEMENT_ARRAY = 0x1000,
+    XSD_EXTENSION = 0x2000,
+    XSD_INCLUDE =  0x4000,
+    XSD_INCLUDE_ARRAY = 0x8000,
+    XSD_RESTRICTION = 0x10000,
+    XSD_SCHEMA = 0x20000,
+    XSD_SEQUENCE = 0x40000,
+    XSD_SIMPLE_TYPE = 0x80000,
+    XSD_SIMPLE_TYPE_ARRAY = 0x100000,
+    XSD_ENUMERATION = 0x200000,
+    XSD_ENUMERATION_ARRAY = 0x4000000
 };
 
 static const char* XSD_ERROR_STR("ERROR");
@@ -71,6 +82,8 @@ static const char* XSD_SCHEMA_STR("Schema");
 static const char* XSD_SEQUENCE_STR("Sequence");
 static const char* XSD_SIMPLE_TYPE_STR("SimpleType");
 static const char* XSD_SIMPLE_TYPE_ARRAY_STR("SimpleTypeArray");
+static const char* XSD_ENUMERATION_STR("Enumeration");
+static const char* XSD_ENUMERATION_ARRAY_STR("EnumerationArray");
 
 static const char* DEFAULT_SCHEMA_DIRECTORY("/opt/HPCCSystems/componentfiles/configxml/");
 
@@ -142,6 +155,18 @@ public:
 private:
 
     mutable atomic_t xxcount;
+};
+
+
+class CXSDNodeBase;
+
+class CXSDNodeHandler : public CInterface
+{
+public:
+
+    virtual void onEventEntry(const CXSDNodeBase *pNode) const = 0;
+    virtual void onEventExit(const CXSDNodeBase *pNode) const = 0;
+
 };
 
 class CXSDNodeBase
@@ -225,7 +250,6 @@ public:
             strcpy(m_pNodeType, XSD_ERROR_STR);
             break;
         }
-
     }
 
     virtual ~CXSDNodeBase()
@@ -237,7 +261,12 @@ public:
         dump(std::cout);
     }
 
-    CXSDNodeBase* getParentNode()
+    virtual CXSDNodeBase* getParentNode()
+    {
+        return m_pParentNode;
+    }
+
+    virtual const CXSDNodeBase* getConstParentNode() const
     {
         return m_pParentNode;
     }
@@ -346,27 +375,68 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const = 0;
 
+    virtual void traverseAndProcessNodes() const = 0;
+
     virtual const char* getXML(const char* /*pComponent*/)
     {
         return NULL;
     }
 
+    virtual void getDocumentation(StringBuffer &strDoc) const = 0;
+
+    static void addEntryHandler(CXSDNodeHandler &Handler)
+    {
+        s_callBackEntryHandlersArray.append(Handler);
+    }
+
+    static void addExitHandler(CXSDNodeHandler &Handler)
+    {
+        s_callBackExitHandlersArray.append(Handler);
+    }
+
 protected:
 
-    CXSDNodeBase* m_pParentNode;
-    StringBuffer  m_strXML;
-    NODE_TYPES    m_eNodeType;
-    char         m_pNodeType[1024];
+    static void processEntryHandlers(const CXSDNodeBase *pBase)
+    {
+        assert(pBase != NULL);
+
+        if (pBase == NULL)
+        {
+            return;
+        }
+
+        for (int idx = 0; idx < s_callBackEntryHandlersArray.length(); idx++ )
+        {
+            s_callBackEntryHandlersArray.item(idx).onEventEntry(pBase);
+        }
+    }
+
+    static void processExitHandlers(const CXSDNodeBase *pBase)
+    {
+        assert(pBase != NULL);
+
+        if (pBase == NULL)
+        {
+            return;
+        }
+
+        for (int idx = 0; idx < s_callBackExitHandlersArray.length(); idx++ )
+        {
+            s_callBackExitHandlersArray.item(idx).onEventExit(pBase);
+        }
+    }
+
+    CXSDNodeBase*               m_pParentNode;
+    StringBuffer                m_strXML;
+    NODE_TYPES                  m_eNodeType;
+    char                        m_pNodeType[1024];
+    static CIArrayOf<CXSDNodeHandler>  s_callBackEntryHandlersArray;
+    static CIArrayOf<CXSDNodeHandler>  s_callBackExitHandlersArray;
 
 private:
 
-    /*virtual int length()
-    {
-        return 0;
-    }*/
-
-//    CXSDNodeBase();
 };
+
 
 class CXSDNode : public CInterface, public CXSDNodeBase
 {
@@ -400,7 +470,6 @@ public:
         }
 
         return NULL;
-
     }
 
     virtual CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
@@ -412,9 +481,6 @@ public:
 
 private:
 
-/*    CXSDNode(CXSDNodeBase *pParentNode = NULL) : CXSDNodeBase::CXSDNodeBase(pParentNode)
-    {
-    }*/
 };
 
 #endif // _SCHEMA_COMMON_HPP_

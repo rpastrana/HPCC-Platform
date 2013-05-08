@@ -102,3 +102,9 @@ void CAppInfo::dump(std::ostream &cout, unsigned int offset) const
 
     QuickOutFooter(cout, XSD_APP_INFO_STR, offset);
 }
+
+void CAppInfo::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+    CXSDNodeBase::processExitHandlers(this);
+}

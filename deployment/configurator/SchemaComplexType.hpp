@@ -25,13 +25,23 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
+
     virtual const char* getXML(const char* /*pComponent*/);
+
+    virtual const CAttributeArray* getAttributeArray() const
+    {
+        return m_pAttributeArray;
+    }
+
 
     static CComplexType* load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
 
 protected:
 
-    CComplexType(CXSDNodeBase* pParentNode, const char* pName = NULL, CSequence *pSequence = NULL, CComplexContent *pComplexContent = NULL, CAttributeArray *pAttributeArray = NULL, CChoice *pChoice = NULL, CElementArray *pElementArray = NULL, CAttributeGroupArray *pAttributeGroupArray = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_COMPLEX_TYPE_ARRAY), m_strName(pName), m_pSequence(pSequence), m_pComplexContent(pComplexContent), m_pAttributeArray(pAttributeArray), m_pChoice(pChoice), m_pElementArray(pElementArray), m_pAttributeGroupArray(pAttributeGroupArray)
+    CComplexType(CXSDNodeBase* pParentNode, const char* pName = NULL, CSequence *pSequence = NULL, CComplexContent *pComplexContent = NULL, CAttributeArray *pAttributeArray = NULL, CChoice *pChoice = NULL, CElementArray *pElementArray = NULL, CAttributeGroupArray *pAttributeGroupArray = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_COMPLEX_TYPE), m_strName(pName), m_pSequence(pSequence), m_pComplexContent(pComplexContent), m_pAttributeArray(pAttributeArray), m_pChoice(pChoice), m_pElementArray(pElementArray), m_pAttributeGroupArray(pAttributeGroupArray)
     {
     }
 
@@ -63,6 +73,10 @@ public:
     }
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
 
     virtual const char* getXML(const char* /*pComponent*/);
 

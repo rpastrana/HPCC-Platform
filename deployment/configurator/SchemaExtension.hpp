@@ -18,6 +18,13 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void getDocumentation(StringBuffer &strDoc) const
+    {
+        assert(false); // Should not be called directly
+    }
+
+    virtual void traverseAndProcessNodes() const;
+
     virtual const char* getXML(const char* /*pComponent*/);
 
     virtual void initExtension();

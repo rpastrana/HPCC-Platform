@@ -160,25 +160,38 @@ void CConfigSchemaHelper::printConfigSchema(StringBuffer &strXML) const
             if (pSchema != NULL)
             {
                 //strXML.append(pSchema->dump(std::cout));
+                if (strXML.length() > 0 ? strcmp(strXML.str(), pXSDSchema) == 0 : true)
                 pSchema->dump(std::cout);
             }
         }
     }
-/*    CElementArray *pElemArray;
-
-    LOOP_THRU_BUILD_SET
-    {
-        CElementArray *pElementArray = m_componentElementArrayMap.getValue(m_buildSetArray.item(idx).getSchema());
-        //CAttributeGroupArray *pAttriubuteGroupArray
-
-        if (pElementArray != NULL)
-        {
-            pElementArray->dump(std::cout);
-        }
-    }
-    */
 }
 
+void CConfigSchemaHelper::printDocumentation(StringBuffer &str)
+{
+    const char *pComponent = NULL;
+    CSchema* pSchema = NULL;
+    LOOP_THRU_BUILD_SET
+    {
+        if (pComponent == NULL || strcmp(pComponent, m_buildSetArray.item(idx).getSchema()) == 0)
+        {
+            const char* pXSDSchema = m_buildSetArray.item(idx).getSchema();
+
+            if (pXSDSchema == NULL)
+            {
+                continue;
+            }
+
+            pSchema = m_schemaMap.getValue(m_buildSetArray.item(idx).getSchema());
+
+            if (pSchema != NULL)
+            {
+                if (str.length() > 0 ? strcmp(str.str(), pXSDSchema) == 0 : true)
+                    pSchema->getDocumentation(str.clear());
+            }
+        }
+    }
+}
 
 //test purposes
 bool CConfigSchemaHelper::getXMLFromSchema(StringBuffer& strXML, const char* pComponent)
@@ -368,4 +381,30 @@ void CConfigSchemaHelper::processExtensionArray()
         }
     }
 
+}
+
+void CConfigSchemaHelper::traverseAndProcessArray(const char *pXSDName)
+{
+    const char *pComponent = NULL;
+    CSchema* pSchema = NULL;
+    LOOP_THRU_BUILD_SET
+    {
+        if (pComponent == NULL || strcmp(pComponent, m_buildSetArray.item(idx).getSchema()) == 0)
+        {
+            const char* pXSDSchema = m_buildSetArray.item(idx).getSchema();
+
+            if (pXSDSchema == NULL || (pXSDName != NULL && strcmp(pXSDName, pXSDSchema) != 0))
+            {
+                continue;
+            }
+
+            pSchema = m_schemaMap.getValue(m_buildSetArray.item(idx).getSchema());
+
+            if (pSchema != NULL)
+            {
+                //strXML.append(pSchema->dump(std::cout));
+                pSchema->traverseAndProcessNodes();
+            }
+        }
+    }
 }

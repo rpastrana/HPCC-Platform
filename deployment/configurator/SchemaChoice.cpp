@@ -75,3 +75,15 @@ void CChoice::dump(std::ostream &cout, unsigned int offset) const
 
     QuickOutFooter(cout, XSD_CHOICE_STR, offset);
 }
+
+void CChoice::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
+}

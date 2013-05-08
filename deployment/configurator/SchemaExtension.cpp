@@ -19,12 +19,20 @@ void CExtension::dump(std::ostream& cout, unsigned int offset) const
     {
         this->getBaseNode()->dump(cout, offset);
     }
-/*    else
-    {
-        QUICK_OUT(cout, Base, offset);  // must be a built in type ??
-    }*/
 
     QuickOutFooter(cout, XSD_EXTENSION_STR, offset);
+}
+
+void CExtension::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+    if (this->getBaseNode() != NULL)
+    {
+        this->getBaseNode()->traverseAndProcessNodes();
+    }
+
+    CXSDNodeBase::processExitHandlers(this);
 }
 
 const char* CExtension::getXML(const char* /*pComponent*/)

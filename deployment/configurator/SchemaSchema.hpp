@@ -16,6 +16,10 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
+
     virtual const char* getXML(const char* /*pComponent*/);
 
     GETTERSETTER(XMLNS_XS)
@@ -36,8 +40,6 @@ public:
 
     static CSchema* load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, const char* xpath);
     static CSchema* load(const char* pSchemaLocation, CXSDNodeBase* pParentNode);
-    //static CSchema* load(const char* pSchemaLocation);
-    //static bool AddToComplexTypeArray(CSchema *pSchema, const char* pSchemaLocation);
 
 protected:
 

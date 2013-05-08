@@ -16,6 +16,10 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
+
     virtual const char* getXML(const char* /*pComponent*/);
 
     static CComplexContent* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);

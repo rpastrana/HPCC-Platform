@@ -20,6 +20,25 @@ void CInclude::dump(std::ostream& cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_INCLUDE_STR, offset);
 }
 
+void CInclude::getDocumentation(StringBuffer &strDoc) const
+{
+    // NOOP
+}
+
+void CInclude::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+
+
+    // TODO:: Do we need to traverse external schemas?
+/*    if (this->getIncludeSchema() != NULL)
+    {
+        this->getIncludeSchema()->traverseAndProcessNodes();
+    }*/
+
+    CXSDNodeBase::processExitHandlers(this);
+}
+
 const char* CInclude::getXML(const char* /*pComponent*/)
 {
     if (m_strXML.length() == 0)
@@ -131,4 +150,14 @@ void CIncludeArray::dump(std::ostream &cout, unsigned int offset) const
     QUICK_OUT_ARRAY(cout, offset);
 
     QuickOutFooter(cout, XSD_INCLUDE_ARRAY_STR, offset);
+}
+
+void CIncludeArray::getDocumentation(StringBuffer &strDoc) const
+{
+    QUICK_DOC_ARRAY(strDoc);
+}
+
+void CIncludeArray::traverseAndProcessNodes() const
+{
+    QUICK_TRAVERSE_AND_PROCESS;
 }

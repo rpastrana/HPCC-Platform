@@ -31,9 +31,18 @@ public:
     GETTERSETTER(Default)
     GETTERSETTER(Use)
 
+    const CAnnotation* getAnnotation() const
+    {
+        return m_pAnnotation;
+    }
+
     virtual const char* getXML(const char* pComponent);
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
 
     static CAttribute* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
 
@@ -72,11 +81,11 @@ public:
     {
     }
 
-
-    /*virtual CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName);
-    virtual CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName);*/
-
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
 
     virtual const char* getXML(const char* /*pComponent*/);
 
@@ -121,6 +130,10 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
+
     static CAttributeGroup* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
 
 protected:
@@ -145,10 +158,12 @@ public:
 
     virtual ~CAttributeGroupArray();
 
-    //virtual CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName);
-    //virtual CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName);
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
 
     static CAttributeGroupArray* load(const char* pSchemaFile);
     static CAttributeGroupArray* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);

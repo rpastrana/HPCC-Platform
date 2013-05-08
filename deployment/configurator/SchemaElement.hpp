@@ -27,55 +27,24 @@ public:
     GETTERSETTER(MinOccurs)
     GETTERSETTER(Type)
 
-    /*const char* getName() const
-    {
-        return m_strName.str();
-    }
-
-    void setName(const char* pName)
-    {
-        m_strName.clear().append(pName);
-    }
-
-    const char* getMaxOccurs() const
-    {
-        return m_strMaxOccurs.str();
-    }
-
-    void setMaxOccurs(const char* pMaxOccurs)
-    {
-        m_strMaxOccurs.clear().append(pMaxOccurs);
-    }
-
-    const char* getMinOccurs() const
-    {
-        return m_strMinOccurs.str();
-    }
-
-    void setMinOccurs(const char* pMinOccurs)
-    {
-        m_strMinOccurs.clear().append(pMinOccurs);
-    }
-
-    const char* getType() const
-    {
-        return m_strType.str();
-    }
-
-    void setType(const char* pType)
-    {
-        m_strType.clear().append(pType);
-    }*/
-
     virtual const char* getXML(const char* /*pComponent*/);
 
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
 
-    static CElement* load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, const char* xpath);
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
+
+    const CAnnotation* getAnnotation() const
+    {
+        return m_pAnnotation;
+    }
+
+    static CElement* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
 
 protected:
 
-    CElement(CXSDNodeBase* pRootNode, const char* pName = "") : CXSDNode::CXSDNode(pRootNode, XSD_ELEMENT), m_strMinOccurs(""), m_strMaxOccurs(""), m_strName(pName), m_pAnnotation(NULL), m_pComplexTypeArray(NULL), m_pAttributeArray(NULL)
+    CElement(CXSDNodeBase* pParentNode, const char* pName = "") : CXSDNode::CXSDNode(pParentNode, XSD_ELEMENT), m_strMinOccurs(""), m_strMaxOccurs(""), m_strName(pName), m_pAnnotation(NULL), m_pComplexTypeArray(NULL), m_pAttributeArray(NULL)
     {
     }
 
@@ -103,6 +72,10 @@ public:
     }
 
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void traverseAndProcessNodes() const;
 
     virtual const char* getXML(const char* /*pComponent*/);
 

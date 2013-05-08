@@ -1,5 +1,6 @@
 #include "jptree.hpp"
 #include "SchemaRestriction.hpp"
+#include "SchemaEnumeration.hpp"
 #include "XMLTags.h"
 
 void CRestriction::dump(std::ostream& cout, unsigned int offset) const
@@ -14,7 +15,20 @@ void CRestriction::dump(std::ostream& cout, unsigned int offset) const
     // to do call base
     // base->dump(cout, offset);
 
+    if (m_pEnumerationArray != NULL)
+    {
+        m_pEnumerationArray->dump(cout, offset);
+    }
+
     QuickOutFooter(cout, XSD_RESTRICTION_STR, offset);
+}
+
+void CRestriction::getDocumentation(StringBuffer &strDoc) const
+{
+    if (m_pEnumerationArray != NULL)
+    {
+        m_pEnumerationArray->getDocumentation(strDoc);
+    }
 }
 
 CRestriction* CRestriction::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
@@ -37,6 +51,12 @@ CRestriction* CRestriction::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
     CRestriction* pRestriction = new CRestriction(pParentNode, pID, pBase);
 
     return pRestriction;
+}
+
+void  CRestriction::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+    CXSDNodeBase::processExitHandlers(this);
 }
 
 const char* CRestriction::getXML(const char* /*pComponent*/)

@@ -1,7 +1,13 @@
 ﻿#include "EnvironmentConfiguration.hpp"
 #include "WizardBase.hpp"
 #include "ConfigSchemaHelper.hpp"
+#include "SchemaCommon.hpp"
+#include "NodeHandlerDocumentation.hpp"
 #include <iostream>
+
+
+CIArrayOf<CXSDNodeHandler> CXSDNodeBase::s_callBackEntryHandlersArray;
+CIArrayOf<CXSDNodeHandler> CXSDNodeBase::s_callBackExitHandlersArray;
 
 int main(int argc, char *argv[])
 {
@@ -29,12 +35,23 @@ int main(int argc, char *argv[])
         std::cout << strXML.str();
     }
 */
-    StringBuffer str;
-    schemaHelper.printConfigSchema(str);
+    StringBuffer str("dafilesrv.xsd");
+    /*schemaHelper.printConfigSchema(str);
+    {
+        std::cout << str.str();
+    }*/
+
+    schemaHelper.printDocumentation(str);
     {
         std::cout << str.str();
     }
 
-    //std::cout << t
+    NodeHandlerDocumentation docHandler;
+
+    CXSDNodeBase::addEntryHandler(docHandler);
+    CXSDNodeBase::addExitHandler(docHandler);
+
+    //schemaHelper.traverseAndProcessArray("dafilesrv.xsd");
+
     return 0;
 }

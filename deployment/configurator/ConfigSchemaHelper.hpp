@@ -24,19 +24,13 @@ public:
     virtual ~CConfigSchemaHelper();
 
     void getBuildSetComponents(StringArray& buildSetArray) const;
-    //const CAttributeArray* getComponentAttributes(const char*);
-    //const CAttributeGroupArray* getComponentAttributeGroups(const char*);
     bool populateBuildSet();
-    //bool populateComponentAttributes();
-    //bool populateComponentAttributeGroups();
-    //bool populateElements();
     bool populateSchema();
     void printConfigSchema(StringBuffer &str) const;
 
     CSchema* getSchemaForXSD(const char* pComponent);
 
     void setSchemaForXSD(const char* pComponent, CSchema *pSchema);
-
 
     CSimpleType* getSimpleTypeWithName(const char* pName);
 
@@ -54,6 +48,10 @@ public:
     IPropertyTree* getSchema(const char* );
 
     void processExtensionArray();
+
+    void traverseAndProcessArray(const char *pXSDName = NULL);
+
+    void printDocumentation(StringBuffer &str);
 
 
 protected:

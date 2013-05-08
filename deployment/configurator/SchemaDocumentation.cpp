@@ -13,6 +13,12 @@ void CDocumentation::dump(std::ostream& cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_DOCUMENTATION_STR, offset);
 }
 
+void CDocumentation::traverseAndProcessNodes() const
+{
+    CXSDNodeBase::processEntryHandlers(this);
+    CXSDNodeBase::processExitHandlers(this);
+}
+
 CDocumentation* CDocumentation::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
     if (pSchemaRoot == NULL)

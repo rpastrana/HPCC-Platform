@@ -32,6 +32,26 @@ void CSimpleType::dump(std::ostream& cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_SIMPLE_TYPE_STR, offset);
 }
 
+void CSimpleType::getDocumentation(StringBuffer &strDoc) const
+{
+    if (m_pRestriction != NULL)
+    {
+        m_pRestriction->getDocumentation(strDoc);
+    }
+}
+
+void CSimpleType::traverseAndProcessNodes() const
+{
+    CSimpleType::processEntryHandlers(this);
+
+    if (m_pRestriction != NULL)
+    {
+        m_pRestriction->traverseAndProcessNodes();
+    }
+
+    CSimpleType::processExitHandlers(this);
+}
+
 CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
     if (pSchemaRoot == NULL || pParentNode == NULL)
@@ -119,6 +139,11 @@ void CSimpleTypeArray::dump(std::ostream& cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_SIMPLE_TYPE_ARRAY_STR, offset);
 }
 
+void CSimpleTypeArray::traverseAndProcessNodes() const
+{
+    QUICK_TRAVERSE_AND_PROCESS;
+}
+
 CSimpleTypeArray* CSimpleTypeArray::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
     if (pSchemaRoot == NULL)
@@ -145,4 +170,9 @@ CSimpleTypeArray* CSimpleTypeArray::load(CXSDNodeBase* pParentNode, IPropertyTre
     }
 
     return pSimpleTypeArray;
+}
+
+void CSimpleTypeArray::getDocumentation(StringBuffer &strDoc) const
+{
+    QUICK_DOC_ARRAY(strDoc);
 }

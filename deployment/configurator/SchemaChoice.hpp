@@ -19,6 +19,14 @@ public:
     GETTERSETTER(ID)
 
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
+
+    virtual void getDocumentation(StringBuffer &strDoc) const
+    {
+        assert(false); // NOT IMPLEMENTED
+    }
+
+    virtual void traverseAndProcessNodes() const;
+
     virtual const char* getXML(const char* /*pComponent*/);
 
     static CChoice* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
