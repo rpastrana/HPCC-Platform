@@ -123,13 +123,14 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
         return;
     }
 
-    if (this->getName() != NULL && stricmp(this->getName(), "Instance") == 0)
+    if (this->getName() != NULL && (stricmp(this->getName(), "Instance") == 0 || stricmp(this->getName(), "Notes") == 0 ))
     {
         return; // don't document instance
     }
 
     if (pNodeBase->getNodeType() == XSD_SCHEMA)
     {
+        // component name would be here
         strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, this->getName(),"_mod");
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
 
@@ -138,23 +139,20 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
             m_pComplexTypeArray->getDocumentation(strDoc);
         }
 
-         strDoc.appendf("</%s>\n", DM_SECT2);
+         //strDoc.append(DM_SECT2_END);
     }
-    else
+    else if (m_pComplexTypeArray != NULL)
     {
-        strDoc.appendf("<%s>\n<%s>%s</%s>\n", DM_SECT3, DM_TITLE, this->getName(), DM_TITLE);
-        strDoc.appendf("<%s>\n", DM_TABLE_BEGIN);
+        strDoc.append(DM_SECT3_BEGIN);
+        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
 
         if (m_pAnnotation != NULL)
         {
             // m_pAnnotation->getDocumentation(strDoc);  // No reason to call this since Annotations don't directly document
         }
-        if (m_pComplexTypeArray != NULL)
-        {
-            m_pComplexTypeArray->getDocumentation(strDoc);
-        }
+        m_pComplexTypeArray->getDocumentation(strDoc);
 
-        strDoc.appendf("</%s>\n</%s>\n", DM_TABLE_END, DM_SECT3);
+        strDoc.append(DM_SECT3_END);
     }
 }
 

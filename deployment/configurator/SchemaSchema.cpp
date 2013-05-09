@@ -2,6 +2,7 @@
 #include "XMLTags.h"
 #include "SchemaSchema.hpp"
 #include "ConfigSchemaHelper.hpp"
+#include "DocumentationMarkup.hpp"
 
 CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, const char* xpath)
 {
@@ -191,6 +192,8 @@ void CSchema::getDocumentation(StringBuffer &strDoc) const
     {
         m_pIncludeArray->getDocumentation(strDoc);
     }
+
+    strDoc.append(DM_SECT2_END);
 }
 
 void CSchema::traverseAndProcessNodes() const

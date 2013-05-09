@@ -35,16 +35,32 @@ int main(int argc, char *argv[])
         std::cout << strXML.str();
     }
 */
-    StringBuffer str("dafilesrv.xsd");
-    /*schemaHelper.printConfigSchema(str);
-    {
-        std::cout << str.str();
-    }*/
 
-    schemaHelper.printDocumentation(str);
+    if (argc == 1)
     {
-        std::cout << str.str();
+        StringBuffer str("dafilesrv.xsd");
+
+        schemaHelper.printDocumentation(str);
+        {
+            std::cout << str.str();
+        }
+
+        str.clear().append("dali.xsd");
+        schemaHelper.printDocumentation(str);
+        {
+            std::cout << str.str();
+        }
     }
+    else
+    {
+        StringBuffer str(argv[1]);
+
+        schemaHelper.printDocumentation(str);
+        {
+            std::cout << str.str();
+        }
+    }
+
 
     NodeHandlerDocumentation docHandler;
 

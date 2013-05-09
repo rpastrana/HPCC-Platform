@@ -221,7 +221,22 @@ void CAttributeArray::dump(std::ostream &cout, unsigned int offset) const
 
 void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 {
-    QUICK_DOC_ARRAY(strDoc);
+    assert(this->getConstParentNode() != NULL);
+
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE)
+    {
+        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, "Attributes", DM_TITLE);  // Attributes is hard coded default
+    }
+        strDoc.append(DM_TABLE_BEGIN);
+        strDoc.append(DM_TGROUP4_BEGIN);
+        strDoc.append(DM_COL_SPEC4);
+        strDoc.append(DM_TBODY_BEGIN);
+
+        QUICK_DOC_ARRAY(strDoc);
+
+        strDoc.append(DM_TBODY_END);
+        strDoc.append(DM_TGROUP4_END);
+        strDoc.append(DM_TABLE_END);
 }
 
 void CAttributeArray::traverseAndProcessNodes() const
@@ -298,7 +313,11 @@ void CAttributeGroup::dump(std::ostream &cout, unsigned int offset) const
 
 void CAttributeGroup::getDocumentation(StringBuffer &strDoc) const
 {
-    assert(false);  // NOT IMPLEMENTED
+    if (m_pAttributeArray != NULL)
+    {
+        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
+        m_pAttributeArray->getDocumentation(strDoc);
+    }
 }
 
 void CAttributeGroup::traverseAndProcessNodes() const
@@ -435,7 +454,21 @@ void CAttributeGroupArray::dump(std::ostream& cout, unsigned int offset) const
 
 void CAttributeGroupArray::getDocumentation(StringBuffer &strDoc) const
 {
-    QUICK_DOC_ARRAY(strDoc);
+    StringBuffer strDocDupe1(strDoc);
+
+    QUICK_DOC_ARRAY(strDocDupe1);
+
+    if (strDocDupe1.length() == strDoc.length())
+    {
+       return;
+    }
+
+    for (int idx=0; idx < this->length(); idx++)
+    {
+        strDoc.append(DM_SECT3_BEGIN);
+        (this->item(idx)).getDocumentation(strDoc);
+        strDoc.append(DM_SECT3_END);
+    }
 }
 
 void CAttributeGroupArray::traverseAndProcessNodes() const

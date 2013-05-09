@@ -264,14 +264,11 @@ void CComplexTypeArray::dump(std::ostream& cout, unsigned int offset) const
 
 void CComplexTypeArray::getDocumentation(StringBuffer &strDoc) const
 {
-    strDoc.appendf("<%s>\n", DM_TABLE_BEGIN);
-    //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+    strDoc.append(DM_SECT3_BEGIN);
 
     QUICK_DOC_ARRAY(strDoc);
 
-    strDoc.appendf("</%s>\n</%s>\n", DM_TABLE_END, DM_SECT3);
-    //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
-
+    strDoc.append(DM_SECT3_END);
 }
 
 void CComplexTypeArray::traverseAndProcessNodes() const
