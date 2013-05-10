@@ -8,7 +8,9 @@
 #include "SchemaComplexType.hpp"
 #include "SchemaElement.hpp"
 #include "SchemaAttributes.hpp"
+#include "SchemaAppInfo.hpp"
 #include "DocumentationMarkup.hpp"
+
 
 CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
@@ -56,6 +58,11 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
     pElement->m_pAttributeArray = CAttributeArray::load(pElement, pSchemaRoot, strXPathExt.str());
+
+    if (pElement->m_pAnnotation != NULL && pElement->m_pAnnotation->getAppInfo() != NULL && pElement->m_pAnnotation->getAppInfo()->getTitle() != NULL)
+    {
+        pElement->setName(pElement->m_pAnnotation->getAppInfo()->getTitle());
+    }
 
     SETPARENTNODE(pElement, pParentNode);
 
@@ -134,16 +141,17 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
         strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, this->getName(),"_mod");
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
 
+        strDoc.append(DM_SECT3_BEGIN);
+
         if (m_pComplexTypeArray != NULL)
         {
             m_pComplexTypeArray->getDocumentation(strDoc);
         }
 
-         //strDoc.append(DM_SECT2_END);
+        strDoc.append(DM_SECT3_END);
     }
     else if (m_pComplexTypeArray != NULL)
     {
-        strDoc.append(DM_SECT3_BEGIN);
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
 
         if (m_pAnnotation != NULL)
@@ -151,8 +159,6 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
             // m_pAnnotation->getDocumentation(strDoc);  // No reason to call this since Annotations don't directly document
         }
         m_pComplexTypeArray->getDocumentation(strDoc);
-
-        strDoc.append(DM_SECT3_END);
     }
 }
 

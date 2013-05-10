@@ -76,6 +76,14 @@ void CChoice::dump(std::ostream &cout, unsigned int offset) const
     QuickOutFooter(cout, XSD_CHOICE_STR, offset);
 }
 
+void CChoice::getDocumentation(StringBuffer &strDoc) const
+{
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getDocumentation(strDoc);
+    }
+}
+
 void CChoice::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);

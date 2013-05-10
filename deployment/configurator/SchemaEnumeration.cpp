@@ -25,6 +25,11 @@ CEnumeration* CEnumeration::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
         }
 
         const char* pValue = pTree->queryProp(XML_ATTR_VALUE);
+
+        if (pValue != NULL)
+        {
+            pEnumeration->setValue(pValue);
+        }
     }
 
     return pEnumeration;
@@ -71,9 +76,10 @@ void CEnumerationArray::dump(std::ostream &cout, unsigned int offset) const
 
 void CEnumerationArray::getDocumentation(StringBuffer &strDoc) const
 {
-    strDoc.appendf("<%s>Choices are: \n", DM_TABLE_ENTRY);
+    //strDoc.appendf("<%s>Choices are: \n", DM_TABLE_ENTRY);
+    strDoc.append("\nChoices are: \n");
     QUICK_DOC_ARRAY(strDoc);
-    strDoc.appendf("/<%s>\n", DM_TABLE_ENTRY);
+    //strDoc.appendf("/<%s>\n", DM_TABLE_ENTRY);
 }
 
 void CEnumerationArray::traverseAndProcessNodes() const

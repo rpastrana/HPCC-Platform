@@ -245,6 +245,12 @@ public:
         case(XSD_SIMPLE_TYPE_ARRAY):
             strcpy(m_pNodeType, XSD_SIMPLE_TYPE_ARRAY_STR);
             break;
+        case(XSD_ENUMERATION):
+            strcpy(m_pNodeType, XSD_ENUMERATION_STR);
+            break;
+        case(XSD_ENUMERATION_ARRAY):
+            strcpy(m_pNodeType, XSD_ENUMERATION_ARRAY_STR);
+            break;
         default:
             assert(false); // should never get here
             strcpy(m_pNodeType, XSD_ERROR_STR);

@@ -7,6 +7,8 @@
 #include "SchemaCommon.hpp"
 #include "SchemaAnnotation.hpp"
 
+class CSimpleTypeArray;
+
 static const char* DEFAULT_COMPONENT_ATTRIBUTE_XPATH("./xs:element/xs:complexType/xs:attribute");
 static const char* DEFAULT_COMPONENT_ATTRIBUTE_GROUP_XPATH("./xs:attributeGroup");
 
@@ -18,7 +20,7 @@ public:
     {
     }
 
-    CAttribute(CXSDNodeBase* pParentNode, const char* pName, const char* pType, const char* pDefault, const char* pUse) : CXSDNode::CXSDNode(pParentNode, XSD_ATTRIBUTE), m_strName(pName), m_strType(pType), m_strDefault(pDefault), m_strUse(pUse), m_pAnnotation(NULL)
+    CAttribute(CXSDNodeBase* pParentNode, const char* pName, const char* pType, const char* pDefault, const char* pUse) : CXSDNode::CXSDNode(pParentNode, XSD_ATTRIBUTE), m_strName(pName), m_strType(pType), m_strDefault(pDefault), m_strUse(pUse), m_pAnnotation(NULL), m_pSimpleTypeArray(NULL)
     {
     }
 
@@ -50,6 +52,8 @@ protected:
 
     void setAnnotation(CAnnotation *pAnnotation)
     {
+        assert(pAnnotation != NULL);  // why would this ever be NULL?
+
         if (m_pAnnotation != NULL)
         {
             //m_pAnnotation->Release();
@@ -58,13 +62,23 @@ protected:
         m_pAnnotation = pAnnotation;
     }
 
+
+    void setSimpleTypeArray(CSimpleTypeArray *pSimpleTypeArray)
+    {
+        assert(pSimpleTypeArray != NULL);  // why would this ever be NULL?
+
+        if (pSimpleTypeArray != NULL)
+        {
+            //pSimpleType->Release();
+        }
+
+        m_pSimpleTypeArray = pSimpleTypeArray;
+    }
+
     CAnnotation *m_pAnnotation;
+    CSimpleTypeArray *m_pSimpleTypeArray;
 
 private:
-
-    /*CAttribute(CXSDNodeBase* pParentNode = NULL) : CXSDNode::CXSDNode(pParentNode)
-    {
-    }*/
 
 };
 

@@ -20,10 +20,7 @@ public:
 
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
 
-    virtual void getDocumentation(StringBuffer &strDoc) const
-    {
-        assert(false); // NOT IMPLEMENTED
-    }
+    virtual void getDocumentation(StringBuffer &strDoc) const;
 
     virtual void traverseAndProcessNodes() const;
 

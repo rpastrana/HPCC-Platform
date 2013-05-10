@@ -43,12 +43,24 @@ CRestriction* CRestriction::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
     const char* pID =  NULL;
     const char* pBase =  NULL;
 
+    // TODO: handle Base in restrictions
+
     pID = pTree->queryProp(XML_ATTR_ID);
     pBase = pTree->queryProp(XML_ATTR_BASE);
 
-    // new to load BASE!!!
 
     CRestriction* pRestriction = new CRestriction(pParentNode, pID, pBase);
+
+    StringBuffer strXPathExt(xpath);
+
+    strXPathExt.append("/").append(XSD_TAG_ENUMERATION);
+
+    CEnumerationArray *pEnumerationArray = CEnumerationArray::load(pRestriction, pSchemaRoot, strXPathExt.str());
+
+    if (pEnumerationArray != NULL)
+    {
+        pRestriction->setEnumerationArray(pEnumerationArray);
+    }
 
     return pRestriction;
 }

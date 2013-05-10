@@ -54,6 +54,9 @@ void CSimpleType::traverseAndProcessNodes() const
 
 CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
+    assert(pSchemaRoot != NULL);
+    assert(pParentNode != NULL);
+
     if (pSchemaRoot == NULL || pParentNode == NULL)
     {
         return NULL;
@@ -71,21 +74,19 @@ CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchema
 
     pName = pTree->queryProp(XML_ATTR_NAME);
 
-    assert (pName != NULL);
+/*    assert (pName != NULL);
 
     if (pName == NULL)
     {
         return NULL;
     }
 
+*/
+
     pID = pTree->queryProp(XML_ATTR_ID);
 
-    StringBuffer strXPathExt(xpath);
 
-    strXPathExt.append("/").append(XSD_RESTRICTION_STR);
-
-
-    CSimpleType* pSimpleType = new CSimpleType(pParentNode, pName,pID/*, pRestriction*/);
+    CSimpleType* pSimpleType = new CSimpleType(pParentNode, pName,pID);
 
     assert(pSimpleType != NULL);
 
@@ -93,6 +94,10 @@ CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchema
     {
         return NULL;
     }
+
+
+    StringBuffer strXPathExt(xpath);
+    strXPathExt.append("/").append(XSD_TAG_RESTRICTION);
 
     CRestriction *pRestriction = CRestriction::load(pSimpleType, pSchemaRoot, strXPathExt.str());
 
@@ -146,6 +151,9 @@ void CSimpleTypeArray::traverseAndProcessNodes() const
 
 CSimpleTypeArray* CSimpleTypeArray::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
+    assert(pParentNode != NULL);
+    assert(pSchemaRoot != NULL);
+
     if (pSchemaRoot == NULL)
     {
         return NULL;
@@ -163,6 +171,8 @@ CSimpleTypeArray* CSimpleTypeArray::load(CXSDNodeBase* pParentNode, IPropertyTre
         strXPathExt.appendf("[%d]", count);
 
         CSimpleType *pSimpleType = CSimpleType::load(pSimpleTypeArray, pSchemaRoot, strXPathExt.str());
+
+        assert(pSimpleType != NULL);
 
         pSimpleTypeArray->append(*pSimpleType);
 

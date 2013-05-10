@@ -2,6 +2,7 @@
 #include "SchemaCommon.hpp"
 #include "SchemaAttributes.hpp"
 #include "SchemaAppInfo.hpp"
+#include "SchemaSimpleType.hpp"
 #include "DocumentationMarkup.hpp"
 
 
@@ -31,6 +32,11 @@ void CAttribute::dump(std::ostream& cout, unsigned int offset) const
         m_pAnnotation->dump(cout, offset);
     }
 
+    if (m_pSimpleTypeArray != NULL)
+    {
+        m_pSimpleTypeArray->dump(cout, offset);
+    }
+
     QuickOutFooter(cout,XSD_ATTRIBUTE_STR, offset);
 }
 
@@ -55,7 +61,7 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
             pToolTip = pAppInfo->getToolTip();
             if (pAppInfo->getTitle() != NULL && (pAppInfo->getTitle())[0] != 0)
             {
-                pName = pAppInfo->getTitle();  // if we have a title, then we use instead of the attribute name
+                pName = pAppInfo->getTitle();  // if we have a title, then we use it instead of the attribute name
             }
         }
     }
@@ -63,10 +69,24 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
     strDoc.appendf("<%s>\n", DM_TABLE_ROW);
     strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pName, DM_TABLE_ENTRY);
     strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pToolTip, DM_TABLE_ENTRY);
-    strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pDefaultValue, DM_TABLE_ENTRY);
+
+    if (m_pSimpleTypeArray == NULL)
+    {
+        strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pDefaultValue, DM_TABLE_ENTRY);
+    }
+    else
+    {
+        StringBuffer strDocTemp(pDefaultValue);
+
+        m_pSimpleTypeArray->getDocumentation(strDocTemp);
+
+        strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, strDocTemp.str(), DM_TABLE_ENTRY);
+    }
+
     strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pRequired, DM_TABLE_ENTRY);
     strDoc.appendf("</%s>\n", DM_TABLE_ROW);
 }
+
 void CAttribute::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -74,6 +94,11 @@ void CAttribute::traverseAndProcessNodes() const
     if (m_pAnnotation != NULL)
     {
         m_pAnnotation->traverseAndProcessNodes();
+    }
+
+    if (m_pSimpleTypeArray != NULL)
+    {
+        m_pSimpleTypeArray->traverseAndProcessNodes();
     }
 
     CXSDNodeBase::processExitHandlers(this);
@@ -121,6 +146,17 @@ CAttribute* CAttribute::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRo
     if (pAnnotation != NULL)
     {
         pAttribute->setAnnotation(pAnnotation);
+    }
+
+    strXPathExt.clear().append(xpath);
+
+    strXPathExt.append("/").append(XSD_TAG_SIMPLE_TYPE);
+
+    CSimpleTypeArray *pSimpleTypeArray = CSimpleTypeArray::load(pAttribute, pSchemaRoot, strXPathExt.str());
+
+    if (pSimpleTypeArray != NULL)
+    {
+        pAttribute->setSimpleTypeArray(pSimpleTypeArray);
     }
 
     return pAttribute;
@@ -223,20 +259,22 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 {
     assert(this->getConstParentNode() != NULL);
 
-    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE)
+    strDoc.append(DM_SECT4_BEGIN);
+
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
     {
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, "Attributes", DM_TITLE);  // Attributes is hard coded default
     }
-        strDoc.append(DM_TABLE_BEGIN);
-        strDoc.append(DM_TGROUP4_BEGIN);
-        strDoc.append(DM_COL_SPEC4);
-        strDoc.append(DM_TBODY_BEGIN);
 
-        QUICK_DOC_ARRAY(strDoc);
+    strDoc.append(DM_TABLE_BEGIN);
+    strDoc.append(DM_TGROUP4_BEGIN);
+    strDoc.append(DM_TBODY_BEGIN);
 
-        strDoc.append(DM_TBODY_END);
-        strDoc.append(DM_TGROUP4_END);
-        strDoc.append(DM_TABLE_END);
+    QUICK_DOC_ARRAY(strDoc);
+
+    strDoc.append(DM_TBODY_END);
+    strDoc.append(DM_TGROUP4_END);
+    strDoc.append(DM_TABLE_END);
 }
 
 void CAttributeArray::traverseAndProcessNodes() const

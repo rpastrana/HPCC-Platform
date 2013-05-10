@@ -32,6 +32,21 @@ protected:
     {
     }
 
+    void setEnumerationArray(CEnumerationArray *pEnumerationArray)
+    {
+        assert(pEnumerationArray != NULL);
+
+        if (pEnumerationArray != NULL)
+        {
+            m_pEnumerationArray = pEnumerationArray;
+        }
+    }
+
+    CEnumerationArray* getEnumerationArray()
+    {
+        return m_pEnumerationArray;
+    }
+
     CEnumerationArray *m_pEnumerationArray;
 
 private:

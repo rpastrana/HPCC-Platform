@@ -58,16 +58,14 @@ void CComplexType::getDocumentation(StringBuffer &strDoc) const
 {
     if (m_pSequence != NULL)
     {
-        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
         m_pSequence->getDocumentation(strDoc);
-        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
     }
 
     if (m_pComplexContent != NULL)
     {
-        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        strDoc.append(DM_SECT3_BEGIN);
         m_pComplexContent->getDocumentation(strDoc);
-        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+        strDoc.append(DM_SECT3_END);
     }
 
     if (m_pAttributeArray != NULL)
@@ -83,23 +81,23 @@ void CComplexType::getDocumentation(StringBuffer &strDoc) const
 
     if (m_pChoice != NULL)
     {
-      //  strDoc.appendf("<%s>\n", DM_TABLE_ROW);
         m_pChoice->getDocumentation(strDoc);
-        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
     }
 
     if (m_pElementArray != NULL)
     {
-        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        strDoc.append(DM_SECT3_BEGIN);
         m_pElementArray->getDocumentation(strDoc);
-        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+        strDoc.append(DM_SECT3_END);
     }
 
     if (m_pAttributeGroupArray != NULL)
     {
-        //strDoc.appendf("<%s>\n", DM_TABLE_ROW);
+        //strDoc.append(DM_SECT3_END);
+        //strDoc.append(DM_SECT3_BEGIN);
         m_pAttributeGroupArray->getDocumentation(strDoc);
-        //strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+        //strDoc.append(DM_SECT3_END);
+        //strDoc.append(DM_SECT3_BEGIN);
     }
 }
 
@@ -264,11 +262,11 @@ void CComplexTypeArray::dump(std::ostream& cout, unsigned int offset) const
 
 void CComplexTypeArray::getDocumentation(StringBuffer &strDoc) const
 {
-    strDoc.append(DM_SECT3_BEGIN);
+//    strDoc.append(DM_SECT3_BEGIN);
 
     QUICK_DOC_ARRAY(strDoc);
 
-    strDoc.append(DM_SECT3_END);
+//    strDoc.append(DM_SECT3_END);
 }
 
 void CComplexTypeArray::traverseAndProcessNodes() const
