@@ -369,6 +369,26 @@ StringBuffer &EspHttpBinding::generateNamespace(IEspContext &context, CHttpReque
     return ns;
 }
 
+void EspHttpBinding::getSchemaLocation( IEspContext &context, CHttpRequest* request, StringBuffer &schemaLocation )
+{
+    const char* svcName = request->queryServiceName();
+    const char* method = request->queryServiceMethod();
+    if ( !svcName || !(*svcName) )
+        return;
+
+    StringBuffer host;
+    const char* wsdlAddr = request->queryParameters()->queryProp("__wsdl_address");
+    if (wsdlAddr && *wsdlAddr)
+        host.append(wsdlAddr);
+    else
+    {
+        host.append(request->queryHost());
+        if (request->getPort()>0)
+          host.append(":").append(request->getPort());
+    }
+    schemaLocation.appendf("%s/%s/%s?xsd&amp;ver_=%g", host.str(), svcName, method ? method : "", context.getClientVersion());
+}
+
 int EspHttpBinding::getMethodDescription(IEspContext &context, const char *serv, const char *method, StringBuffer &page)
 {
     StringBuffer key(method);
