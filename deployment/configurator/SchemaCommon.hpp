@@ -31,6 +31,8 @@
 #define SETTER(X) virtual void set##X(const char* p) { m_str##X.clear().append(p); }
 #define GETTERSETTER(X) protected: StringBuffer m_str##X; public: GETTER(X) SETTER(X) public:
 #define SETPARENTNODE(X, Y) if (X!= NULL && Y != NULL) X->setParentNode(Y);
+//#define DEBUG_MARK_STRDOC strDoc.append(__FILE__).append(":").append(__LINE__).append("\n");
+#define DEBUG_MARK_STRDOC
 
 enum NODE_TYPES
 {

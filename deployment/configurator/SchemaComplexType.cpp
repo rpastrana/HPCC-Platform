@@ -86,6 +86,7 @@ void CComplexType::getDocumentation(StringBuffer &strDoc) const
 
     if (m_pElementArray != NULL)
     {
+        DEBUG_MARK_STRDOC;
         strDoc.append(DM_SECT3_BEGIN);
         m_pElementArray->getDocumentation(strDoc);
         strDoc.append(DM_SECT3_END);
@@ -211,17 +212,17 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
         }
         else if (strcmp(XSD_TAG_CHOICE, iter->get().queryName()) == 0)
         {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_CHOICE);
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_CHOICE);
             pChoice = CChoice::load(NULL, pSchemaRoot, strXPathExt.str());
         }
         else if (strcmp(XSD_TAG_ELEMENT, iter->get().queryName()) == 0)
         {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_ELEMENT);
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ELEMENT);
             pElementArray = CElementArray::load(NULL, pSchemaRoot, strXPathExt.str());
         }
         else if (strcmp(XSD_TAG_ATTRIBUTE_GROUP, iter->get().queryName()) == 0)
         {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE_GROUP);
             pAttributeGroupArray = CAttributeGroupArray::load(NULL, pSchemaRoot, strXPathExt.str());
         }
     }

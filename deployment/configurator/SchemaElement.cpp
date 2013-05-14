@@ -26,6 +26,11 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 
     IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
 
+    if (pElement != NULL && pTree != NULL)
+    {
+        pElement->setName(pTree->queryProp(XML_ATTR_NAME));
+    }
+
     Owned<IAttributeIterator> iterAttrib = pTree->getAttributes(true);
 
     ForEach(*iterAttrib)
@@ -46,7 +51,11 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
         {
             pElement->setType(iterAttrib->queryValue());
         }
+
+        assert(iterAttrib->queryValue() != NULL);
     }
+
+    assert(strlen(pElement->getName()) > 0);
 
     StringBuffer strXPathExt(xpath);
 
@@ -59,7 +68,7 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
     pElement->m_pAttributeArray = CAttributeArray::load(pElement, pSchemaRoot, strXPathExt.str());
 
-    if (pElement->m_pAnnotation != NULL && pElement->m_pAnnotation->getAppInfo() != NULL && pElement->m_pAnnotation->getAppInfo()->getTitle() != NULL)
+    if (pElement->m_pAnnotation != NULL && pElement->m_pAnnotation->getAppInfo() != NULL && strlen(pElement->m_pAnnotation->getAppInfo()->getTitle()) > 0)
     {
         pElement->setName(pElement->m_pAnnotation->getAppInfo()->getTitle());
     }
@@ -130,18 +139,23 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
         return;
     }
 
-    if (this->getName() != NULL && (stricmp(this->getName(), "Instance") == 0 || stricmp(this->getName(), "Notes") == 0 ))
+    if (this->getName() != NULL && (stricmp(this->getName(), "Instance") == 0 || stricmp(this->getName(), "Note") == 0) || stricmp(this->getName(), "Notes") == 0 )
     {
         return; // don't document instance
     }
+
+    assert(strlen(this->getName()) > 0);
 
     if (pNodeBase->getNodeType() == XSD_SCHEMA)
     {
         // component name would be here
         strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, this->getName(),"_mod");
-        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
+        //strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
+        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE_LITERAL, this->getName(), DM_TITLE_LITERAL);
 
+        DEBUG_MARK_STRDOC;
         strDoc.append(DM_SECT3_BEGIN);
+        strDoc.append(DM_TITLE_BEGIN).append(DM_TITLE_END);
 
         if (m_pComplexTypeArray != NULL)
         {
@@ -154,10 +168,6 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
     {
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
 
-        if (m_pAnnotation != NULL)
-        {
-            // m_pAnnotation->getDocumentation(strDoc);  // No reason to call this since Annotations don't directly document
-        }
         m_pComplexTypeArray->getDocumentation(strDoc);
     }
 }
@@ -263,6 +273,8 @@ CElementArray* CElementArray::load(CXSDNodeBase* pParentNode, IPropertyTree *pSc
         strXPathExt.appendf("[%d]", count);
 
         CElement *pElem = CElement::load(pElemArray, pSchemaRoot, strXPathExt.str());
+
+        assert(pElem);
 
         pElemArray->append(*pElem);
 

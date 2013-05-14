@@ -8,7 +8,12 @@ static const char* DM_SECT3_END = "</sect3>\n";
 static const char* DM_SECT4_BEGIN = "<sect4>\n";
 static const char* DM_SECT4_END = "</sect4>\n";
 static const char* DM_ID = "id";
+//static const char* DM_TITLE = "title";
 static const char* DM_TITLE = "title";
+static const char* DM_TITLE_BEGIN = "<title>";
+static const char* DM_TITLE_END = "</title>\n";
+static const char* DM_TITLE_LITERAL = "title";
+
 static const char* DM_TABLE_BEGIN = "<informaltable colsep=\"1\" rowsep=\"1\">\n";
 static const char* DM_TABLE_END = "</informaltable>\n";
 static const char* DM_TABLE_ROW = "row";

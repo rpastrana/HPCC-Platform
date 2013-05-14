@@ -257,6 +257,7 @@ void CAttributeArray::dump(std::ostream &cout, unsigned int offset) const
 
 void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 {
+    DEBUG_MARK_STRDOC;
     assert(this->getConstParentNode() != NULL);
 
     strDoc.append(DM_SECT4_BEGIN);
@@ -264,6 +265,10 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
     if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
     {
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, "Attributes", DM_TITLE);  // Attributes is hard coded default
+    }
+    else
+    {
+        strDoc.append(DM_TITLE_BEGIN).append(DM_TITLE_END);
     }
 
     strDoc.append(DM_TABLE_BEGIN);
@@ -275,6 +280,8 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
     strDoc.append(DM_TBODY_END);
     strDoc.append(DM_TGROUP4_END);
     strDoc.append(DM_TABLE_END);
+
+    strDoc.append(DM_SECT4_END);
 }
 
 void CAttributeArray::traverseAndProcessNodes() const
