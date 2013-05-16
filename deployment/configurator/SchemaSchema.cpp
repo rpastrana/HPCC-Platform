@@ -127,7 +127,8 @@ CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode)
 
     schemaPath.appendf("%s%s", DEFAULT_SCHEMA_DIRECTORY, pSchemaLocation);
 
-    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str(), ipt_ordered));
+//    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str(), ipt_ordered));
+    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
 
     CSchema *pSchema = CSchema::load(pSchemaLocation, pSchemaRoot, XSD_TAG_SCHEMA);
 

@@ -87,9 +87,6 @@ protected:
 
 private:
 
-    /*CComplexTypeArray(CXSDNodeBase* pParentNode = NULL) : CXSDNodeBase::CXSDNodeBase(pParentNode)
-    {
-    }*/
 };
 
 #endif // _SCHEMA_COMPLEX_TYPE_HPP

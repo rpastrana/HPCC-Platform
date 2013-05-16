@@ -130,11 +130,11 @@ void CElement::dump(std::ostream &cout, unsigned int offset) const
 
 void CElement::getDocumentation(StringBuffer &strDoc) const
 {
-    const CXSDNodeBase *pNodeBase = this->getConstParentNode()->getConstParentNode();
+    const CXSDNodeBase *pGrandParentNode = this->getConstParentNode()->getConstParentNode();
 
-    assert(pNodeBase != NULL);
+    assert(pGrandParentNode != NULL);
 
-    if (pNodeBase == NULL)
+    if (pGrandParentNode == NULL)
     {
         return;
     }
@@ -146,15 +146,19 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
 
     assert(strlen(this->getName()) > 0);
 
-    if (pNodeBase->getNodeType() == XSD_SCHEMA)
+    if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
     {
+        StringBuffer strName(this->getName());
+
+        strName.replace(' ', '_');
+
         // component name would be here
-        strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, this->getName(),"_mod");
+        strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, strName.str(),"_mod");
         //strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE_LITERAL, this->getName(), DM_TITLE_LITERAL);
 
-        DEBUG_MARK_STRDOC;
         strDoc.append(DM_SECT3_BEGIN);
+        DEBUG_MARK_STRDOC;
         strDoc.append(DM_TITLE_BEGIN).append(DM_TITLE_END);
 
         if (m_pComplexTypeArray != NULL)
@@ -166,9 +170,38 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
     }
     else if (m_pComplexTypeArray != NULL)
     {
-        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
+        //if (this->getConstParentNode() != NULL && this->getConstParentNode()->getConstParentNode() != NULL && this->getConstParentNode()->getConstParentNode()->getNodeType() == XSD_CHOICE)
+        if (pGrandParentNode->getNodeType() == XSD_CHOICE)
+        {
+            strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
+        }
+        else
+        {
+            strDoc.appendf("%s%s%s", DM_TITLE_BEGIN, this->getName(), DM_TITLE_END);
+        }
+
+        DEBUG_MARK_STRDOC;
 
         m_pComplexTypeArray->getDocumentation(strDoc);
+    }
+    else if (m_pComplexTypeArray == NULL)
+    {
+        /*if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getTitle() != NULL)
+        {
+            strDoc.appendf("%s%s%s", DM_PARA_BEGIN, m_pAnnotation->getAppInfo()->getTitle(), DM_PARA_END);
+            DEBUG_MARK_STRDOC;
+        }
+        else
+        {*/
+            strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
+            DEBUG_MARK_STRDOC;
+        //}
+
+        if (m_pAttributeArray != NULL)
+        {
+            m_pAttributeArray->getDocumentation(strDoc);
+        }
+
     }
 }
 

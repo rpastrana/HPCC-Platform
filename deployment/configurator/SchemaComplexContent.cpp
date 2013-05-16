@@ -55,10 +55,12 @@ void CComplexContent::dump(std::ostream& cout, unsigned int offset) const
 
 void CComplexContent::getDocumentation(StringBuffer &strDoc) const
 {
+    return;
+    /*
     if (m_pExtension != NULL)
     {
         m_pExtension->getDocumentation(strDoc);
-    }
+    }*/
 }
 
 void CComplexContent::traverseAndProcessNodes() const

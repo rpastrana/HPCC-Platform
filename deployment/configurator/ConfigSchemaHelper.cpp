@@ -170,7 +170,9 @@ void CConfigSchemaHelper::printConfigSchema(StringBuffer &strXML) const
 void CConfigSchemaHelper::printDocumentation(StringBuffer &str)
 {
     const char *pComponent = NULL;
+    bool bPrinted = false;
     CSchema* pSchema = NULL;
+
     LOOP_THRU_BUILD_SET
     {
         if (pComponent == NULL || strcmp(pComponent, m_buildSetArray.item(idx).getSchema()) == 0)
@@ -187,9 +189,24 @@ void CConfigSchemaHelper::printDocumentation(StringBuffer &str)
             if (pSchema != NULL)
             {
                 if (str.length() > 0 ? strcmp(str.str(), pXSDSchema) == 0 : true)
+                {
                     pSchema->getDocumentation(str.clear());
+                    bPrinted = true;
+                }
             }
         }
+    }
+
+    if (bPrinted == false)
+    {
+        str.append(" <-- Failed to find file!\n  **-- Available XSD files (defined in buildset.xml) --**");
+
+        LOOP_THRU_BUILD_SET
+        {
+            str.append("\n");
+            str.append(m_buildSetArray.item(idx).getSchema());
+        }
+        str.append("\n");
     }
 }
 

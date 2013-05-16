@@ -59,10 +59,10 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
         else
         {
             pToolTip = pAppInfo->getToolTip();
-            if (pAppInfo->getTitle() != NULL && (pAppInfo->getTitle())[0] != 0)
+            /*if (pAppInfo->getTitle() != NULL && (pAppInfo->getTitle())[0] != 0)
             {
                 pName = pAppInfo->getTitle();  // if we have a title, then we use it instead of the attribute name
-            }
+            }*/
         }
     }
 
@@ -137,6 +137,14 @@ CAttribute* CAttribute::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRo
         }
     }
 
+    const char *pType = pSchemaRoot->queryPropTree(xpath)->queryProp(XML_ATTR_TYPE);
+/*
+    // special case for naming.
+    if (pType != NULL && stricmp(pType, TAG_COMPUTERTYPE) == 0)
+    {
+        pAttribute->setName(TAG_NAME);
+    }
+*/
     StringBuffer strXPathExt(xpath);
 
     strXPathExt.append("/").append(XSD_TAG_ANNOTATION);
@@ -218,7 +226,7 @@ CAttributeArray* CAttributeArray::load(CXSDNodeBase* pParentNode, IPropertyTree 
 
     CAttributeArray *pAttribArray = new CAttributeArray(pParentNode);
 
-    Owned<IPropertyTreeIterator> attributeIter = pSchemaRoot->getElements(xpath);
+    Owned<IPropertyTreeIterator> attributeIter = pSchemaRoot->getElements(xpath, ipt_ordered);
 
     int count = 1;
     ForEach(*attributeIter)
@@ -257,25 +265,30 @@ void CAttributeArray::dump(std::ostream &cout, unsigned int offset) const
 
 void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 {
-    DEBUG_MARK_STRDOC;
     assert(this->getConstParentNode() != NULL);
 
     strDoc.append(DM_SECT4_BEGIN);
 
     if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
     {
-        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, "Attributes", DM_TITLE);  // Attributes is hard coded default
+        strDoc.appendf("%s%s%s", DM_TITLE_BEGIN, "Attributes", DM_TITLE_END);  // Attributes is hard coded default
+        DEBUG_MARK_STRDOC;
     }
     else
     {
         strDoc.append(DM_TITLE_BEGIN).append(DM_TITLE_END);
+        DEBUG_MARK_STRDOC;
     }
 
     strDoc.append(DM_TABLE_BEGIN);
     strDoc.append(DM_TGROUP4_BEGIN);
+    strDoc.append(DM_COL_SPEC4);
     strDoc.append(DM_TBODY_BEGIN);
 
+
+    DEBUG_MARK_STRDOC;
     QUICK_DOC_ARRAY(strDoc);
+    DEBUG_MARK_STRDOC;
 
     strDoc.append(DM_TBODY_END);
     strDoc.append(DM_TGROUP4_END);
@@ -360,7 +373,7 @@ void CAttributeGroup::getDocumentation(StringBuffer &strDoc) const
 {
     if (m_pAttributeArray != NULL)
     {
-        strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
+        strDoc.appendf("%s%s%s", DM_TITLE_BEGIN, this->getName(), DM_TITLE_END);
         m_pAttributeArray->getDocumentation(strDoc);
     }
 }

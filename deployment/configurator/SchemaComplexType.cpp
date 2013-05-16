@@ -64,6 +64,7 @@ void CComplexType::getDocumentation(StringBuffer &strDoc) const
     if (m_pComplexContent != NULL)
     {
         strDoc.append(DM_SECT3_BEGIN);
+        DEBUG_MARK_STRDOC
         m_pComplexContent->getDocumentation(strDoc);
         strDoc.append(DM_SECT3_END);
     }
@@ -86,19 +87,15 @@ void CComplexType::getDocumentation(StringBuffer &strDoc) const
 
     if (m_pElementArray != NULL)
     {
-        DEBUG_MARK_STRDOC;
         strDoc.append(DM_SECT3_BEGIN);
+        DEBUG_MARK_STRDOC;
         m_pElementArray->getDocumentation(strDoc);
         strDoc.append(DM_SECT3_END);
     }
 
     if (m_pAttributeGroupArray != NULL)
     {
-        //strDoc.append(DM_SECT3_END);
-        //strDoc.append(DM_SECT3_BEGIN);
         m_pAttributeGroupArray->getDocumentation(strDoc);
-        //strDoc.append(DM_SECT3_END);
-        //strDoc.append(DM_SECT3_BEGIN);
     }
 }
 
@@ -193,8 +190,6 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
 
     ForEach(*iter)
     {
-        //oTags.appendf("%s,",iter->get().queryName());
-
         if (strcmp(XSD_TAG_SEQUENCE, iter->get().queryName()) == 0)
         {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_SEQUENCE);
@@ -263,11 +258,7 @@ void CComplexTypeArray::dump(std::ostream& cout, unsigned int offset) const
 
 void CComplexTypeArray::getDocumentation(StringBuffer &strDoc) const
 {
-//    strDoc.append(DM_SECT3_BEGIN);
-
     QUICK_DOC_ARRAY(strDoc);
-
-//    strDoc.append(DM_SECT3_END);
 }
 
 void CComplexTypeArray::traverseAndProcessNodes() const
@@ -327,6 +318,12 @@ CComplexTypeArray* CComplexTypeArray::load(CXSDNodeBase* pParentNode, IPropertyT
         }
 
         count++;
+    }
+
+    if (pComplexTypeArray->length() == 0)
+    {
+        delete pComplexTypeArray;
+        pComplexTypeArray = NULL;
     }
 
     return pComplexTypeArray;

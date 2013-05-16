@@ -56,9 +56,7 @@ int main(int argc, char *argv[])
         StringBuffer str(argv[1]);
 
         schemaHelper.printDocumentation(str);
-        {
-            std::cout << str.str();
-        }
+        std::cout << str.str();
     }
 
 
