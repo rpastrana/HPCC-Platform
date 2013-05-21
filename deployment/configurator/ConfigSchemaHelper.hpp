@@ -19,7 +19,8 @@ public:
 
     IMPLEMENT_IINTERFACE
 
-    static CConfigSchemaHelper* getInstance();
+    static CConfigSchemaHelper* getInstance(const char* pDefaultDirOverride =  NULL);
+    static CConfigSchemaHelper* getInstance(const char* pBuildSetFileName, const char *pBaseDirectory, const char *pDefaultDirOverride = NULL);
 
     virtual ~CConfigSchemaHelper();
 
@@ -51,12 +52,15 @@ public:
 
     void traverseAndProcessArray(const char *pXSDName = NULL);
 
-    void printDocumentation(StringBuffer &str);
+    //void printDocumentation(StringBuffer &str);
+    const char* printDocumentation(const char* comp);
+
+    void setBuildSetArray(const StringArray &strArray);
 
 
 protected:
 
-    CConfigSchemaHelper(const char* pBuildSetPath = DEFAULT_BUILD_SET_XML_PATH);
+    CConfigSchemaHelper(const char* pBuildSetFile = DEFAULT_BUILD_SET_XML_FILE, const char* pBuildSetDir =  DEFAULT_BUILD_SET_DIRECTORY, const char* pDefaultDirOverride = NULL);
 
     Owned<IPropertyTree> m_buildSetTree;
     CIArrayOf<CBuildSet> m_buildSetArray;
@@ -67,6 +71,9 @@ protected:
     StringBuffer m_buildSetPath;
 
 private:
+
+    const char *m_pDefaultDirOverride;
+    static CConfigSchemaHelper* s_pCConfigSchemaHelper;
 };
 
 #endif // _CONFIG_SCHEMA_HELPER_HPP_

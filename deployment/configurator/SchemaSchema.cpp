@@ -114,7 +114,7 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     return pSchema;
 }
-CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode)
+CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode, const char *pDefaultDirOverride)
 {
     if (pSchemaLocation == NULL)
     {
@@ -125,9 +125,15 @@ CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode)
 
     StringBuffer schemaPath;
 
-    schemaPath.appendf("%s%s", DEFAULT_SCHEMA_DIRECTORY, pSchemaLocation);
+    if (pDefaultDirOverride == NULL)
+    {
+        schemaPath.appendf("%s%s", DEFAULT_SCHEMA_DIRECTORY, pSchemaLocation);
+    }
+    else
+    {
+        schemaPath.appendf("%s%s", pDefaultDirOverride, pSchemaLocation);
+    }
 
-//    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str(), ipt_ordered));
     pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
 
     CSchema *pSchema = CSchema::load(pSchemaLocation, pSchemaRoot, XSD_TAG_SCHEMA);

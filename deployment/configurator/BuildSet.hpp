@@ -1,7 +1,8 @@
 #ifndef _BUILD_SET_HPP_
 #define _BUILD_SET_HPP_
 
-static const char* DEFAULT_BUILD_SET_XML_PATH("/opt/HPCCSystems/componentfiles/configxml/buildset.xml");
+static const char* DEFAULT_BUILD_SET_XML_FILE("buildset.xml");
+static const char* DEFAULT_BUILD_SET_DIRECTORY("/opt/HPCCSystems/componentfiles/configxml/");
 
 class CBuildSet : public CInterface
 {
