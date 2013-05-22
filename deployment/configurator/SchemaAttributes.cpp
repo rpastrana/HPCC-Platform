@@ -4,7 +4,7 @@
 #include "SchemaAppInfo.hpp"
 #include "SchemaSimpleType.hpp"
 #include "DocumentationMarkup.hpp"
-
+#include "ConfigSchemaHelper.hpp"
 
 const char* CAttribute::getXML(const char* pComponent)
 {
@@ -361,6 +361,11 @@ void CAttributeGroup::dump(std::ostream &cout, unsigned int offset) const
     QUICK_OUT(cout,Ref, offset);
     QUICK_OUT(cout,ID, offset);
 
+    if (m_pRefAttributeGroup != NULL)
+    {
+        m_pRefAttributeGroup->dump(cout, offset);
+    }
+
     if (m_pAttributeArray != NULL)
     {
         m_pAttributeArray->dump(cout, offset);
@@ -371,11 +376,22 @@ void CAttributeGroup::dump(std::ostream &cout, unsigned int offset) const
 
 void CAttributeGroup::getDocumentation(StringBuffer &strDoc) const
 {
-    if (m_pAttributeArray != NULL)
+    if (this->getRef() != NULL && this->getRef()[0] != 0 && m_pRefAttributeGroup != NULL)
+    {
+       // m_pRefAttributeGroup->getDocumentation(strDoc);
+        strDoc.appendf("%s%s%s", DM_TITLE_BEGIN, m_pRefAttributeGroup->getName(), DM_TITLE_END);
+        DEBUG_MARK_STRDOC;
+
+        if (m_pRefAttributeGroup->getAttributeArray() != NULL)
+        {
+            m_pRefAttributeGroup->getAttributeArray()->getDocumentation(strDoc);
+        }
+    }
+    /*else if (m_pAttributeArray != NULL)
     {
         strDoc.appendf("%s%s%s", DM_TITLE_BEGIN, this->getName(), DM_TITLE_END);
         m_pAttributeArray->getDocumentation(strDoc);
-    }
+    }*/
 }
 
 void CAttributeGroup::traverseAndProcessNodes() const
@@ -412,7 +428,15 @@ CAttributeGroup* CAttributeGroup::load(CXSDNodeBase* pParentNode, IPropertyTree 
         return NULL;
     }
 
+    assert(pParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP);
     CAttributeGroup *pAttributeGroup = new CAttributeGroup(pParentNode);
+
+    assert(pAttributeGroup);
+
+    if (pAttributeGroup == NULL)
+    {
+        return NULL;
+    }
 
     IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
 
@@ -424,6 +448,23 @@ CAttributeGroup* CAttributeGroup::load(CXSDNodeBase* pParentNode, IPropertyTree 
     pAttributeGroup->setName(pTree->queryProp(XML_ATTR_NAME));
     pAttributeGroup->setID(pTree->queryProp(XML_ATTR_ID));
     pAttributeGroup->setRef(pTree->queryProp(XML_ATTR_REF));
+
+    if (pAttributeGroup->getRef() != NULL && pAttributeGroup->getRef()[0] != 0)
+    {
+        if (pAttributeGroup->getName() != NULL && pAttributeGroup->getName()[0] != 0)
+        {
+            assert(false); //can't have both nameand ref set
+            return NULL;
+        }
+        else
+        {
+            CConfigSchemaHelper::getInstance()->addAttributeGroupToBeProcessed(pAttributeGroup);
+        }
+    }
+    else if (pAttributeGroup->getName() != NULL && pAttributeGroup->getName()[0] != 0)
+    {
+        CConfigSchemaHelper::getInstance()->setAttributeGroupTypeWithName(pAttributeGroup->getName(), pAttributeGroup);
+    }
 
     StringBuffer strXPath(xpath);
 

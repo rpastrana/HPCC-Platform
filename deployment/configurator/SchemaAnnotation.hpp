@@ -24,10 +24,7 @@ public:
         return m_pDocumentation;
     }
 
-    virtual void getDocumentation(StringBuffer &strDoc) const
-    {
-        assert(false); // Should not be called directly
-    }
+    virtual void getDocumentation(StringBuffer &strDoc) const;
 
     const CAppInfo* getAppInfo() const
     {

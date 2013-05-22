@@ -140,6 +140,18 @@ public:
         m_pAttributeArray = pAttribArray;
     }
 
+    void setRefNode(CAttributeGroup* pAttributeGroup)
+    {
+        assert(pAttributeGroup != NULL);
+
+        if (pAttributeGroup != NULL)
+        {
+            //m_pXSDNode->Release();
+        }
+
+        m_pRefAttributeGroup = pAttributeGroup;
+    }
+
     virtual const char* getXML(const char* /*pComponent*/);
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
@@ -152,10 +164,11 @@ public:
 
 protected:
 
-    CAttributeGroup(CXSDNodeBase* pParentNode = NULL, CAttributeArray *pAttribArray = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_ATTRIBUTE_GROUP), m_pAttributeArray(pAttribArray)
+    CAttributeGroup(CXSDNodeBase* pParentNode = NULL, CAttributeArray *pAttribArray = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_ATTRIBUTE_GROUP), m_pAttributeArray(pAttribArray), m_pRefAttributeGroup(NULL)
     {
     }
 
+    CAttributeGroup *m_pRefAttributeGroup;
     CAttributeArray *m_pAttributeArray;
 
 private:
@@ -166,7 +179,7 @@ class CAttributeGroupArray : public CIArrayOf<CAttributeGroup>, public Interface
 {
 public:
 
-    CAttributeGroupArray(CXSDNodeBase* pParentNode = NULL) : CXSDNodeBase::CXSDNodeBase(pParentNode, XSD_ATTRIBUTE_GROUP)
+    CAttributeGroupArray(CXSDNodeBase* pParentNode = NULL) : CXSDNodeBase::CXSDNodeBase(pParentNode, XSD_ATTRIBUTE_GROUP_ARRAY)
     {
     }
 

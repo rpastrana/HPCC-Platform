@@ -13,6 +13,8 @@ public:
     {
     }
 
+    GETTERSETTER(DocString)
+
     const char* getDocumentation() const
     {
         return m_strDocString.str();
@@ -20,10 +22,10 @@ public:
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
-    virtual void getDocumentation(StringBuffer &strDoc) const
-    {
+    virtual void getDocumentation(StringBuffer &strDoc) const;
+    /*{
         assert(false);  // Should not be called directly
-    }
+    }*/
 
     virtual void traverseAndProcessNodes() const;
 
@@ -35,7 +37,7 @@ protected:
     {
     }
 
-    StringBuffer m_strDocString;
+//    StringBuffer m_strDocString;
 
 private:
 

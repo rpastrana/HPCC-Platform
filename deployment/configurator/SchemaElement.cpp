@@ -9,6 +9,7 @@
 #include "SchemaElement.hpp"
 #include "SchemaAttributes.hpp"
 #include "SchemaAppInfo.hpp"
+#include "SchemaDocumentation.hpp"
 #include "DocumentationMarkup.hpp"
 
 
@@ -154,8 +155,14 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
 
         // component name would be here
         strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, strName.str(),"_mod");
-        //strDoc.appendf("<%s>%s</%s>\n", DM_TITLE, this->getName(), DM_TITLE);
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE_LITERAL, this->getName(), DM_TITLE_LITERAL);
+
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getDocumentation(strDoc);
+            DEBUG_MARK_STRDOC;
+        }
+
 
         strDoc.append(DM_SECT3_BEGIN);
         DEBUG_MARK_STRDOC;
@@ -167,10 +174,10 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
         }
 
         strDoc.append(DM_SECT3_END);
+        return;
     }
     else if (m_pComplexTypeArray != NULL)
     {
-        //if (this->getConstParentNode() != NULL && this->getConstParentNode()->getConstParentNode() != NULL && this->getConstParentNode()->getConstParentNode()->getNodeType() == XSD_CHOICE)
         if (pGrandParentNode->getNodeType() == XSD_CHOICE)
         {
             strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
@@ -186,22 +193,25 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
     }
     else if (m_pComplexTypeArray == NULL)
     {
-        /*if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getTitle() != NULL)
+        strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
+        DEBUG_MARK_STRDOC;
+
+        if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
         {
-            strDoc.appendf("%s%s%s", DM_PARA_BEGIN, m_pAnnotation->getAppInfo()->getTitle(), DM_PARA_END);
+            m_pAnnotation->getDocumentation(strDoc);
             DEBUG_MARK_STRDOC;
         }
-        else
-        {*/
-            strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
-            DEBUG_MARK_STRDOC;
-        //}
 
         if (m_pAttributeArray != NULL)
         {
             m_pAttributeArray->getDocumentation(strDoc);
         }
+    }
 
+    if (m_pAnnotation!= NULL)
+    {
+        m_pAnnotation->getDocumentation(strDoc);
+        DEBUG_MARK_STRDOC;
     }
 }
 

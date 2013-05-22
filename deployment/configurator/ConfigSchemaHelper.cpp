@@ -320,23 +320,63 @@ void CConfigSchemaHelper::setComplexTypeWithName(const char* pName, CComplexType
     m_complexTypePtrsMap.setValue(pName, pComplexType);
 }
 
+CAttributeGroup* CConfigSchemaHelper::getAttributeGroup(const char* pName)
+{
+    assert(pName != NULL);
+
+    if (pName == NULL)
+    {
+        return NULL;
+    }
+
+    CAttributeGroup *pAttributeGroup = NULL;
+
+    pAttributeGroup = *(m_attributeGroupTypePtrsMap.getValue(pName));
+
+    assert(pAttributeGroup != NULL);
+
+    return pAttributeGroup;
+}
+
+void CConfigSchemaHelper::setAttributeGroupTypeWithName(const char* pName, CAttributeGroup *pAttributeGroup)
+{
+    assert (pAttributeGroup != NULL);
+
+    if (pName == NULL || pAttributeGroup == NULL)
+    {
+        return;
+    }
+
+    m_attributeGroupTypePtrsMap.setValue(pName, pAttributeGroup);
+}
+
 void CConfigSchemaHelper::addExtensionToBeProcessed(CExtension *pExtension)
 {
     assert(pExtension != NULL);
 
     if (pExtension != NULL)
     {
-        m_extensionArray.append(*pExtension);
+        m_extensionArr.append(*pExtension);
     }
 }
 
-void CConfigSchemaHelper::processExtensionArray()
+void CConfigSchemaHelper::addAttributeGroupToBeProcessed(CAttributeGroup *pAttributeGroup)
 {
-    int length = m_extensionArray.length();
+    assert(pAttributeGroup != NULL);
+
+    if (pAttributeGroup != NULL)
+    {
+        m_attributeGroupArr.append(*pAttributeGroup);
+    }
+}
+
+void CConfigSchemaHelper::processExtensionArr()
+{
+    int length = m_extensionArr.length();
 
     for (int idx = 0; idx < length; idx++)
     {
-        CExtension &Extension = (m_extensionArray.item(idx));
+        CExtension &Extension = (m_extensionArr.item(idx));
         const char *pName = Extension.getBase();
 
         assert(pName != NULL);
@@ -357,6 +397,33 @@ void CConfigSchemaHelper::processExtensionArray()
             if (pNodeBase != NULL)
             {
                 Extension.setBaseNode(pNodeBase);
+            }
+        }
+    }
+}
+
+void CConfigSchemaHelper::processAttributeGroupArr()
+{
+    int length = m_attributeGroupArr.length();
+
+    for (int idx = 0; idx < length; idx++)
+    {
+        CAttributeGroup &AttributeGroup = (m_attributeGroupArr.item(idx));
+        const char *pRef = AttributeGroup.getRef();
+
+        assert(pRef != NULL && pRef[0] != 0);
+
+        if (pRef != NULL && pRef[0] != 0)
+        {
+            CAttributeGroup *pAttributeGroup = NULL;
+
+            pAttributeGroup = *(m_attributeGroupTypePtrsMap.getValue(pRef));
+
+            assert(pAttributeGroup != NULL);
+
+            if (pAttributeGroup != NULL)
+            {
+                AttributeGroup.setRefNode(pAttributeGroup);
             }
         }
     }

@@ -65,3 +65,16 @@ void CAnnotation::traverseAndProcessNodes() const
 
      CXSDNodeBase::processExitHandlers(this);
 }
+
+void CAnnotation::getDocumentation(StringBuffer &strDoc) const
+{
+/*    if (m_pAppInfo != NULL)
+    {
+        m_pAppInfo->getDocumentation(strDoc);
+    }
+*/
+    if (m_pDocumentation != NULL)
+    {
+        m_pDocumentation->getDocumentation(strDoc);
+    }
+}
