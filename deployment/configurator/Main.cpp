@@ -22,7 +22,6 @@ void usage()
     std::cout << "-x -xsd  <xsd file name>          : xsd file name (can be more than one)" << std::endl;
     std::cout << "-l -list                          : list available xsd files" << std::endl;
     std::cout << "-d -doc                           : generate docs" << std::endl;
-    //std::cout << "-a -all                           : genearate all docs" << std::endl;
     std::cout << "-e -extension  <file extension>   : write docs to files with appended extension (default " <<  pDefaultExt << ")" << std::endl;
     std::cout << "-t -target <target directory>     : directory to which to docs will be written. If not specified, then output will go to std::out" << std::endl;
     std::cout << "-u -use <schema xsd>              : use specified xsd schema instead of buildset file" << std::endl;
@@ -122,10 +121,6 @@ int main(int argc, char *argv[])
         {
             bGenDocs = true;
         }
-        else if (stricmp(argv[idx], "-all") == 0 || stricmp(argv[idx], "-a") == 0)
-        {
-            bGenAllDocs = true;
-        }
         else if (stricmp(argv[idx], "-target") == 0 || stricmp(argv[idx], "-t") == 0)
         {
             idx++;
@@ -193,7 +188,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    if ((bGenDocs == true || bGenAllDocs == true) && arrXSDs.length() == 0)
+    if (bGenDocs == true && arrXSDs.length() == 0)
     {
         puts("No XSDs specified for doc generation!");
         return 0;

@@ -140,7 +140,12 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
         return;
     }
 
-    if (this->getName() != NULL && (stricmp(this->getName(), "Instance") == 0 || stricmp(this->getName(), "Note") == 0) || stricmp(this->getName(), "Notes") == 0 )
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getViewType() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewType(), "none") == 0)
+    {
+        return;
+    }
+
+    if (this->getName() != NULL && (stricmp(this->getName(), "Instance") == 0 || stricmp(this->getName(), "Note") == 0 || stricmp(this->getName(), "Notes") == 0 ||  stricmp(this->getName(), "Topology") == 0 ))
     {
         return; // don't document instance
     }
