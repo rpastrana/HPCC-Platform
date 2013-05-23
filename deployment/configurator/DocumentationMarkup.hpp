@@ -25,6 +25,7 @@ static const char* DM_TGROUP_END = "</tgroup>\n";
 static const char* DM_TBODY_BEGIN = "<thead><row>\n<entry>attribute</entry>\n<entry>values</entry>\n<entry>default</entry>\n<entry>required</entry>\n</row>\n</thead><tbody>\n";
 static const char* DM_TBODY_END = "</tbody>\n";
 static const char* DM_COL_SPEC4 = "<colspec colwidth=\"192pt\" /><colspec colwidth=\"195pt\" />\n";
+static const char* DM_XI_INCLUDE = "xi:include";
 
 
 #endif // _DOCUMENTATION_MARKUP_HPP

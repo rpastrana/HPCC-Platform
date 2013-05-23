@@ -318,6 +318,7 @@
 #define TAG_AUTOGENWIZARD               "autogenforwizard"
 #define TAG_AUTOGENDEFAULTVALUE         "autogendefaultvalue"
 #define TAG_AUTOGENDEFAULTVALUEFORMULTINODE    "autogendefaultformultinode"
+#define TAG_DOCINCLUDE                  "docinclude"
 
 //---------------------------------------------------------------------------
 #endif // !defined(AFX_XMLTAGS_H__57887617_2BDE_4E3E_92CB_43FCDEDD05B8__INCLUDED_)

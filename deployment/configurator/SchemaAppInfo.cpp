@@ -1,6 +1,7 @@
 #include "jptree.hpp"
 #include "XMLTags.h"
 #include "SchemaAppInfo.hpp"
+#include "DocumentationMarkup.hpp"
 
 CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
@@ -38,6 +39,9 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     StringBuffer strXPathAutoGenDefaultForMultiNode(xpath);
     strXPathAutoGenDefaultForMultiNode.append("/").append(TAG_AUTOGENDEFAULTVALUEFORMULTINODE);
 
+    StringBuffer strXPathDocInclude(xpath);
+    strXPathDocInclude.append("/").append(TAG_DOCINCLUDE);
+
     StringBuffer strViewType;
     StringBuffer strColIndex;
     StringBuffer strToolTip;
@@ -46,6 +50,7 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     StringBuffer strAutoGenForWizard;
     StringBuffer strAutoGenDefaultValue;
     StringBuffer strAutoGenDefaultForMultiNode;
+    StringBuffer strDocInclude;
 
     if (pSchemaRoot->queryPropTree(strXPathViewType.str()) != NULL)
     {
@@ -79,8 +84,13 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     {
         strAutoGenDefaultForMultiNode.append(pSchemaRoot->queryPropTree(strXPathAutoGenDefaultForMultiNode.str())->queryProp(""));
     }
+    if (pSchemaRoot->queryPropTree(strXPathDocInclude.str()) != NULL)
+    {
+        strDocInclude.append(pSchemaRoot->queryPropTree(strXPathDocInclude.str())->queryProp(""));
+    }
 
-    CAppInfo *pAppInfo = new CAppInfo(pParentNode, strViewType.str(),  strColIndex.str(), strToolTip.str(), strTitle.str(), strWidth.str(), strAutoGenForWizard.str(), strAutoGenDefaultValue.str());
+
+    CAppInfo *pAppInfo = new CAppInfo(pParentNode, strViewType.str(),  strColIndex.str(), strToolTip.str(), strTitle.str(), strWidth.str(), strAutoGenForWizard.str(), strAutoGenDefaultValue.str(), NULL, NULL, strDocInclude.str());
 
     return pAppInfo;
 }
@@ -99,6 +109,7 @@ void CAppInfo::dump(std::ostream &cout, unsigned int offset) const
     QUICK_OUT(cout, AutoGenForWizard, offset);
     QUICK_OUT(cout, AutoGenDefaultValue, offset);
     QUICK_OUT(cout, AutoGenDefaultValueForMultiNode, offset);
+    QUICK_OUT(cout, DocInclude, offset);
 
     QuickOutFooter(cout, XSD_APP_INFO_STR, offset);
 }
@@ -107,4 +118,12 @@ void CAppInfo::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
     CXSDNodeBase::processExitHandlers(this);
+}
+
+void CAppInfo::getDocumentation(StringBuffer &strDoc) const
+{
+    if (this->getDocInclude() != NULL && this->getDocInclude()[0] != 0)
+    {
+        strDoc.appendf("<%s %s />\n", DM_XI_INCLUDE, this->getDocInclude());
+    }
 }

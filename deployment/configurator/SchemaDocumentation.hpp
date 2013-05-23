@@ -23,9 +23,6 @@ public:
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
-    /*{
-        assert(false);  // Should not be called directly
-    }*/
 
     virtual void traverseAndProcessNodes() const;
 
@@ -36,8 +33,6 @@ protected:
     CDocumentation(CXSDNodeBase* pParentNode, const char *pDocs = NULL) : CXSDNode::CXSDNode(pParentNode, XSD_DOCUMENTATION), m_strDocString(pDocs)
     {
     }
-
-//    StringBuffer m_strDocString;
 
 private:
 

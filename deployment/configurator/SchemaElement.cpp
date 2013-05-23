@@ -183,6 +183,12 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
     }
     else if (m_pComplexTypeArray != NULL)
     {
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getDocumentation(strDoc);
+            DEBUG_MARK_STRDOC;
+        }
+
         if (pGrandParentNode->getNodeType() == XSD_CHOICE)
         {
             strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
@@ -198,6 +204,12 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
     }
     else if (m_pComplexTypeArray == NULL)
     {
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getDocumentation(strDoc);
+            DEBUG_MARK_STRDOC;
+        }
+
         strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getName(), DM_PARA_END);
         DEBUG_MARK_STRDOC;
 
@@ -211,12 +223,6 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
         {
             m_pAttributeArray->getDocumentation(strDoc);
         }
-    }
-
-    if (m_pAnnotation!= NULL)
-    {
-        m_pAnnotation->getDocumentation(strDoc);
-        DEBUG_MARK_STRDOC;
     }
 }
 

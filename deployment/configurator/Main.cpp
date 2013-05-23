@@ -51,9 +51,7 @@ int main(int argc, char *argv[])
 
 
     bool bListXSDs = false;
-    bool bGenAllDocs = false;
     bool bGenDocs = false;
-    bool bWriteDocs = false;
 
 
     StringArray arrXSDs;
@@ -239,7 +237,7 @@ int main(int argc, char *argv[])
 
         for (int idx = 0; idx < arrXSDs.length(); idx++)
         {
-            std::cout << "(" << idx+1 << ") " << arrXSDs.item(idx) << ".xsd" << std::endl;
+            std::cout << "(" << idx+1 << ") " << arrXSDs.item(idx) << std::endl;
         }
     }
 
@@ -257,7 +255,6 @@ int main(int argc, char *argv[])
 
             const char *pXSDFile = strrchr(arrXSDs.item(idx), '/') == NULL ? arrXSDs.item(idx) : strrchr(arrXSDs.item(idx),'/');
 
-            //strTargetPath.append(pTargetDocDir).append("/").append(arrXSDs.item(idx)).append(pTargetDocExt);
             strTargetPath.append(pTargetDocDir).append("/").append(pXSDFile).append(pTargetDocExt);
 
             pFile.setown(createIFile(strTargetPath.str()));
@@ -274,64 +271,3 @@ int main(int argc, char *argv[])
         }
     }
 }
-
-#ifdef false
-
-    StringArray buildSetCompArray;
-
-    CWizardBase baseWiz;
-
-    CEnvironmentConfiguration *ptr = CEnvironmentConfiguration::getInstance();
-    baseWiz.generate(ptr);
-
-    CConfigSchemaHelper &schemaHelper = *(CConfigSchemaHelper::getInstance());
-
-    schemaHelper.populateBuildSet();
-    schemaHelper.getBuildSetComponents(buildSetCompArray);
-    schemaHelper.populateSchema();
-    //schemaHelper.printConfigSchema();
-    schemaHelper.processExtensionArray();
-
-    StringBuffer strXML;
-
-/*    if (schemaHelper.getXMLFromSchema(strXML, NULL) == true)
-    {
-        std::cout << strXML.str();
-    }
-*/
-
-    if (argc == 1)
-    {
-        StringBuffer str("dafilesrv.xsd");
-
-        schemaHelper.printDocumentation(str);
-        {
-            std::cout << str.str();
-        }
-
-        str.clear().append("dali.xsd");
-        schemaHelper.printDocumentation(str);
-        {
-            std::cout << str.str();
-        }
-    }
-    else
-    {
-        StringBuffer str(argv[1]);
-
-        schemaHelper.printDocumentation(str);
-        std::cout << str.str();
-    }
-
-
-    NodeHandlerDocumentation docHandler;
-
-    CXSDNodeBase::addEntryHandler(docHandler);
-    CXSDNodeBase::addExitHandler(docHandler);
-
-    //schemaHelper.traverseAndProcessArray("dafilesrv.xsd");
-
-    return 0;
-}
-
-#endif // false
