@@ -554,16 +554,20 @@ void CGraphElementBase::onCreate()
 
 void CGraphElementBase::onStart(size32_t parentExtractSz, const byte *parentExtract)
 {
-    if (nullAct ||onStartCalled) return;
-    if (haveStartCtx)
-    {
-        baseHelper->onStart(parentExtract, &startCtxMb);
-        startCtxMb.reset();
-        haveStartCtx = false;
-    }
-    else
-        baseHelper->onStart(parentExtract, NULL);
+    if (onStartCalled)
+        return;
     onStartCalled = true;
+    if (!nullAct)
+    {
+        if (haveStartCtx)
+        {
+            baseHelper->onStart(parentExtract, &startCtxMb);
+            startCtxMb.reset();
+            haveStartCtx = false;
+        }
+        else
+            baseHelper->onStart(parentExtract, NULL);
+    }
 }
 
 bool CGraphElementBase::executeDependencies(size32_t parentExtractSz, const byte *parentExtract, int controlId, bool async)
@@ -957,6 +961,7 @@ bool isGlobalActivity(CGraphElementBase &container)
         case TAKrollupgroup:
         case TAKcombinegroup:
         case TAKsoap_rowdataset:
+        case TAKhttp_rowdataset:
         case TAKsoap_rowaction:
         case TAKsoap_datasetdataset:
         case TAKsoap_datasetaction:
@@ -2545,7 +2550,7 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
                     subGraph.setGlobal(true);
             }
         }
-        bool log = queryForceLogging(subGraph.queryGraphId(), subGraph.isGlobal());
+        bool log = queryForceLogging(subGraph.queryGraphId(), (NULL == subGraph.queryOwner()) || subGraph.isGlobal());
         subGraph.setLogging(log);
     }
 }
@@ -2812,9 +2817,15 @@ IRowInterfaces *CActivityBase::getRowInterfaces()
 bool CActivityBase::receiveMsg(CMessageBuffer &mb, const rank_t rank, const mptag_t mpTag, rank_t *sender, unsigned timeout)
 {
     BooleanOnOff onOff(receiving);
-    if (cancelledReceive)
-        return false;
-    return container.queryJob().queryJobComm().recv(mb, rank, mpTag, sender, timeout);
+    CTimeMon t(timeout);
+    unsigned remaining = timeout;
+    // check 'cancelledReceive' every 10 secs
+    while (!cancelledReceive && ((MP_WAIT_FOREVER==timeout) || !t.timedout(&remaining)))
+    {
+        if (container.queryJob().queryJobComm().recv(mb, rank, mpTag, sender, remaining>10000?10000:remaining))
+            return true;
+    }
+    return false;
 }
 
 void CActivityBase::cancelReceiveMsg(const rank_t rank, const mptag_t mpTag)

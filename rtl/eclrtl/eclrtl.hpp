@@ -91,7 +91,6 @@ interface ICompiledUStrRegExpr
 };
 
 //-----------------------------------------------------------------------------
-
 ECLRTL_API void * rtlMalloc(size32_t size);
 ECLRTL_API void rtlFree(void * x);
 ECLRTL_API void * rtlRealloc(void * _ptr, size32_t size);
@@ -384,6 +383,7 @@ ECLRTL_API void rtlSysFail(int code, const char *msg);
 ECLRTL_API void rtlFailUnexpected();
 ECLRTL_API void rtlFailOnAssert();
 ECLRTL_API void rtlFailDivideByZero();
+ECLRTL_API void rtlThrowOutOfMemory(int code, const char *msg);
 
 ECLRTL_API void rtlReportFieldOverflow(unsigned size, unsigned max, const char * name);
 ECLRTL_API void rtlReportRowOverflow(unsigned size, unsigned max);
@@ -721,6 +721,31 @@ ECLRTL_API void rtlGetLocalFailMessage(size32_t & len, char * & text, IException
 ECLRTL_API void rtlFreeException(IException * e);
 
 ECLRTL_API IAtom * rtlCreateFieldNameAtom(const char * name);
+
+/**
+ * Wrapper function to encode input binary data with base 64 code.
+ *
+ * @param tlen          Encoded string length
+ * @param tgt           Pointer to encoded string
+ * @param slen          Input binary data length
+ * @param src           Pointer to input binary data
+ * @see                 void JBASE64_Encode(const void *data, long length, StringBuffer &out, bool addLineBreaks=true)
+ *                      function in jutil library
+ */
+ECLRTL_API void rtlBase64Encode(size32_t & tlen, char * & tgt, size32_t slen, const void * src);
+
+/**
+ * Wrapper function to decode base 64 encoded string.
+ * It handles when the decoder fails to decode string.
+ *
+ * @param tlen          Decoded data length
+ * @param tgt           Pointer to decoded data
+ * @param slen          Input string length
+ * @param src           Pointer to input string
+ * @see                 bool JBASE64_Decode(const char *in, long length, StringBuffer &out) function
+ *                      in jutil library.
+ */
+ECLRTL_API void rtlBase64Decode(size32_t & tlen, void * & tgt, size32_t slen, const char * src);
 
 //Test functions:
 ECLRTL_API void rtlTestGetPrimes(size32_t & len, void * & data);

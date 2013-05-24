@@ -543,15 +543,8 @@ class CRoxieFileCache : public CInterface, implements ICopyFileProgress, impleme
 
             if (crc > 0)
             {
-                // if a crc is specified lets check it - query dll crc differs from file / key crc
-                unsigned file_crc = 0;
-                if (fileType == ROXIE_PLUGIN_DLL)
-                    file_crc = 0;  // don't bother checking plugins - roxie not responsible for copying them
-                if (fileType == ROXIE_WU_DLL)
-                    file_crc = crc_file(id);
-                else
-                    file_crc = getFileCRC(id);
-
+                // if a crc is specified lets check it
+                unsigned file_crc = getFileCRC(id);
                 if (file_crc && crc != file_crc)  // for remote files crc_file can fail, even if the file is valid
                 {
                     DBGLOG("FAILED CRC Check");
@@ -576,7 +569,7 @@ class CRoxieFileCache : public CInterface, implements ICopyFileProgress, impleme
             ret->addSource(local.getLink());
             ret->setRemote(false);
         }
-        else if (copyResources || useRemoteResources || fileType == ROXIE_WU_DLL)
+        else if (copyResources || useRemoteResources)
         {
             if (local->exists())
             {
@@ -655,24 +648,6 @@ class CRoxieFileCache : public CInterface, implements ICopyFileProgress, impleme
         files.setValue(localLocation, (ILazyFileIO *)ret);
         return ret.getClear();
     }
-
-    ILazyFileIO *openPlugin(const char *id, const char *localLocation)
-    {
-        Owned<IFile> local = createIFile(localLocation);
-        CDateTime nullDT;
-        Owned<CLazyFileIO> ret = new CLazyFileIO(id, ROXIE_PLUGIN_DLL, local.getLink(), 0, nullDT, false, 0, false);
-
-        // MORE - should we check the version label here ?
-        if (ret)
-        {
-            ret->addSource(local.getLink());
-            ret->setRemote(false);
-            return ret.getClear();
-        }
-
-        throw MakeStringException(ROXIE_FILE_OPEN_FAIL, "Could not open file %s", localLocation);
-    }
-
 
     bool doCreateFromPatch(ILazyFileIO *targetFile, const char *baseIndexFilename, ILazyFileIO *patchFile, const char *targetFilename, const char *destPath)
     {
@@ -1242,60 +1217,6 @@ public:
         return ret.getLink();
     }
 
-    virtual IFileIO *lookupDllFile(const char* dllname, const char *localLocation, const StringArray &remoteNames, unsigned crc, bool isRemote)
-    {
-        // this is foreground work
-        ILazyFileIO *ret;
-        {
-            CriticalBlock b(crit);
-            ret = files.getValue(localLocation);
-            if (ret && ret->isAlive())
-            {
-                if (crc)
-                {
-                    unsigned file_crc = crc_file(localLocation);
-                    if (crc != file_crc)  // do not have the proper version
-                    {
-                        throw MakeStringException(ROXIE_MISMATCH, "Different version of %s already loaded", dllname);
-                    }
-                }
-                return LINK(ret);
-            }
-            CDateTime nullFiledate;  // null date is fine here
-            ret = openFile(dllname, 1, ROXIE_WU_DLL, localLocation, remoteNames, remoteNames, -1, nullFiledate, false, crc, false);  // make partno = 1 (second param)
-            if (ret->isRemote())
-            {
-                try
-                {
-                    needToDeleteFile = false;
-                    doCopy(ret, false, false);
-                    todo.append(*ret);
-                    atomic_inc(&numFilesToProcess);  // must increment counter for SNMP accuracy
-                    toCopy.signal();
-                }
-                catch (IException *E)
-                {
-                    if (ret)
-                        ret->Release();
-                    EXCLOG(MCoperatorError, E, "Roxie background copy: ");
-                    throw;
-                }
-                catch (...) 
-                {
-                    EXCLOG(MCoperatorError, "Unknown exception in Roxie background copy");
-                }
-            }
-            else if (isRemote)
-            {
-//              todo.append(*ret);  // don't really need to copy, but need to update file location
-//              atomic_inc(&numFilesToProcess);  // must increment counter for SNMP accuracy
-//              toCopy.signal();
-            }
-        }
-        ret->checkOpen();
-        return ret;
-    }
-
     virtual void closeExpired(bool remote)
     {
         // This schedules a close at the next available opportunity
@@ -1320,22 +1241,24 @@ public:
         ForEach(h)
         {
             ILazyFileIO *f = files.mapToValue(&h.query());
-            const char *fname = remote ? f->querySource()->queryFilename() : f->queryFilename();
             if (f->isAlive() && f->isOpen() && f->isRemote()==remote && !f->isCopying())
             {
                 unsigned age = msTick() - f->getLastAccessed();
                 if (age > maxFileAge[remote])
                 {
                     if (traceLevel > 5)
+                    {
+                        // NOTE - querySource will cause the file to be opened if not already open
+                        // That's OK here, since we know the file is open and remote.
+                        // But don't be tempted to move this line outside these if's (eg. to trace the idle case)
+                        const char *fname = remote ? f->querySource()->queryFilename() : f->queryFilename();
                         DBGLOG("Closing inactive %s file %s (last accessed %u ms ago)", remote ? "remote" : "local",  fname, age);
+                    }
                     f->close();
                 }
                 else
                     goers.append(*f);
             }
-            else if (traceLevel > 8)
-                DBGLOG("Ignoring idle %s file %s", remote ? "remote" : "local",  fname);
-
         }
         unsigned numFilesLeft = goers.ordinality(); 
         if (numFilesLeft > maxFilesOpen[remote])
@@ -1853,7 +1776,7 @@ public:
                     Owned<IFileDescriptor> fDesc = sub.getFileDescriptor();
                     Owned<IFileDescriptor> remoteFDesc;
                     if (daliHelper)
-                        remoteFDesc.setown(daliHelper->checkClonedFromRemote(NULL, fDesc, cacheIt, writeAccess));
+                        remoteFDesc.setown(daliHelper->checkClonedFromRemote(sub.queryLogicalName(), fDesc, cacheIt, writeAccess));
                     addFile(sub.queryLogicalName(), fDesc.getClear(), remoteFDesc.getClear());
                 }
             }

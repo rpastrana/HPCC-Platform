@@ -1462,6 +1462,7 @@ int CWsEclBinding::getXsdDefinition(IEspContext &context, CHttpRequest *request,
             content.append("<xsd:complexType>");
             content.append("<xsd:all>");
             content.append("<xsd:element name=\"Exceptions\" type=\"tns:ArrayOfEspException\" minOccurs=\"0\"/>");
+            content.append("<xsd:element name=\"Wuid\" type=\"xsd:string\" minOccurs=\"0\"/>");
 
             Owned<IPropertyTreeIterator> result_xsds =xsdtree->getElements("Result");
             if (!result_xsds->first())
@@ -1829,14 +1830,24 @@ void CWsEclBinding::getWsEclJsonResponse(StringBuffer& jsonmsg, IEspContext &con
             node = node->queryPropTree("Body");
         if (node->hasProp(element))
             node = node->queryPropTree(element);
+        const char *wuid = node->queryProp("Wuid");
         if (node->hasProp("Results"))
             node = node->queryPropTree("Results");
         if (node->hasProp("Result"))
             node = node->queryPropTree("Result");
 
-        jsonmsg.appendf("{\n  \"%s\": {\n    \"Results\": {\n", element.str());
-
+        jsonmsg.appendf("{\n  \"%s\": {\n", element.str());
         Owned<IPropertyTreeIterator> exceptions = node->getElements("Exception");
+        Owned<IPropertyTreeIterator> datasets = node->getElements("Dataset");
+        if (wuid && *wuid)
+            appendJSONValue(jsonmsg.pad(3), "Wuid", wuid);
+        if ((!exceptions || !exceptions->first()) && (!datasets || !datasets->first()))
+        {
+            jsonmsg.append("  }\n}");
+            return;
+        }
+
+        appendJSONName(jsonmsg.pad(3), "Results").append("{\n");
         if (exceptions && exceptions->first())
         {
             appendJSONName(jsonmsg.pad(3), "Exceptions").append("{\n");
@@ -1846,7 +1857,6 @@ void CWsEclBinding::getWsEclJsonResponse(StringBuffer& jsonmsg, IEspContext &con
             jsonmsg.append("\n   ]\n    }\n");
         }
 
-        Owned<IPropertyTreeIterator> datasets = node->getElements("Dataset");
         ForEach(*datasets)
         {
             IPropertyTree &ds = datasets->query();
@@ -2096,70 +2106,6 @@ int CWsEclBinding::getWsEcl2Form(CHttpRequest* request, CHttpResponse* response,
     return 0;
 }
 
-void CWsEclBinding::addParameterToWorkunit(IWorkUnit * workunit, IConstWUResult &vardef, IResultSetMetaData &metadef, const char *varname, IPropertyTree *valtree)
-{
-    if (!varname || !*varname)
-        return;
-
-    Owned<IWUResult> var = workunit->updateVariableByName(varname);
-    if (!vardef.isResultScalar())
-    {
-        StringBuffer ds;
-        if (valtree->hasChildren())
-            toXML(valtree, ds);
-        else
-        {
-            const char *val = valtree->queryProp(NULL);
-            if (val)
-                decodeXML(val, ds);
-        }
-        if (ds.length())
-            var->setResultRaw(ds.length(), ds.str(), ResultFormatXml);
-    }
-    else
-    {
-        const char *val = valtree->queryProp(NULL);
-        if (val && *val)
-        {
-            switch (metadef.getColumnDisplayType(0))
-            {
-                case TypeBoolean:
-                    var->setResultBool(strieq(val, "1") || strieq(val, "true") || strieq(val, "on"));
-                    break;
-                case TypeInteger:
-                    var->setResultInt(_atoi64(val));
-                    break;
-                case TypeUnsignedInteger:
-                    var->setResultInt(_atoi64(val));
-                    break;
-                case TypeReal:
-                    var->setResultReal(atof(val));
-                    break;
-                case TypeSet:
-                case TypeDataset:
-                case TypeData:
-                    var->setResultRaw(strlen(val), val, ResultFormatRaw);
-                    break;
-                case TypeUnicode: {
-                    MemoryBuffer target;
-                    convertUtf(target, UtfReader::Utf16le, strlen(val), val, UtfReader::Utf8);
-                    var->setResultUnicode(target.toByteArray(), (target.length()>1) ? target.length()/2 : 0);
-                    }
-                    break;
-                case TypeString:
-                case TypeUnknown:
-                default:
-                    var->setResultString(val, strlen(val));
-                    break;
-                    break;
-            }
-
-            var->setResultStatus(ResultStatusSupplied);
-        }
-    }
-}
-
-
 int CWsEclBinding::submitWsEclWorkunit(IEspContext & context, WsEclWuInfo &wsinfo, const char *xml, StringBuffer &out, unsigned flags, const char *viewname, const char *xsltname)
 {
     Owned <IWorkUnitFactory> factory = getSecWorkUnitFactory(*context.querySecManager(), *context.queryUser());
@@ -2172,7 +2118,11 @@ int CWsEclBinding::submitWsEclWorkunit(IEspContext & context, WsEclWuInfo &wsinf
     workunit->resetWorkflow();
     workunit->setClusterName(wsinfo.qsetname.sget());
     workunit->setUser(context.queryUserId());
-    
+
+    const char *jobname = context.queryRequestParameters()->queryProp("_jobname");
+    if (jobname && *jobname)
+        workunit->setJobName(jobname);
+
     SCMStringBuffer wuid;
     workunit->getWuid(wuid);
 
@@ -2188,31 +2138,18 @@ int CWsEclBinding::submitWsEclWorkunit(IEspContext & context, WsEclWuInfo &wsinf
         start=start->queryPropTree("Envelope");
     if (start->hasProp("Body"))
         start=start->queryPropTree("Body/*[1]");
-
-    Owned<IResultSetFactory> resultSetFactory(getResultSetFactory(context.queryUserId(), context.queryPassword()));
-    Owned<IPropertyTreeIterator> it = start->getElements("*");
-    ForEach(*it)
-    {
-        IPropertyTree &eclparm=it->query();
-        const char *varname = eclparm.queryName();
-
-        IConstWUResult *vardef = wsinfo.wu->getVariableByName(varname);
-        if (vardef)
-        {
-            Owned<IResultSetMetaData> metadef = resultSetFactory->createResultSetMeta(vardef);
-            if (metadef)
-                addParameterToWorkunit(workunit.get(), *vardef, *metadef, varname, &eclparm);
-        }
-    }
+    workunit->setXmlParams(LINK(start));
 
     workunit->schedule();
     workunit.clear();
 
     runWorkUnit(wuid.str(), wsinfo.qsetname.sget());
 
+    bool async = context.queryRequestParameters()->hasProp("_async");
+
     //don't wait indefinately, in case submitted to an inactive queue wait max + 5 mins
     int wutimeout = 300000;
-    if (waitForWorkUnitToComplete(wuid.str(), wutimeout))
+    if (!async && waitForWorkUnitToComplete(wuid.str(), wutimeout))
     {
         Owned<IWuWebView> web = createWuWebView(wuid.str(), wsinfo.queryname.get(), getCFD(), true);
         if (!web)
@@ -2229,10 +2166,13 @@ int CWsEclBinding::submitWsEclWorkunit(IEspContext & context, WsEclWuInfo &wsinf
     }
     else
     {
-        DBGLOG("WS-ECL request timed out, WorkUnit %s", wuid.str());
+        if (!async)
+            DBGLOG("WS-ECL request timed out, WorkUnit %s", wuid.str());
+        Owned<IWuWebView> web = createWuWebView(wuid.str(), wsinfo.queryname.get(), getCFD(), true);
+        web->createWuidResponse(out, flags);
     }
 
-    DBGLOG("WS-ECL Request processed [using Doxie]");
+    DBGLOG("WS-ECL Request processed");
     return true;
 }
 
@@ -2710,6 +2650,11 @@ int CWsEclBinding::onGet(CHttpRequest* request, CHttpResponse* response)
 
         StringBuffer methodName;
         nextPathNode(thepath, methodName);
+        if (strieq(methodName, "async"))
+        {
+            parms->setProp("_async", 1);
+            methodName.set("submit");
+        }
 
         if (!stricmp(methodName.str(), "tabview"))
         {
@@ -2843,6 +2788,8 @@ void CWsEclBinding::handleJSONPost(CHttpRequest *request, CHttpResponse *respons
 
         StringBuffer action;
         nextPathNode(thepath, action);
+        if (strieq(action, "async"))
+            parms->setProp("_async", 1);
 
         StringBuffer lookup;
         nextPathNode(thepath, lookup);
@@ -2954,6 +2901,8 @@ int CWsEclBinding::HandleSoapRequest(CHttpRequest* request, CHttpResponse* respo
 
     StringBuffer action;
     nextPathNode(thepath, action);
+    if (strieq(action, "async"))
+        parms->setProp("_async", 1);
 
     StringBuffer lookup;
     nextPathNode(thepath, lookup);
