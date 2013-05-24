@@ -29,6 +29,7 @@ FOREACH( iFILES
     ${CMAKE_CURRENT_SOURCE_DIR}/nav.xsl
     ${CMAKE_CURRENT_SOURCE_DIR}/navigation.xsl
     ${CMAKE_CURRENT_SOURCE_DIR}/soap_page.xsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/roxie_page.xsl
     ${CMAKE_CURRENT_SOURCE_DIR}/sso_create_session.xslt
     ${CMAKE_CURRENT_SOURCE_DIR}/ui_engine.xslt
     ${CMAKE_CURRENT_SOURCE_DIR}/ui_overrides.xslt

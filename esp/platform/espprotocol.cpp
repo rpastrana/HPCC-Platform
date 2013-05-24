@@ -226,8 +226,6 @@ const StringBuffer &CEspApplicationPort::getNavBarContent(IEspContext &context, 
                     
             }
             xform->loadXslFromFile(xslsource.str());
-
-
             xform->setXmlSource(xml.str(), xml.length()+1);
             xform->transform(content);
             contentType.clear().append("text/html; charset=UTF-8");
@@ -315,6 +313,7 @@ void CEspApplicationPort::buildNavTreeXML(IPropertyTree* navtree, StringBuffer& 
         if (attrname && *attrname && attrvaluee && *attrvaluee)
             xmlBuf.appendf(" %s=\"%s\"", attrname, attrvaluee);
     }
+
     xmlBuf.append(">\n");
 
     unsigned positionInGroup1 = 0;
@@ -490,17 +489,24 @@ void CEspBinding::getNavigationData(IEspContext &context, IPropertyTree & data)
         if (!getUrlParams(context.queryRequestParameters(), params))
         {
             if (context.getClientVersion()>0)
-                params.appendf("&ver_=%g", context.getClientVersion());
+                params.appendf("%cver_=%g", params.length()?'&':'?', context.getClientVersion());
         }
-        if (params.length())
-            params.setCharAt(0,'&');
         
         IPropertyTree *folder=createPTree("Folder");
         folder->addProp("@name", serviceName.str());
         folder->addProp("@info", serviceName.str());
-        folder->addProp("@urlParams", params.str());
+
+
+        StringBuffer encodedparams;
+        if (params.length())
+            encodeUtf8XML(params.str(), encodedparams, 0);
+
+        folder->addProp("@urlParams", encodedparams);
         if (showSchemaLinks())
             folder->addProp("@showSchemaLinks", "true");
+
+        if (params.length())
+            params.setCharAt(0,'&'); //the entire params string will follow the initial param: "?form"
         
         MethodInfoArray methods;
         wsdl->getQualifiedNames(context, methods);

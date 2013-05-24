@@ -148,6 +148,7 @@ protected:
     bool                    m_includeSoapTest;
     StringBuffer            m_challenge_realm;
     StringAttr              m_defaultSvcVersion;
+    bool                    m_roxieOption;
 
 public:
     EspHttpBinding(IPropertyTree* cfg, const char *bindname=NULL, const char *procname=NULL);
@@ -164,6 +165,8 @@ public:
     const char* getChallengeRealm() {return m_challenge_realm.str();}
     double getWsdlVersion(){return m_wsdlVer;}
     void setWsdlVersion(double ver){m_wsdlVer=ver;}
+    const char *getWsdlAddress(){return m_wsdlAddress.str();}
+    void setWsdlAddress(const char *wsdladdress){m_wsdlAddress.clear().append(wsdladdress);}
 
     virtual void setRequestPath(const char *path);
     virtual bool rootAuthRequired();
@@ -285,12 +288,15 @@ public:
     }
     ISecManager* querySecManager() {return m_secmgr.get(); }
 
+    static void escapeSingleQuote(StringBuffer& src, StringBuffer& escaped);
+
 protected:
     virtual bool basicAuth(IEspContext* ctx);
     int getWsdlOrXsd(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *service, const char *method, bool isWsdl);
     bool getSchema(StringBuffer& schema, IEspContext &ctx, CHttpRequest* req, const char *service, const char *method,bool standalone);
     virtual void appendSchemaNamespaces(IPropertyTree *namespaces, IEspContext &ctx, CHttpRequest* req, const char *service, const char *method){}
     void generateSampleXml(bool isRequest, IEspContext &context, CHttpRequest* request, CHttpResponse* response,    const char *serv, const char *method);
+    void generateSampleXmlFromSchema(bool isRequest, IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method, const char * schemaxml);
     virtual void getSoapMessage(StringBuffer& soapmsg, IEspContext &context, CHttpRequest* request, const char *serv, const char *method);
     void onBeforeSendResponse(IEspContext& context, CHttpRequest* request,MemoryBuffer& contentconst, 
                             const char *serviceName, const char* methodName);
