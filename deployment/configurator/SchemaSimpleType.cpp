@@ -40,6 +40,14 @@ void CSimpleType::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
+void CSimpleType::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pRestriction != NULL)
+    {
+        m_pRestriction->getDojoJS(strJS);
+    }
+}
+
 void CSimpleType::traverseAndProcessNodes() const
 {
     CSimpleType::processEntryHandlers(this);
@@ -185,4 +193,9 @@ CSimpleTypeArray* CSimpleTypeArray::load(CXSDNodeBase* pParentNode, IPropertyTre
 void CSimpleTypeArray::getDocumentation(StringBuffer &strDoc) const
 {
     QUICK_DOC_ARRAY(strDoc);
+}
+
+void CSimpleTypeArray::getDojoJS(StringBuffer &strJS) const
+{
+    QUICK_DOJO_JS_ARRAY(strJS);
 }

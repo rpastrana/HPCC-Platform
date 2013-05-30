@@ -84,6 +84,14 @@ void CChoice::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
+void CChoice::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getDojoJS(strJS);
+    }
+}
+
 void CChoice::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);

@@ -46,3 +46,8 @@ void  CDocumentation::getDocumentation(StringBuffer &strDoc) const
 {
     strDoc.appendf("%s%s%s", DM_PARA_BEGIN, this->getDocString(), DM_PARA_END);
 }
+
+void CDocumentation::getDojoJS(StringBuffer &strJS) const
+{
+
+}

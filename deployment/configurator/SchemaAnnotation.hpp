@@ -26,6 +26,8 @@ public:
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
+    virtual void getDojoJS(StringBuffer &strJS) const;
+
     const CAppInfo* getAppInfo() const
     {
         return m_pAppInfo;

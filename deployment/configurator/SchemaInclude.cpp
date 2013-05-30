@@ -25,6 +25,10 @@ void CInclude::getDocumentation(StringBuffer &strDoc) const
     // NOOP
 }
 
+void CInclude::getDojoJS(StringBuffer &strJS) const
+{
+}
+
 void CInclude::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -155,6 +159,11 @@ void CIncludeArray::dump(std::ostream &cout, unsigned int offset) const
 void CIncludeArray::getDocumentation(StringBuffer &strDoc) const
 {
     QUICK_DOC_ARRAY(strDoc);
+}
+
+void CIncludeArray::getDojoJS(StringBuffer &strJS) const
+{
+    QUICK_DOJO_JS_ARRAY(strJS);
 }
 
 void CIncludeArray::traverseAndProcessNodes() const

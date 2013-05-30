@@ -26,6 +26,8 @@ void usage()
     std::cout << "-t -target <target directory>     : directory to which to docs will be written. If not specified, then output will go to std::out" << std::endl;
     std::cout << "-u -use <schema xsd>              : use specified xsd schema instead of buildset file" << std::endl;
     std::cout << "-h -help                          : prints out this usuage" << std::endl;
+    std::cout << "** EXPERIMENTAL **" << std::endl;
+    std::cout << "-j -dojo                          : prints dojo js" << std::endl;
 }
 
 int main(int argc, char *argv[])
@@ -52,6 +54,7 @@ int main(int argc, char *argv[])
 
     bool bListXSDs = false;
     bool bGenDocs = false;
+    bool bGenDojoJS = false;
 
 
     StringArray arrXSDs;
@@ -176,6 +179,10 @@ int main(int argc, char *argv[])
                 arrXSDs.append(argv[idx]);
             }
         }
+        else if (stricmp(argv[idx], "-dojo") == 0 | stricmp(argv[idx], "-j") == 0)
+        {
+            bGenDojoJS = true;
+        }
 
         idx++;
     }
@@ -189,6 +196,12 @@ int main(int argc, char *argv[])
     if (bGenDocs == true && arrXSDs.length() == 0)
     {
         puts("No XSDs specified for doc generation!");
+        return 0;
+    }
+
+    if (bGenDocs == true && bGenDojoJS == true)
+    {
+        puts("Can not generate docs and dojo java script at the same time! (Coming...)");
         return 0;
     }
 
@@ -270,4 +283,36 @@ int main(int argc, char *argv[])
             pFileIO->write(0, strlen(pDoc), pDoc);
         }
     }
+
+
+    for (int idx =  0; bGenDojoJS == true && idx < arrXSDs.length(); idx++)
+    {
+        if (pTargetDocDir[0] == 0)
+        {
+            std::cout << pSchemaHelper->printDojoJS(arrXSDs.item(idx));
+        }
+        else
+        {
+            Owned<IFile>   pFile;
+            Owned<IFileIO> pFileIO;
+            StringBuffer strTargetPath;
+
+            const char *pXSDFile = strrchr(arrXSDs.item(idx), '/') == NULL ? arrXSDs.item(idx) : strrchr(arrXSDs.item(idx),'/');
+
+            strTargetPath.append(pTargetDocDir).append("/").append(pXSDFile).append(pTargetDocExt);
+
+            pFile.setown(createIFile(strTargetPath.str()));
+            pFileIO.setown(pFile->open(IFOcreaterw));
+
+            const char *pDoc = pSchemaHelper->printDojoJS(arrXSDs.item(idx));
+
+            if (pDoc == NULL)
+            {
+                continue;
+            }
+
+            pFileIO->write(0, strlen(pDoc), pDoc);
+        }
+    }
+
 }

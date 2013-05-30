@@ -99,6 +99,39 @@ void CComplexType::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
+void CComplexType::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pSequence != NULL)
+    {
+        m_pSequence->getDojoJS(strJS);
+    }
+
+    if (m_pComplexContent != NULL)
+    {
+        m_pComplexContent->getDojoJS(strJS);
+    }
+
+    if (m_pAttributeArray != NULL)
+    {
+        m_pAttributeArray->getDojoJS(strJS);
+    }
+
+    if (m_pChoice != NULL)
+    {
+        m_pChoice->getDojoJS(strJS);
+    }
+
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getDojoJS(strJS);
+    }
+
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->getDojoJS(strJS);
+    }
+}
+
 void CComplexType::traverseAndProcessNodes() const
 {
     CComplexType::processEntryHandlers(this);
@@ -259,6 +292,11 @@ void CComplexTypeArray::dump(std::ostream& cout, unsigned int offset) const
 void CComplexTypeArray::getDocumentation(StringBuffer &strDoc) const
 {
     QUICK_DOC_ARRAY(strDoc);
+}
+
+void CComplexTypeArray::getDojoJS(StringBuffer &strJS) const
+{
+    QUICK_DOJO_JS_ARRAY(strJS);
 }
 
 void CComplexTypeArray::traverseAndProcessNodes() const

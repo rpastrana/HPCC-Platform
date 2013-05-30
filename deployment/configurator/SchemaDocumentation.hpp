@@ -24,6 +24,8 @@ public:
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
+    virtual void getDojoJS(StringBuffer &strJS) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CDocumentation* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);

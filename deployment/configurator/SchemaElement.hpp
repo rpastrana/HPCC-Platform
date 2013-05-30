@@ -1,4 +1,4 @@
-#ifndef _SCHEMA_ELEMENT_HPP_
+﻿#ifndef _SCHEMA_ELEMENT_HPP_
 #define _SCHEMA_ELEMENT_HPP_
 
 #include "jiface.hpp"
@@ -31,7 +31,9 @@ public:
 
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
 
-    virtual void getDocumentation(StringBuffer &strDoc) const;
+    virtual void getDocumentation(StringBuffer &strJS) const;
+
+    virtual void getDojoJS(StringBuffer &strDoc) const;
 
     virtual void traverseAndProcessNodes() const;
 
@@ -74,6 +76,8 @@ public:
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void getDojoJS(StringBuffer &strJS) const;
 
     virtual void traverseAndProcessNodes() const;
 

@@ -56,6 +56,7 @@ public:
     void traverseAndProcessArray(const char *pXSDName = NULL);
 
     const char* printDocumentation(const char* comp);
+    const char* printDojoJS(const char* comp);
 
     void setBuildSetArray(const StringArray &strArray);
 

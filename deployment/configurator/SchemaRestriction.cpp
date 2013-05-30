@@ -31,6 +31,14 @@ void CRestriction::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
+void CRestriction::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pEnumerationArray != NULL)
+    {
+        m_pEnumerationArray->getDojoJS(strJS);
+    }
+}
+
 CRestriction* CRestriction::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
     if (pParentNode == NULL || pSchemaRoot == NULL)

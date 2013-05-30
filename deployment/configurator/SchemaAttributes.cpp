@@ -4,6 +4,7 @@
 #include "SchemaAppInfo.hpp"
 #include "SchemaSimpleType.hpp"
 #include "DocumentationMarkup.hpp"
+#include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
 
 const char* CAttribute::getXML(const char* pComponent)
@@ -85,6 +86,34 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
 
     strDoc.appendf("<%s>%s</%s>\n", DM_TABLE_ENTRY, pRequired, DM_TABLE_ENTRY);
     strDoc.appendf("</%s>\n", DM_TABLE_ROW);
+}
+
+
+void CAttribute::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
+    {
+        const CAppInfo *pAppInfo = m_pAnnotation->getAppInfo();
+        const char* pViewType = pAppInfo->getViewType();
+
+        if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
+        {
+            return; // HIDDEN
+        }
+        else
+        {
+            strJS.append(DJ_TABLE_ROW_PART_1).append(this->getName()).append(DJ_TABLE_ROW_PART_2);
+        }
+    }
+
+    if (m_pSimpleTypeArray == NULL)
+    {
+
+    }
+    else
+    {
+        m_pSimpleTypeArray->getDojoJS(strJS);
+    }
 }
 
 void CAttribute::traverseAndProcessNodes() const
@@ -297,6 +326,22 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
     strDoc.append(DM_SECT4_END);
 }
 
+void CAttributeArray::getDojoJS(StringBuffer &strJS) const
+{
+    assert(this->getConstParentNode() != NULL);
+
+
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
+    {
+        genTabDojoJS(strJS, "Attributes");
+    }
+
+    strJS.append(DJ_TABLE_PART_1);
+
+    QUICK_DOJO_JS_ARRAY(strJS);
+    strJS.append(DJ_TABLE_PART_2);
+}
+
 void CAttributeArray::traverseAndProcessNodes() const
 {
     QUICK_TRAVERSE_AND_PROCESS;
@@ -392,6 +437,17 @@ void CAttributeGroup::getDocumentation(StringBuffer &strDoc) const
         strDoc.appendf("%s%s%s", DM_TITLE_BEGIN, this->getName(), DM_TITLE_END);
         m_pAttributeArray->getDocumentation(strDoc);
     }*/
+}
+
+void CAttributeGroup::getDojoJS(StringBuffer &strJS) const
+{
+    if (this->getRef() != NULL && this->getRef()[0] != 0 && m_pRefAttributeGroup != NULL)
+    {
+        if (m_pRefAttributeGroup->getAttributeArray() != NULL)
+        {
+            m_pRefAttributeGroup->getAttributeArray()->getDojoJS(strJS);
+        }
+    }
 }
 
 void CAttributeGroup::traverseAndProcessNodes() const
@@ -568,6 +624,13 @@ void CAttributeGroupArray::getDocumentation(StringBuffer &strDoc) const
         (this->item(idx)).getDocumentation(strDoc);
         strDoc.append(DM_SECT3_END);
     }
+}
+
+void CAttributeGroupArray::getDojoJS(StringBuffer &strDoc) const
+{
+    StringBuffer strDocDupe1(strDoc);
+
+    QUICK_DOJO_JS_ARRAY(strDocDupe1);
 }
 
 void CAttributeGroupArray::traverseAndProcessNodes() const

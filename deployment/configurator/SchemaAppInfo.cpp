@@ -127,3 +127,7 @@ void CAppInfo::getDocumentation(StringBuffer &strDoc) const
         strDoc.appendf("<%s %s />\n", DM_XI_INCLUDE, this->getDocInclude());
     }
 }
+
+void CAppInfo::getDojoJS(StringBuffer &strJS) const
+{
+}

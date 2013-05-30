@@ -44,6 +44,8 @@ public:
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
+    virtual void getDojoJS(StringBuffer &strJS) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CAttribute* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
@@ -98,6 +100,8 @@ public:
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void getDojoJS(StringBuffer &strJS) const;
 
     virtual void traverseAndProcessNodes() const;
 
@@ -158,6 +162,8 @@ public:
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
+    virtual void getDojoJS(StringBuffer &strJS) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CAttributeGroup* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
@@ -189,6 +195,8 @@ public:
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
+
+    virtual void getDojoJS(StringBuffer &strJS) const;
 
     virtual void traverseAndProcessNodes() const;
 

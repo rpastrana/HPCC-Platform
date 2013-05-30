@@ -203,6 +203,30 @@ void CSchema::getDocumentation(StringBuffer &strDoc) const
     strDoc.append(DM_SECT2_END);
 }
 
+void CSchema::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getDojoJS(strJS);
+    }
+    if (m_pComplexTypeArray != NULL)
+    {
+        m_pComplexTypeArray->getDojoJS(strJS);
+    }
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->getDojoJS(strJS);
+    }
+    if (m_pSimpleTypeArray != NULL)
+    {
+        m_pSimpleTypeArray->getDojoJS(strJS);
+    }
+    if (m_pIncludeArray != NULL)
+    {
+        m_pIncludeArray->getDojoJS(strJS);
+    }
+}
+
 void CSchema::traverseAndProcessNodes() const
 {
     CSchema::processEntryHandlers(this);

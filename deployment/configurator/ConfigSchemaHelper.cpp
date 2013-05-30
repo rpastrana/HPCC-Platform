@@ -175,6 +175,39 @@ const char* CConfigSchemaHelper::printDocumentation(const char* comp)
     return NULL;
 }
 
+
+const char* CConfigSchemaHelper::printDojoJS(const char* comp)
+{
+    assert(comp);
+
+    if (comp == NULL)
+    {
+        return NULL;
+    }
+
+    CSchema* pSchema = NULL;
+
+    LOOP_THRU_BUILD_SET
+    {
+        if (m_buildSetArray.item(idx).getSchema() != NULL && strcmp(comp, m_buildSetArray.item(idx).getSchema()) == 0)
+        {
+             pSchema = m_schemaMap.getValue(m_buildSetArray.item(idx).getSchema());
+
+             assert(pSchema != NULL);
+
+             if (pSchema != NULL)
+             {
+                static StringBuffer strDoc;
+                pSchema->getDojoJS(strDoc);
+
+                return strDoc.str();
+             }
+        }
+    }
+
+    return NULL;
+}
+
 //test purposes
 bool CConfigSchemaHelper::getXMLFromSchema(StringBuffer& strXML, const char* pComponent)
 {

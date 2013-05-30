@@ -23,6 +23,11 @@ public:
         assert(false); // Should not be called directly
     }
 
+    virtual void getDojoJS(StringBuffer &strJS) const
+    {
+        assert(false);
+    }
+
     virtual void traverseAndProcessNodes() const;
 
     virtual const char* getXML(const char* /*pComponent*/);

@@ -11,6 +11,7 @@
 #include "SchemaAppInfo.hpp"
 #include "SchemaDocumentation.hpp"
 #include "DocumentationMarkup.hpp"
+#include "DojoJSMarkup.hpp"
 
 
 CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
@@ -226,6 +227,90 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
+void CElement::getDojoJS(StringBuffer &strJS) const
+{
+    const CXSDNodeBase *pGrandParentNode = this->getConstParentNode()->getConstParentNode();
+
+    assert(pGrandParentNode != NULL);
+
+    if (pGrandParentNode == NULL)
+    {
+        return;
+    }
+
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getViewType() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewType(), "none") == 0)
+    {
+        return;
+    }
+
+    assert(strlen(this->getName()) > 0);
+
+    if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
+    {
+        strJS.append(DJ_START_TEST);
+
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getDojoJS(strJS);
+            DEBUG_MARK_STRJS;
+        }
+
+
+        if (m_pComplexTypeArray != NULL)
+        {
+            m_pComplexTypeArray->getDojoJS(strJS);
+        }
+
+        strJS.append(DJ_FINISH_TEST);
+
+        return;
+    }
+    else if (m_pComplexTypeArray != NULL)
+    {
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getDojoJS(strJS);
+            DEBUG_MARK_STRJS;
+        }
+
+        if (pGrandParentNode->getNodeType() == XSD_CHOICE)
+        {
+
+        }
+        else
+        {
+
+        }
+
+        DEBUG_MARK_STRJS;
+
+        m_pComplexTypeArray->getDojoJS(strJS);
+    }
+    else if (m_pComplexTypeArray == NULL)
+    {
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getDojoJS(strJS);
+            DEBUG_MARK_STRJS;
+        }
+
+        genTabDojoJS(strJS, this->getName());
+
+        if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
+        {
+            m_pAnnotation->getDojoJS(strJS);
+            DEBUG_MARK_STRJS;
+        }
+
+        if (m_pAttributeArray != NULL)
+        {
+            m_pAttributeArray->getDojoJS(strJS);
+        }
+
+        strJS.append(DJ_TABLE_PART_2);
+    }
+}
+
 void CElement::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -257,6 +342,11 @@ void CElementArray::dump(std::ostream &cout, unsigned int offset) const
 void CElementArray::getDocumentation(StringBuffer &strDoc) const
 {
     QUICK_DOC_ARRAY(strDoc);
+}
+
+void CElementArray::getDojoJS(StringBuffer &strDoc) const
+{
+    QUICK_DOJO_JS_ARRAY(strDoc);
 }
 
 void CElementArray::traverseAndProcessNodes() const

@@ -57,6 +57,14 @@ void CSequence::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
+void CSequence::getDojoJS(StringBuffer &strJS) const
+{
+    if (p_mElementArray != NULL)
+    {
+        p_mElementArray->getDojoJS(strJS);
+    }
+}
+
 void CSequence::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);

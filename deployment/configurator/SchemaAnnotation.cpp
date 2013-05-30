@@ -78,3 +78,17 @@ void CAnnotation::getDocumentation(StringBuffer &strDoc) const
         m_pDocumentation->getDocumentation(strDoc);
     }
 }
+
+
+void CAnnotation::getDojoJS(StringBuffer &strJS) const
+{
+    if (m_pAppInfo != NULL)
+    {
+        m_pAppInfo->getDojoJS(strJS);
+    }
+
+    if (m_pDocumentation != NULL)
+    {
+        m_pDocumentation->getDojoJS(strJS);
+    }
+}

@@ -51,6 +51,11 @@ void CEnumeration::getDocumentation(StringBuffer &strDoc) const
     strDoc.appendf("<%s>* %s </%s>\n", DM_PARA, this->getValue(), DM_PARA);
 }
 
+void CEnumeration::getDojoJS(StringBuffer &strJS) const
+{
+
+}
+
 void CEnumeration::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -78,6 +83,11 @@ void CEnumerationArray::getDocumentation(StringBuffer &strDoc) const
 {
     strDoc.append("\nChoices are: \n");
     QUICK_DOC_ARRAY(strDoc);
+}
+
+void CEnumerationArray::getDojoJS(StringBuffer &strJS) const
+{
+    QUICK_DOJO_JS_ARRAY(strJS);
 }
 
 void CEnumerationArray::traverseAndProcessNodes() const

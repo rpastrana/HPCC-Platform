@@ -22,6 +22,8 @@ public:
 
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
+    virtual void getDojoJS(StringBuffer &strJS) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CSequence* load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
