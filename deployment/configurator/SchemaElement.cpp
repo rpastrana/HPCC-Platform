@@ -12,6 +12,7 @@
 #include "SchemaDocumentation.hpp"
 #include "DocumentationMarkup.hpp"
 #include "DojoJSMarkup.hpp"
+#include "ConfigSchemaHelper.hpp"
 
 
 CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
@@ -261,6 +262,7 @@ void CElement::getDojoJS(StringBuffer &strJS) const
             m_pComplexTypeArray->getDojoJS(strJS);
         }
 
+        strJS.append(CConfigSchemaHelper::getInstance()->getToolTipJS());
         strJS.append(DJ_FINISH_TEST);
 
         return;

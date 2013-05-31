@@ -60,6 +60,9 @@ public:
 
     void setBuildSetArray(const StringArray &strArray);
 
+    void addToolTip(const char *js);
+
+    const char* getToolTipJS() const;
 
 protected:
 
@@ -74,6 +77,7 @@ protected:
     CIArrayOf<CExtension> m_extensionArr;
     CIArrayOf<CAttributeGroup> m_attributeGroupArr;
     StringBuffer m_buildSetPath;
+    StringArray m_strToolTipsJS;
 
 private:
 

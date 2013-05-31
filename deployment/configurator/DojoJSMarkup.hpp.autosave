@@ -78,7 +78,7 @@ title: \"");
 
 static const char* DJ_TAB_PART_2("\",\n\
 style: \"height: 50%; width: 90%x;\",\n \
-cssText: \"width: 50%; height: 70%; showLabels: true; colspan: 1\",\n\
+cssText: \"width: 50%; height: 70%; showLabels: true; colspan: 2\",\n\
 doLayout: \"true\",\n\
 id: \"");
 

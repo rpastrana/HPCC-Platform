@@ -88,7 +88,6 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
     strDoc.appendf("</%s>\n", DM_TABLE_ROW);
 }
 
-
 void CAttribute::getDojoJS(StringBuffer &strJS) const
 {
     if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
@@ -102,7 +101,35 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
         }
         else
         {
-            strJS.append(DJ_TABLE_ROW_PART_1).append(this->getName()).append(DJ_TABLE_ROW_PART_2);
+            if (this->getDefault() != NULL && this->getDefault()[0] != 0)
+            {
+                StringBuffer id("ID_");
+                id.append(getRandomID());
+
+                strJS.append(DJ_TABLE_ROW_PART_1).append(this->getName()).append(DJ_TABLE_ROW_PART_PLACE_HOLDER).append(this->getDefault()).append(DJ_TABLE_ROW_PART_ID_BEGIN).append(id.str()).append(DJ_TABLE_ROW_PART_ID_END);
+
+                if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)
+                {
+                    StringBuffer strToolTip(DJ_TOOL_TIP_BEGIN);
+
+                    strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
+                    strToolTip.append(id.str());
+                    strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
+                    StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
+                    strTT.replaceString("\"","\\\"");
+
+                    strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
+                    strToolTip.append(DJ_TOOL_TIP_END);
+
+                    strJS.append(DJ_ADD_CHILD);
+
+                    CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
+                }
+            }
+            else
+            {
+                strJS.append(DJ_TABLE_ROW_PART_1).append(this->getName()).append(DJ_TABLE_ROW_PART_2);
+            }
         }
     }
 
@@ -334,6 +361,17 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
     if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
     {
         genTabDojoJS(strJS, "Attributes");
+    }
+    else if (this->getConstParentNode()->getNodeType() == XSD_ATTRIBUTE_GROUP)
+    {
+        const CAttributeGroup *pAttributeGroup = dynamic_cast<const CAttributeGroup*>(this->getConstParentNode());
+
+        assert(pAttributeGroup != NULL);
+
+        if (pAttributeGroup != NULL)
+        {
+            genTabDojoJS(strJS, pAttributeGroup->getName());
+        }
     }
 
     strJS.append(DJ_TABLE_PART_1);
@@ -626,11 +664,18 @@ void CAttributeGroupArray::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
-void CAttributeGroupArray::getDojoJS(StringBuffer &strDoc) const
+void CAttributeGroupArray::getDojoJS(StringBuffer &strJS) const
 {
-    StringBuffer strDocDupe1(strDoc);
+    StringBuffer strJSDupe1(strJS);
 
-    QUICK_DOJO_JS_ARRAY(strDocDupe1);
+    QUICK_DOC_ARRAY(strJSDupe1);
+
+    if (strJSDupe1.length() == strJS.length())
+    {
+       return;
+    }
+
+    QUICK_DOJO_JS_ARRAY(strJS);
 }
 
 void CAttributeGroupArray::traverseAndProcessNodes() const

@@ -501,3 +501,31 @@ void CConfigSchemaHelper::setBuildSetArray(const StringArray &strArray)
 
     m_buildSetArray.append(*pBSet.getClear());
 }
+
+
+void CConfigSchemaHelper::addToolTip(const char *js)
+{
+    assert (js != NULL);
+    assert (js[0] != 0);
+
+    if (js == NULL || js[0] == 0)
+    {
+        return;
+    }
+
+    m_strToolTipsJS.append(js);
+}
+
+const char* CConfigSchemaHelper::getToolTipJS() const
+{
+    static StringBuffer strJS;
+
+    strJS.clear();
+
+    for (int idx = 0; idx < m_strToolTipsJS.length(); idx++)
+    {
+        strJS.append(m_strToolTipsJS.item(idx));
+    }
+
+    return strJS.str();
+}
