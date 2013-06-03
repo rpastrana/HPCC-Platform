@@ -356,11 +356,26 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 void CAttributeArray::getDojoJS(StringBuffer &strJS) const
 {
     assert(this->getConstParentNode() != NULL);
+    assert(this->getConstParentNode()->getConstParentNode() != NULL);
 
 
-    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getConstParentNode() != NULL &&
+            this->getConstParentNode()->getConstParentNode()->getConstParentNode()->getNodeType() == XSD_ELEMENT)
+    {
+        const char *pName = NULL;
+
+        pName = dynamic_cast<const CElement*>(this->getConstParentNode()->getConstParentNode()->getConstParentNode())->getName();
+
+        assert(pName != NULL);
+        assert(pName[0] != 0);
+
+        genTabDojoJS(strJS, pName);
+        DEBUG_MARK_STRJS;
+    }
+    else if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
     {
         genTabDojoJS(strJS, "Attributes");
+        DEBUG_MARK_STRJS;
     }
     else if (this->getConstParentNode()->getNodeType() == XSD_ATTRIBUTE_GROUP)
     {

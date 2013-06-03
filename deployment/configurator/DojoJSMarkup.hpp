@@ -16,22 +16,23 @@ static const char* DJ_START_TEST("define([\n\
                                  \"dijit/layout/ContentPane\",\n\
                                  \"dijit/form/Form\",\n\
                                  \"dijit/form/TextBox\",\n\
-                                 \"dijit/layout/_LayoutWidget\",\n\
                                  \"dijit/_TemplatedMixin\",\n\
                                  \"dijit/_WidgetsInTemplateMixin\",\n\
                                  \"dijit/form/Select\",\n\
                                  \"dijit/registry\",\n\
 \n\
+                                 \"hpcc/_TabContainerWidget\",\n\
 \n\
-                                 \"dojo/text!../templates/GlebWidget3.html\"\n\
+                                 \"dojo/text!../templates/GlebWidget4.html\"\n\
 \n\
                              ], function (declare, dom,\n\
                                      TableContainer,\n\
-                                 Tooltip, TabContainer, ContentPane, Form, TextBox,\n\
-                                 _LayoutWidget, _TemplatedMixin, _WidgetsInTemplateMixin, Select, registry,\n\
+                                     Tooltip, TabContainer, ContentPane, Form, TextBox,\n\
+                                     _TemplatedMixin, _WidgetsInTemplateMixin, Select, registry,\n\
+                                     _TabConterWidget,\n\
                                      template) {\n\
 \n\
-                                 return declare(\"GlebWidget4\", [_LayoutWidget, _TemplatedMixin, _WidgetsInTemplateMixin], {\n\
+                                 return declare(\"GlebWidget4\", [_TabContainerWidget\, _TemplatedMixin, _WidgetsInTemplateMixin], {\n\
                                      templateString: template,\n\
                                      baseClass: \"GlebWidget4\",\n\
                                  name: \"GlebWidget4\",\n\
@@ -78,21 +79,27 @@ title: \"");
 
 static const char* DJ_TAB_PART_2("\",\n\
 style: \"height: 50%; width: 90%x;\",\n \
-cssText: \"width: 50%; height: 70%; showLabels: true; colspan: 1\",\n\
+cssText: \"width: 50%; height: 70%; showLabels: true; colspan: 2\",\n\
 doLayout: \"true\",\n\
 id: \"");
 
 
-//static const char* DJ_TAB_PART_3("\", }).placeAt(\"stubTabContainer\");\n");
 static const char* DJ_TAB_PART_3("\", });\n");
-
-
 
 static const char* DJ_TABLE_PART_1("\nvar tc = new dojox.layout.TableContainer(\n\
 { cols: 2,\n\
 \"labelWidth\" : \"50\" });");
 
-static const char* DJ_TABLE_PART_2("if (tc != null) {cp.placeAt(\"stubTabContainer\");\ncp.addChild(tc);}\n else cp = null;\nvar tc = null; \n");
+static const char* DJ_TABLE_PART_2("\n\
+if (cp != null)\n\
+    cp.placeAt(\"stubTabContainer\");\n\
+if (tc != null)\n\
+{\n\
+    cp.addChild(tc);\n\
+}\n\
+cp = null;\n\
+tc = null;\n\
+");
 
 static const char* DJ_TABLE_ROW_PART_1("\nvar txt = new dijit.form.TextBox({label: \"");
 static const char* DJ_TABLE_ROW_PART_PLACE_HOLDER("\", placeHolder: \"");

@@ -38,8 +38,8 @@
 #define SETPARENTNODE(X, Y) if (X!= NULL && Y != NULL) X->setParentNode(Y);
 //#define DEBUG_MARK_STRDOC strDoc.append(__FILE__).append(":").append(__LINE__).append("\n");
 #define DEBUG_MARK_STRDOC
-//#define DEBUG_MARK_STRJS stdDoc.append("//  ").append(__FILE__).append(":").append(__LINE__).append("\n");
-#define DEBUG_MARK_STRJS
+#define DEBUG_MARK_STRJS strJS.append("//  ").append(__FILE__).append(":").append(__LINE__).append("\n");
+//#define DEBUG_MARK_STRJS
 
 enum NODE_TYPES
 {

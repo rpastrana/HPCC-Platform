@@ -284,8 +284,6 @@ void CElement::getDojoJS(StringBuffer &strJS) const
 
         }
 
-        DEBUG_MARK_STRJS;
-
         m_pComplexTypeArray->getDojoJS(strJS);
     }
     else if (m_pComplexTypeArray == NULL)
