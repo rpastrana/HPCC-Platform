@@ -38,6 +38,8 @@ public:
         return m_pAnnotation;
     }
 
+    const char* getTitle() const;
+
     virtual const char* getXML(const char* pComponent);
 
     virtual void dump(std::ostream& cout, unsigned int offset = 0) const;

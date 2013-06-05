@@ -7,6 +7,18 @@
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
 
+const char* CAttribute::getTitle() const
+{
+    if (this->m_pAnnotation != NULL && this->m_pAnnotation->getAppInfo() != NULL && this->m_pAnnotation->getAppInfo()->getTitle() != NULL && this->m_pAnnotation->getAppInfo()->getTitle()[0] != 0)
+    {
+        return this->m_pAnnotation->getAppInfo()->getTitle();
+    }
+    else
+    {
+        return this->getName();
+    }
+}
+
 const char* CAttribute::getXML(const char* pComponent)
 {
     if (m_strXML.length() == 0)
@@ -43,7 +55,7 @@ void CAttribute::dump(std::ostream& cout, unsigned int offset) const
 
 void CAttribute::getDocumentation(StringBuffer &strDoc) const
 {
-    const char *pName = this->getName();
+    const char *pName = this->getTitle();
     const char *pToolTip = NULL;
     const char *pDefaultValue = this->getDefault();
     const char *pRequired = this->getUse();
@@ -90,47 +102,58 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
 
 void CAttribute::getDojoJS(StringBuffer &strJS) const
 {
+    const char* pViewType = NULL;
+    const char* pColumnIndex = NULL;
+    const char* pXPath = NULL;
+
     if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
     {
-        const CAppInfo *pAppInfo = m_pAnnotation->getAppInfo();
-        const char* pViewType = pAppInfo->getViewType();
+        const CAppInfo *pAppInfo = NULL;
+        pAppInfo = m_pAnnotation->getAppInfo();
+        pViewType = pAppInfo->getViewType();
+        pColumnIndex = (pAppInfo->getColIndex() != NULL && pAppInfo->getColIndex()[0] != 0) ? pAppInfo->getColIndex() : NULL;
+        pXPath = (pAppInfo->getXPath() != NULL && pAppInfo->getXPath()[0] != 0) ? pAppInfo->getXPath() : NULL;
+    }
 
-        if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
+    if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
+    {
+        return; // HIDDEN
+    }
+
+    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (this->getConstParentNode()->getConstParentNode() != NULL && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_ATTRIBUTE_GROUP))
+    {
+        strJS.append(DJ_LAYOUT_CONCAT_BEGIN);
+        strJS.append(createDojoColumnLayout(this->getTitle(), getRandomID()));
+        strJS.append(DJ_LAYOUT_CONCAT_END);
+    }
+    else if (this->getDefault() != NULL && this->getDefault()[0] != 0)
+    {
+        StringBuffer id("ID_");
+        id.append(getRandomID());
+
+        strJS.append(DJ_TABLE_ROW_PART_1).append(this->getTitle()).append(DJ_TABLE_ROW_PART_PLACE_HOLDER).append(this->getDefault()).append(DJ_TABLE_ROW_PART_ID_BEGIN).append(id.str()).append(DJ_TABLE_ROW_PART_ID_END);
+
+        if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)
         {
-            return; // HIDDEN
+            StringBuffer strToolTip(DJ_TOOL_TIP_BEGIN);
+
+            strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
+            strToolTip.append(id.str());
+            strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
+            StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
+            strTT.replaceString("\"","\\\"");
+
+            strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
+            strToolTip.append(DJ_TOOL_TIP_END);
+
+            strJS.append(DJ_ADD_CHILD);
+
+            CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
         }
-        else
-        {
-            if (this->getDefault() != NULL && this->getDefault()[0] != 0)
-            {
-                StringBuffer id("ID_");
-                id.append(getRandomID());
-
-                strJS.append(DJ_TABLE_ROW_PART_1).append(this->getName()).append(DJ_TABLE_ROW_PART_PLACE_HOLDER).append(this->getDefault()).append(DJ_TABLE_ROW_PART_ID_BEGIN).append(id.str()).append(DJ_TABLE_ROW_PART_ID_END);
-
-                if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)
-                {
-                    StringBuffer strToolTip(DJ_TOOL_TIP_BEGIN);
-
-                    strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
-                    strToolTip.append(id.str());
-                    strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
-                    StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
-                    strTT.replaceString("\"","\\\"");
-
-                    strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
-                    strToolTip.append(DJ_TOOL_TIP_END);
-
-                    strJS.append(DJ_ADD_CHILD);
-
-                    CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
-                }
-            }
-            else
-            {
-                strJS.append(DJ_TABLE_ROW_PART_1).append(this->getName()).append(DJ_TABLE_ROW_PART_2);
-            }
-        }
+    }
+    else
+    {
+        strJS.append(DJ_TABLE_ROW_PART_1).append(this->getTitle()).append(DJ_TABLE_ROW_PART_2);
     }
 
     if (m_pSimpleTypeArray == NULL)

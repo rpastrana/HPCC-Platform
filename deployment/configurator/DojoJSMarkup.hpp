@@ -1,15 +1,22 @@
 #ifndef _DOJOJSMARKUP_HPP_
 #define _DOJOJSMARKUP_HPP_
 
+#include <climits>
 #include "jstring.hpp"
 #include "jutil.hpp"
 #include "jdebug.hpp"
+
 
 static const char* DJ_START_TEST("define([\n\
                                  \"dojo/_base/declare\",\n\
                                  \"dojo/dom\",\n\
 \n\
                                  \"dojox/layout/TableContainer\",\n\
+                                 \"dojox/grid/DataGrid\",\n\
+\n\
+                                 \"dgrid/Grid\",\n\
+                                 \"dgrid/Keyboard\",\n\
+                                 \"dgrid/Selection\",\n\
 \n\
                                  \"dijit/Tooltip\",\n\
                                  \"dijit/layout/TabContainer\",\n\
@@ -26,13 +33,14 @@ static const char* DJ_START_TEST("define([\n\
                                  \"dojo/text!../templates/GlebWidget4.html\"\n\
 \n\
                              ], function (declare, dom,\n\
-                                     TableContainer,\n\
+                                     TableContainer, DataGrid,\n\
+                                     DGrid, Keyboard, Selection,\n\
                                      Tooltip, TabContainer, ContentPane, Form, TextBox,\n\
                                      _TemplatedMixin, _WidgetsInTemplateMixin, Select, registry,\n\
                                      _TabConterWidget,\n\
                                      template) {\n\
 \n\
-                                 return declare(\"GlebWidget4\", [_TabContainerWidget\, _TemplatedMixin, _WidgetsInTemplateMixin], {\n\
+                                 return declare(\"GlebWidget4\", [_TabContainerWidget, _TemplatedMixin, _WidgetsInTemplateMixin], {\n\
                                      templateString: template,\n\
                                      baseClass: \"GlebWidget4\",\n\
                                  name: \"GlebWidget4\",\n\
@@ -50,7 +58,6 @@ static const char* DJ_START_TEST("define([\n\
                                          this.inherited(arguments);\n\
                                      },\n\
 \n\
-                                     //  Implementation  ---\n\
                                      _initControls: function () {\n\
                                          var context = this;\n\
                                          this.targetSelectControl = registry.byId(this.id + \"TargetSelect\");\n\
@@ -88,7 +95,7 @@ static const char* DJ_TAB_PART_3("\", });\n");
 
 static const char* DJ_TABLE_PART_1("\nvar tc = new dojox.layout.TableContainer(\n\
 { cols: 2,\n\
-\"labelWidth\" : \"50\" });");
+\"labelWidth\" : \"50\" });\n");
 
 static const char* DJ_TABLE_PART_2("\n\
 if (cp != null)\n\
@@ -97,6 +104,7 @@ if (tc != null)\n\
 {\n\
     cp.addChild(tc);\n\
 }\n\
+var temp_cp = cp;\n\
 cp = null;\n\
 tc = null;\n\
 ");
@@ -117,12 +125,48 @@ static const char* DJ_TOOL_TIP_LABEL_BEGIN("label: \"");
 static const char* DJ_TOOL_TIP_LABEL_END("\"");
 static const char* DJ_TOOL_TIP_END("});");
 
+
+static const char* DJ_LAYOUT_CONCAT_BEGIN("\nif (typeof(layout) == 'undefined') var layout = [[]];\nlayout[0] = layout[0].concat(");
+static const char* DJ_LAYOUT_CONCAT_END(");\n");
+
+static const char* DJ_LAYOUT_BEGIN("\nvar layout = [[]];\n");
+static const char* DJ_LAYOUT_END("\nvar CustomGrid = declare([ DGrid, Keyboard, Selection ]);\n\
+\n\
+var grid = new CustomGrid({\n\
+columns: layout[0],\n\
+selectionMode: \"single\",\n\
+cellNavigation: false\n\
+});\n\
+temp_cp.addChild(grid);\n\
+grid.startup();\n");
+
+/*static const char* DJ_LAYOUT_END("\nvar grid = new DataGrid({\n\
+    structure: layout,\n\
+    rowSelector: '20px'});\n\
+\n\
+    temp_cp.addChild(grid);\n\
+    grid.startup();\n");*/
+
+
+static const char* createDojoColumnLayout(const char* pName, unsigned uFieldId, const char* pWidth = "100px")
+{
+    assert(pName != NULL);
+    assert(pWidth != NULL);
+
+    static StringBuffer strBuf;
+
+    strBuf.clear();
+    strBuf.appendf("{'name': '%s', 'field': '%s', 'width': '%s', 'id': 'COLID_%u'}", pName, pName, pWidth, uFieldId);
+
+    return strBuf.str();
+}
+
 static unsigned getRandomID()
 {
     Owned<IRandomNumberGenerator> random = createRandomNumberGenerator();
     random->seed(get_cycles_now());
 
-    return (random->next() % 1000000000);
+    return (random->next() % UINT_MAX);
 }
 
 static void genTabDojoJS(StringBuffer &strJS, const char *pName)
@@ -146,8 +190,6 @@ static void genTableRow(StringBuffer &strJS, const char* pName)
 {
 
 }
-
-
 
 
 #endif // _DOJOJSMARKUP_HPP_

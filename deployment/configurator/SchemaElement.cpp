@@ -244,6 +244,7 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         return;
     }
 
+
     assert(strlen(this->getName()) > 0);
 
     if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
@@ -266,6 +267,21 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         strJS.append(DJ_FINISH_TEST);
 
         return;
+    }
+    else if (/*_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && ((m_pAnnotation->getAppInfo()->getViewChildNodes() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewChildNodes(), "true") == 0 && m_pComplexTypeArray != NULL) || \
+                m_pAnnotation->getAppInfo()->getViewType() != NULL && (stricmp(m_pAnnotation->getAppInfo()->getViewType(), "list") == 0 || stricmp(m_pAnnotation->getAppInfo()->getViewType(), "instance") == 0 || \
+                                                                       stricmp(m_pAnnotation->getAppInfo()->getViewType(), "Options") == 0) && m_pComplexTypeArray != NULL) || */stricmp(this->getMaxOccurs(), "unbounded") == 0)
+    {
+        strJS.append(DJ_LAYOUT_BEGIN);
+        DEBUG_MARK_STRJS;
+
+        if (m_pComplexTypeArray != NULL)
+        {
+            m_pComplexTypeArray->getDojoJS(strJS);
+        }
+
+        strJS.append(DJ_LAYOUT_END);
+        DEBUG_MARK_STRJS;
     }
     else if (m_pComplexTypeArray != NULL)
     {

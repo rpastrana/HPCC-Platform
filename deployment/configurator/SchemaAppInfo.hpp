@@ -26,6 +26,7 @@ public:
     GETTERSETTER(AutoGenDefaultValueForMultiNode)
     GETTERSETTER(ViewChildNodes)
     GETTERSETTER(DocInclude)
+    GETTERSETTER(XPath)
 
     virtual void dump(std::ostream &cout, unsigned int offset = 0) const;
 
@@ -39,7 +40,7 @@ public:
 
 protected:
 
-    CAppInfo(CXSDNodeBase* pParentNode, const char *pViewType = NULL, const char *pColIndex = NULL, const char* pToolTip = NULL, const char* pTitle = NULL, const char* pWidth = NULL, const char* pAutoGenForWizard = NULL, const char* pAutoGenDefaultValue = NULL, const char* pAutoGenDefaultForMultiNode = NULL, const char* pViewChildNodes = NULL, const char* pDocInclude = NULL) : CXSDNodeBase::CXSDNodeBase(pParentNode, XSD_APP_INFO), m_strViewType(pViewType), m_strColIndex(pColIndex), m_strToolTip(pToolTip), m_strTitle(pTitle), m_strWidth(pWidth), m_strAutoGenForWizard(pAutoGenForWizard), m_strAutoGenDefaultValue(pAutoGenDefaultValue), m_strAutoGenDefaultValueForMultiNode(pAutoGenDefaultForMultiNode), m_strViewChildNodes(pViewChildNodes), m_strDocInclude(pDocInclude)
+    CAppInfo(CXSDNodeBase* pParentNode, const char *pViewType = NULL, const char *pColIndex = NULL, const char* pToolTip = NULL, const char* pTitle = NULL, const char* pWidth = NULL, const char* pAutoGenForWizard = NULL, const char* pAutoGenDefaultValue = NULL, const char* pAutoGenDefaultForMultiNode = NULL, const char* pViewChildNodes = NULL, const char* pDocInclude = NULL, const char* pXPath = NULL) : CXSDNodeBase::CXSDNodeBase(pParentNode, XSD_APP_INFO), m_strViewType(pViewType), m_strColIndex(pColIndex), m_strToolTip(pToolTip), m_strTitle(pTitle), m_strWidth(pWidth), m_strAutoGenForWizard(pAutoGenForWizard), m_strAutoGenDefaultValue(pAutoGenDefaultValue), m_strAutoGenDefaultValueForMultiNode(pAutoGenDefaultForMultiNode), m_strViewChildNodes(pViewChildNodes), m_strDocInclude(pDocInclude), m_strXPath(pXPath)
     {
     }
 
