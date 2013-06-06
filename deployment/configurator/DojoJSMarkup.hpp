@@ -85,8 +85,7 @@ static const char* DJ_TAB_PART_1("\nvar cp = new ContentPane({\n\
 title: \"");
 
 static const char* DJ_TAB_PART_2("\",\n\
-style: \"height: 50%; width: 90%x;\",\n \
-cssText: \"width: 50%; height: 70%; showLabels: true; colspan: 2\",\n\
+style: \"overflow: auto; width: 100%;\",\n\
 doLayout: \"true\",\n\
 id: \"");
 
@@ -95,7 +94,8 @@ static const char* DJ_TAB_PART_3("\", });\n");
 
 static const char* DJ_TABLE_PART_1("\nvar tc = new dojox.layout.TableContainer(\n\
 { cols: 2,\n\
-\"labelWidth\" : \"50\" });\n");
+customClass : \"labelsAndValues\",\n\
+\"labelWidth\" : \"175\" });\n");
 
 static const char* DJ_TABLE_PART_2("\n\
 if (cp != null)\n\
@@ -112,7 +112,7 @@ tc = null;\n\
 static const char* DJ_TABLE_ROW_PART_1("\nvar txt = new dijit.form.TextBox({label: \"");
 static const char* DJ_TABLE_ROW_PART_PLACE_HOLDER("\", placeHolder: \"");
 static const char* DJ_TABLE_ROW_PART_ID_BEGIN("\", id: \"");
-static const char* DJ_TABLE_ROW_PART_ID_END("\"});\n");
+static const char* DJ_TABLE_ROW_PART_ID_END("\", /*style: { width: '400px' }*/});\n");
 static const char* DJ_TABLE_ROW_PART_2("\"});\n\
 tc.addChild(txt);");
 
@@ -126,7 +126,7 @@ static const char* DJ_TOOL_TIP_LABEL_END("\"");
 static const char* DJ_TOOL_TIP_END("});");
 
 
-static const char* DJ_LAYOUT_CONCAT_BEGIN("\nif (typeof(layout) == 'undefined') var layout = [[]];\nlayout[0] = layout[0].concat(");
+static const char* DJ_LAYOUT_CONCAT_BEGIN("\nif (typeof(layout) == 'undefined')\n\tvar layout = [[]];\nlayout[0] = layout[0].concat(");
 static const char* DJ_LAYOUT_CONCAT_END(");\n");
 
 static const char* DJ_LAYOUT_BEGIN("\nvar layout = [[]];\n");
@@ -139,14 +139,6 @@ cellNavigation: false\n\
 });\n\
 temp_cp.addChild(grid);\n\
 grid.startup();\n");
-
-/*static const char* DJ_LAYOUT_END("\nvar grid = new DataGrid({\n\
-    structure: layout,\n\
-    rowSelector: '20px'});\n\
-\n\
-    temp_cp.addChild(grid);\n\
-    grid.startup();\n");*/
-
 
 static const char* createDojoColumnLayout(const char* pName, unsigned uFieldId, const char* pWidth = "100px")
 {

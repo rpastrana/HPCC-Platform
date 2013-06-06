@@ -301,6 +301,9 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         }
 
         m_pComplexTypeArray->getDojoJS(strJS);
+
+        //strJS.append(DJ_LAYOUT_END);
+        //DEBUG_MARK_STRJS;
     }
     else if (m_pComplexTypeArray == NULL)
     {

@@ -310,6 +310,7 @@
 #define TAG_FILESBASEDN                 "filesBasedn"
 #define TAG_OPTIONAL                    "optional"
 #define TAG_REQUIRED                    "required"
+#define TAG_VIEWCHILDNODES              "viewChildNodes"
 #define TAG_VIEWTYPE                    "viewType"
 #define TAG_TOOLTIP                     "tooltip"
 #define TAG_COLINDEX                    "colIndex"
@@ -319,6 +320,7 @@
 #define TAG_AUTOGENDEFAULTVALUE         "autogendefaultvalue"
 #define TAG_AUTOGENDEFAULTVALUEFORMULTINODE    "autogendefaultformultinode"
 #define TAG_DOCINCLUDE                  "docinclude"
+#define TAG_XPATH                       "xpath"
 
 //---------------------------------------------------------------------------
 #endif // !defined(AFX_XMLTAGS_H__57887617_2BDE_4E3E_92CB_43FCDEDD05B8__INCLUDED_)

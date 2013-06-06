@@ -286,12 +286,28 @@ public:
         return m_pParentNode;
     }
 
-    virtual CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
+
+    virtual const CXSDNodeBase* getParentNodeByType(NODE_TYPES eNodeType) const
     {
-        CXSDNodeBase* pMatchingNode = NULL;
+        if (this->m_eNodeType == eNodeType)
+        {
+            return this;
+        }
+
+        if (this->getConstParentNode() != NULL)
+        {
+            return this->getConstParentNode()->getParentNodeByType(eNodeType);
+        }
+
+        return NULL;
+    }
+
+    virtual const CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName) const
+    {
+        const CXSDNodeBase* pMatchingNode = NULL;
         int len = 0;
 
-        CIArray *pThisArray = dynamic_cast<CIArray*>(this);
+        const CIArray *pThisArray = dynamic_cast<const CIArray*>(this);
 
         if (pThisArray!= NULL)
         {
@@ -299,14 +315,14 @@ public:
         }
         else
         {
-            assert(dynamic_cast<CIArray*>(this) != NULL);
+            assert(dynamic_cast<const CIArray*>(this) != NULL);
             return NULL;
         }
 
         for (int idx = 0; idx < len; idx++)
         {
 
-            CXSDNodeBase* pNode = dynamic_cast<CXSDNodeBase*>(&(pThisArray->item(idx)));
+            const CXSDNodeBase* pNode = dynamic_cast<CXSDNodeBase*>(&(pThisArray->item(idx)));
 
             if (pNode == NULL)
             {
@@ -333,12 +349,12 @@ public:
 
     }
 
-    virtual CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
+    virtual const CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName) const
     {
-        CXSDNodeBase* pMatchingNode = NULL;
+        const CXSDNodeBase* pMatchingNode = NULL;
         int len = 0;
 
-        CIArray *pThisArray = dynamic_cast<CIArray*>(this);
+        const CIArray *pThisArray = dynamic_cast<const CIArray*>(this);
 
         if (pThisArray!= NULL)
         {
@@ -346,13 +362,13 @@ public:
         }
         else
         {
-            assert(dynamic_cast<CIArray*>(this) != NULL);
+            assert(dynamic_cast<const CIArray*>(this) != NULL);
             return NULL;
         }
 
         for (int idx = 0; idx < len; idx++)
         {
-            CXSDNodeBase* pNode = dynamic_cast<CXSDNodeBase*>(&(pThisArray->item(idx)));
+            const CXSDNodeBase* pNode = dynamic_cast<const CXSDNodeBase*>(&(pThisArray->item(idx)));
 
             if (pNode == NULL)
             {
@@ -477,19 +493,36 @@ public:
         return NULL;
     }
 
-    virtual CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
-    {
-        assert(this->m_eNodeType != eNodeType); //  Base functionality just blindly searchs upstream
 
-        if (this->getParentNode() != NULL)
+    virtual const CXSDNodeBase* getParentNodeByType(NODE_TYPES eNodeType) const
+    {
+        if (this->m_eNodeType == eNodeType)
         {
-            return this->getParentNode()->getNodeByTypeAndNameAscending(eNodeType, pName);
+            return this;
+        }
+
+        if (this->getConstParentNode() != NULL)
+        {
+            return this->getConstParentNode()->getParentNodeByType(eNodeType);
         }
 
         return NULL;
     }
 
-    virtual CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
+
+    virtual const CXSDNodeBase* getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName) const
+    {
+        assert(this->m_eNodeType != eNodeType); //  Base functionality just blindly searchs upstream
+
+        if (this->getConstParentNode() != NULL)
+        {
+            return this->getConstParentNode()->getNodeByTypeAndNameAscending(eNodeType, pName);
+        }
+
+        return NULL;
+    }
+
+    virtual const CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName) const
     {
         assert(false);  // Derived classes need to hanldes this
 

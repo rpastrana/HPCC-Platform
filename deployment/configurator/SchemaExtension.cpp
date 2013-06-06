@@ -47,7 +47,7 @@ const char* CExtension::getXML(const char* /*pComponent*/)
 
 void CExtension::initExtension()
 {
-    CXSDNodeBase *pBaseNode = this->getNodeByTypeAndNameAscending( (NODE_TYPES)(XSD_SIMPLE_TYPE | XSD_COMPLEX_TYPE), this->getBase());
+    CXSDNodeBase *pBaseNode = const_cast<CXSDNodeBase*>(this->getNodeByTypeAndNameAscending( (NODE_TYPES)(XSD_SIMPLE_TYPE | XSD_COMPLEX_TYPE), this->getBase()));
 
 //    assert(pBaseNode != NULL);  // temporary to catch built in types or not defined types
 

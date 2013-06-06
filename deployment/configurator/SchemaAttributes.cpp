@@ -102,9 +102,13 @@ void CAttribute::getDocumentation(StringBuffer &strDoc) const
 
 void CAttribute::getDojoJS(StringBuffer &strJS) const
 {
+    assert(this->getConstParentNode() != NULL);
+
     const char* pViewType = NULL;
     const char* pColumnIndex = NULL;
     const char* pXPath = NULL;
+    const CXSDNodeBase *pGrandParentNode = this->getConstParentNode()->getConstParentNode();
+    const CElement *pNextHighestElement = dynamic_cast<const CElement*>(this->getParentNodeByType(XSD_ELEMENT));
 
     if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
     {
@@ -120,7 +124,14 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
         return; // HIDDEN
     }
 
-    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (this->getConstParentNode()->getConstParentNode() != NULL && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_ATTRIBUTE_GROUP))
+    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0) || (pNextHighestElement != NULL && pNextHighestElement->getMaxOccurs() != NULL && pNextHighestElement->getMaxOccurs()[0] != 0))
+    /*if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0))*/
+    /*if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0)*/
+    /*if ( (pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) ||
+         (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) ||
+         (pNextHighestElement != NULL ? stricmp(pNextHighestElement->getMaxOccurs(),"unbounded") == 0 : true ))*/
+
+        /*    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP /*&& pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE*//* && pNextHighestElement != NULL && pNextHighestElement->getConstParentNode() != NULL &&  pNextHighestElement->getConstParentNode()->getNodeType() != XSD_SCHEMA))*/
     {
         strJS.append(DJ_LAYOUT_CONCAT_BEGIN);
         strJS.append(createDojoColumnLayout(this->getTitle(), getRandomID()));
@@ -423,9 +434,9 @@ void CAttributeArray::traverseAndProcessNodes() const
     QUICK_TRAVERSE_AND_PROCESS;
 }
 
-CXSDNodeBase* CAttributeGroup::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName)
+const CXSDNodeBase* CAttributeGroup::getNodeByTypeAndNameAscending(NODE_TYPES eNodeType, const char *pName) const
 {
-    CXSDNodeBase* pMatchingNode = NULL;
+    const CXSDNodeBase* pMatchingNode = NULL;
 
     if (eNodeType == this->getNodeType() && (pName != NULL ? !strcmp(pName, this->getNodeTypeStr()) : true))
     {
@@ -453,9 +464,9 @@ CAttributeGroup::~CAttributeGroup()
 
 }
 
-CXSDNodeBase* CAttributeGroup::getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName)
+const CXSDNodeBase* CAttributeGroup::getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName) const
 {
-    CXSDNodeBase* pMatchingNode = NULL;
+    const CXSDNodeBase* pMatchingNode = NULL;
 
     if (eNodeType == this->getNodeType() && (pName != NULL ? !strcmp(pName, this->getNodeTypeStr()) : true))
     {
