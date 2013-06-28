@@ -1,6 +1,7 @@
 #ifndef _SCHEMA_COMMON_HPP_
 #define _SCHEMA_COMMON_HPP_
 
+
 #include <iostream>
 #include "jiface.hpp"
 #include "jstring.hpp"
