@@ -18,7 +18,9 @@ static const char* DJ_START_TEST("define([\n\
                                  \"dgrid/Keyboard\",\n\
                                  \"dgrid/Selection\",\n\
 \n\
+                                 \"dijit/form/MultiSelect\",\n\
                                  \"dijit/Tooltip\",\n\
+                                 \"dijit/layout/BorderContainer\",\n\
                                  \"dijit/layout/TabContainer\",\n\
                                  \"dijit/layout/ContentPane\",\n\
                                  \"dijit/form/Form\",\n\
@@ -35,7 +37,7 @@ static const char* DJ_START_TEST("define([\n\
                              ], function (declare, dom,\n\
                                      TableContainer, DataGrid,\n\
                                      DGrid, Keyboard, Selection,\n\
-                                     Tooltip, TabContainer, ContentPane, Form, TextBox,\n\
+                                     MultiSelect, Tooltip, BorderContainer, TabContainer, ContentPane, Form, TextBox,\n\
                                      _TemplatedMixin, _WidgetsInTemplateMixin, Select, registry,\n\
                                      _TabConterWidget,\n\
                                      template) {\n\
@@ -100,7 +102,7 @@ customClass : \"labelsAndValues\",\n\
 static const char* DJ_TABLE_PART_2("\n\
 if (cp != null)\n\
     cp.placeAt(\"stubTabContainer\");\n\
-if (tc != null)\n\
+if (tc != null && cp != null)\n\
 {\n\
     cp.addChild(tc);\n\
 }\n\
@@ -137,7 +139,7 @@ columns: layout[0],\n\
 selectionMode: \"single\",\n\
 cellNavigation: false\n\
 });\n\
-temp_cp.addChild(grid);\n\
+if (temp_cp != null) temp_cp.addChild(grid);\n\
 grid.startup();\n");
 
 static const char* createDojoColumnLayout(const char* pName, unsigned uFieldId, const char* pWidth = "100px")

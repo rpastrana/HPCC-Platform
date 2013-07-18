@@ -282,6 +282,25 @@ public:
         return m_pParentNode;
     }
 
+    virtual const CXSDNodeBase* getConstAncestorNode(unsigned iLevel) const
+    {
+        CXSDNodeBase *pAncestorNode = const_cast<CXSDNodeBase*>(this);
+
+        if (iLevel == 0)
+        {
+            return this;
+        }
+
+        do
+        {
+            pAncestorNode = const_cast<CXSDNodeBase*>(pAncestorNode->getConstParentNode());
+            iLevel--;
+
+        } while (iLevel > 0 && pAncestorNode != NULL);
+
+        return pAncestorNode;
+    }
+
     virtual const CXSDNodeBase* getConstParentNode() const
     {
         return m_pParentNode;
@@ -343,11 +362,9 @@ public:
             {
                 return pMatchingNode;
             }
-
         }
 
         return NULL;  // nothing found
-
     }
 
     virtual const CXSDNodeBase* getNodeByTypeAndNameDescending(NODE_TYPES eNodeType, const char *pName) const

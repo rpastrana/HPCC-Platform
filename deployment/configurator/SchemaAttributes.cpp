@@ -6,6 +6,7 @@
 #include "DocumentationMarkup.hpp"
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
+#include "DojoHelper.hpp"
 
 const char* CAttribute::getTitle() const
 {
@@ -375,7 +376,6 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
     strDoc.append(DM_COL_SPEC4);
     strDoc.append(DM_TBODY_BEGIN);
 
-
     DEBUG_MARK_STRDOC;
     QUICK_DOC_ARRAY(strDoc);
     DEBUG_MARK_STRDOC;
@@ -390,15 +390,14 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 void CAttributeArray::getDojoJS(StringBuffer &strJS) const
 {
     assert(this->getConstParentNode() != NULL);
-    assert(this->getConstParentNode()->getConstParentNode() != NULL);
+    assert(this->getConstAncestorNode(2) != NULL);
 
 
-    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getConstParentNode() != NULL &&
-            this->getConstParentNode()->getConstParentNode()->getConstParentNode()->getNodeType() == XSD_ELEMENT)
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ELEMENT && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(3))) == true)
     {
         const char *pName = NULL;
 
-        pName = dynamic_cast<const CElement*>(this->getConstParentNode()->getConstParentNode()->getConstParentNode())->getName();
+        pName = dynamic_cast<const CElement*>(this->getConstAncestorNode(3))->getName();
 
         assert(pName != NULL);
         assert(pName[0] != 0);
@@ -406,9 +405,9 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
         genTabDojoJS(strJS, pName);
         DEBUG_MARK_STRJS;
     }
-    else if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstParentNode()->getConstParentNode()->getNodeType() != XSD_COMPLEX_TYPE)
+    else if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(2)->getNodeType() != XSD_COMPLEX_TYPE && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == true)
     {
-        genTabDojoJS(strJS, "Attributes");
+        genTabDojoJS(strJS, dynamic_cast<const CElement*>(this->getConstAncestorNode(3))->getName());
         DEBUG_MARK_STRJS;
     }
     else if (this->getConstParentNode()->getNodeType() == XSD_ATTRIBUTE_GROUP)
@@ -420,9 +419,16 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
         if (pAttributeGroup != NULL)
         {
             genTabDojoJS(strJS, pAttributeGroup->getName());
+            DEBUG_MARK_STRJS;
         }
     }
+    else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CDojoHelper::isAncestorTopElement(this) == true)
+    {
+        genTabDojoJS(strJS, "Attributes");
+        DEBUG_MARK_STRJS;
+    }
 
+    DEBUG_MARK_STRJS;
     strJS.append(DJ_TABLE_PART_1);
 
     QUICK_DOJO_JS_ARRAY(strJS);

@@ -13,6 +13,7 @@
 #include "DocumentationMarkup.hpp"
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
+#include "DojoHelper.hpp"
 
 
 CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
@@ -244,19 +245,17 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         return;
     }
 
-
     assert(strlen(this->getName()) > 0);
 
     if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
     {
         strJS.append(DJ_START_TEST);
 
-        if (m_pAnnotation!= NULL)
+        if (m_pAnnotation != NULL)
         {
             m_pAnnotation->getDojoJS(strJS);
             DEBUG_MARK_STRJS;
         }
-
 
         if (m_pComplexTypeArray != NULL)
         {
@@ -268,9 +267,13 @@ void CElement::getDojoJS(StringBuffer &strJS) const
 
         return;
     }
-    else if (/*_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && ((m_pAnnotation->getAppInfo()->getViewChildNodes() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewChildNodes(), "true") == 0 && m_pComplexTypeArray != NULL) || \
+    /*else if (_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && ((m_pAnnotation->getAppInfo()->getViewChildNodes() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewChildNodes(), "true") == 0 && m_pComplexTypeArray != NULL) || \
                 m_pAnnotation->getAppInfo()->getViewType() != NULL && (stricmp(m_pAnnotation->getAppInfo()->getViewType(), "list") == 0 || stricmp(m_pAnnotation->getAppInfo()->getViewType(), "instance") == 0 || \
-                                                                       stricmp(m_pAnnotation->getAppInfo()->getViewType(), "Options") == 0) && m_pComplexTypeArray != NULL) || */stricmp(this->getMaxOccurs(), "unbounded") == 0)
+                                                                       stricmp(m_pAnnotation->getAppInfo()->getViewType(), "Options") == 0) && m_pComplexTypeArray != NULL) || *//*stricmp(this->getMaxOccurs(), "unbounded") == 0)*/
+
+    /*else if ( (stricmp(this->getMaxOccurs(), "unbounded") == 0  && (m_pAnnotation == NULL || (m_pAnnotation != NULL && m_pAnnotation->getAppInfo()
+                m_pAnnotation->getAppInfo() == NULL*/
+    else if (CDojoHelper::IsElementATab(this) == false)
     {
         strJS.append(DJ_LAYOUT_BEGIN);
         DEBUG_MARK_STRJS;
@@ -313,7 +316,8 @@ void CElement::getDojoJS(StringBuffer &strJS) const
             DEBUG_MARK_STRJS;
         }
 
-        genTabDojoJS(strJS, this->getName());
+        if (CDojoHelper::IsElementATab(this) == true)
+            genTabDojoJS(strJS, this->getName());
 
         if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
         {
