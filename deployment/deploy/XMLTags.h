@@ -253,7 +253,7 @@
 #define XSD_TAG_RESTRICTION            "xs:restriction"
 #define XSD_TAG_SCHEMA                 ""//xs:schema"
 #define XSD_TAG_SEQUENCE               "xs:sequence"
-#define XSD_TAG_SIMPLE_TYPE            "xs:simple"
+#define XSD_TAG_SIMPLE_TYPE            "xs:simpleType"
 #define XSD_TAG_ENUMERATION            "xs:enumeration"
 
 #define UI_FIELD_ATTR_NAME              "@Name"

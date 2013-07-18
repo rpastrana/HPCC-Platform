@@ -460,7 +460,6 @@ void CConfigSchemaHelper::processAttributeGroupArr()
             }
         }
     }
-
 }
 
 void CConfigSchemaHelper::traverseAndProcessArray(const char *pXSDName)

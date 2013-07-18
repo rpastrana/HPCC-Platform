@@ -1,7 +1,10 @@
 #include "jptree.hpp"
 #include "SchemaRestriction.hpp"
 #include "SchemaEnumeration.hpp"
+#include "SchemaAttributes.hpp"
 #include "XMLTags.h"
+#include "DojoJSMarkup.hpp"
+#include "ConfigSchemaHelper.hpp"
 
 void CRestriction::dump(std::ostream& cout, unsigned int offset) const
 {
@@ -33,9 +36,32 @@ void CRestriction::getDocumentation(StringBuffer &strDoc) const
 
 void CRestriction::getDojoJS(StringBuffer &strJS) const
 {
+    StringBuffer strID;
+
     if (m_pEnumerationArray != NULL)
     {
+        strJS.append(DJ_MEMORY_BEGIN);
         m_pEnumerationArray->getDojoJS(strJS);
+        strJS.append(DJ_MEMORY_END);
+
+        assert(this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ATTRIBUTE);
+
+        const CAttribute *pAttrib3 = dynamic_cast<const CAttribute*>(this->getConstAncestorNode(3));
+
+        strJS.append(createDojoComboBox(pAttrib3->getName(), strID, pAttrib3->getDefault()));
+
+        StringBuffer strToolTip(DJ_TOOL_TIP_BEGIN);
+
+        strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
+        strToolTip.append(strID.str());
+        strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
+        StringBuffer strTT(pAttrib3->getAnnotation()->getAppInfo()->getToolTip());
+        strTT.replaceString("\"","\\\"");
+
+        strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
+        strToolTip.append(DJ_TOOL_TIP_END);
+
+        CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
     }
 }
 

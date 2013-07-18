@@ -10,6 +10,7 @@
 static const char* DJ_START_TEST("define([\n\
                                  \"dojo/_base/declare\",\n\
                                  \"dojo/dom\",\n\
+                                 \"dojo/store/Memory\",\n\
 \n\
                                  \"dojox/layout/TableContainer\",\n\
                                  \"dojox/grid/DataGrid\",\n\
@@ -18,6 +19,7 @@ static const char* DJ_START_TEST("define([\n\
                                  \"dgrid/Keyboard\",\n\
                                  \"dgrid/Selection\",\n\
 \n\
+                                 \"dijit/form/ComboBox\",\n\
                                  \"dijit/form/MultiSelect\",\n\
                                  \"dijit/Tooltip\",\n\
                                  \"dijit/layout/BorderContainer\",\n\
@@ -34,10 +36,10 @@ static const char* DJ_START_TEST("define([\n\
 \n\
                                  \"dojo/text!../templates/GlebWidget4.html\"\n\
 \n\
-                             ], function (declare, dom,\n\
+                             ], function (declare, dom, Memory,\n\
                                      TableContainer, DataGrid,\n\
                                      DGrid, Keyboard, Selection,\n\
-                                     MultiSelect, Tooltip, BorderContainer, TabContainer, ContentPane, Form, TextBox,\n\
+                                     ComboBox, MultiSelect, Tooltip, BorderContainer, TabContainer, ContentPane, Form, TextBox,\n\
                                      _TemplatedMixin, _WidgetsInTemplateMixin, Select, registry,\n\
                                      _TabConterWidget,\n\
                                      template) {\n\
@@ -142,6 +144,64 @@ cellNavigation: false\n\
 if (temp_cp != null) temp_cp.addChild(grid);\n\
 grid.startup();\n");
 
+static const char* DJ_MEMORY_BEGIN(\
+"\nvar cbStore = new Memory({\n\
+  data: [");
+
+static const char* DJ_MEMORY_END("]});\n");
+
+static const char* DJ_MEMORY_ENTRY_NAME_BEGIN("{name: \"");
+static const char* DJ_MEMORY_ENTRY_NAME_END("\", ");
+static const char* DJ_MEMORY_ENTRY_ID_BEGIN(" id:\"");
+static const char* DJ_MEMORY_ENTRY_ID_END("\"},\n\t");
+
+
+static const char* DJ_COMBOX_BOX_BEGIN("var comboBox = new ComboBox({");
+static const char* DJ_COMBOX_BOX_END("});\n\nif (typeof(comboBox) != 'undefined' && tc != null) tc.addChild(comboBox); comboBox = null;");
+
+static const char* DJ_COMBO_BOX_ID_BEGIN("\nid: \"");
+static const char* DJ_COMBO_BOX_ID_END("\",");
+static const char* DJ_COMBO_BOX_NAME_BEGIN("\nname: \"");
+static const char* DJ_COMBO_BOX_NAME_END("\",");
+static const char* DJ_COMBO_BOX_VALUE_BEGIN("\nvalue: \"");
+static const char* DJ_COMBO_BOX_VALUE_END("\",");
+static const char* DJ_COMBO_BOX_STORE_BEGIN("\nstore: ");
+static const char* DJ_COMBO_BOX_STORE_END(",");
+static const char* DJ_COMBO_BOX_SEARCHATTR_BEGIN("\nsearchAttr: \"");
+static const char* DJ_COMBO_BOX_SEARCHATTR_END("\",");
+static const char* DJ_COMBO_BOX_LABEL_BEGIN("\nlabel: \"");
+static const char* DJ_COMBO_BOX_LABEL_END("\",");
+
+
+static unsigned getRandomID()
+{
+  Owned<IRandomNumberGenerator> random = createRandomNumberGenerator();
+  random->seed(get_cycles_now());
+
+  return (random->next() % UINT_MAX);
+}
+
+static const char* createDojoComboBox(const char* pLabel, StringBuffer &strID, const char* pDefault = "")
+{
+    static StringBuffer strBuf;
+
+    strID.clear().append("CBID");
+
+    strID.append(getRandomID());
+
+    strBuf.clear();
+    strBuf.appendf("%s %s%s%s %s%s%s %s%s%s %s%s%s %s%s%s %s", \
+      DJ_COMBOX_BOX_BEGIN, \
+      DJ_COMBO_BOX_ID_BEGIN, strID.str(), DJ_COMBO_BOX_ID_END, \
+      DJ_COMBO_BOX_VALUE_BEGIN, pDefault, DJ_COMBO_BOX_NAME_END, \
+      DJ_COMBO_BOX_STORE_BEGIN, "cbStore", DJ_COMBO_BOX_STORE_END, \
+      DJ_COMBO_BOX_SEARCHATTR_BEGIN, "name", DJ_COMBO_BOX_SEARCHATTR_END, \
+      DJ_COMBO_BOX_LABEL_BEGIN, pLabel ,DJ_COMBO_BOX_LABEL_END, \
+      DJ_COMBOX_BOX_END);
+
+    return strBuf.str();
+}
+
 static const char* createDojoColumnLayout(const char* pName, unsigned uFieldId, const char* pWidth = "100px")
 {
     assert(pName != NULL);
@@ -155,13 +215,7 @@ static const char* createDojoColumnLayout(const char* pName, unsigned uFieldId, 
     return strBuf.str();
 }
 
-static unsigned getRandomID()
-{
-    Owned<IRandomNumberGenerator> random = createRandomNumberGenerator();
-    random->seed(get_cycles_now());
 
-    return (random->next() % UINT_MAX);
-}
 
 static void genTabDojoJS(StringBuffer &strJS, const char *pName)
 {

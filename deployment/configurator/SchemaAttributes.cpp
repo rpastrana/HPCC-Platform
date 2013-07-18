@@ -108,7 +108,7 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
     const char* pViewType = NULL;
     const char* pColumnIndex = NULL;
     const char* pXPath = NULL;
-    const CXSDNodeBase *pGrandParentNode = this->getConstParentNode()->getConstParentNode();
+    const CXSDNodeBase *pGrandParentNode =this->getConstAncestorNode(2);
     const CElement *pNextHighestElement = dynamic_cast<const CElement*>(this->getParentNodeByType(XSD_ELEMENT));
 
     if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
@@ -126,56 +126,57 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
     }
 
     if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0) || (pNextHighestElement != NULL && pNextHighestElement->getMaxOccurs() != NULL && pNextHighestElement->getMaxOccurs()[0] != 0))
-    /*if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0))*/
-    /*if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0)*/
-    /*if ( (pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) ||
-         (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) ||
-         (pNextHighestElement != NULL ? stricmp(pNextHighestElement->getMaxOccurs(),"unbounded") == 0 : true ))*/
-
-        /*    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP /*&& pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE*//* && pNextHighestElement != NULL && pNextHighestElement->getConstParentNode() != NULL &&  pNextHighestElement->getConstParentNode()->getNodeType() != XSD_SCHEMA))*/
     {
         strJS.append(DJ_LAYOUT_CONCAT_BEGIN);
         strJS.append(createDojoColumnLayout(this->getTitle(), getRandomID()));
         strJS.append(DJ_LAYOUT_CONCAT_END);
     }
-    else if (this->getDefault() != NULL && this->getDefault()[0] != 0)
+    else //if (this->getDefault() != NULL && this->getDefault()[0] != 0)
     {
         StringBuffer id("ID_");
         id.append(getRandomID());
 
-        strJS.append(DJ_TABLE_ROW_PART_1).append(this->getTitle()).append(DJ_TABLE_ROW_PART_PLACE_HOLDER).append(this->getDefault()).append(DJ_TABLE_ROW_PART_ID_BEGIN).append(id.str()).append(DJ_TABLE_ROW_PART_ID_END);
+        StringBuffer strToolTip(DJ_TOOL_TIP_BEGIN);
+
+        strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
+        strToolTip.append(id.str());
+        strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
+        StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
+        strTT.replaceString("\"","\\\"");
+
+        strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
+        strToolTip.append(DJ_TOOL_TIP_END);
+
+        if (this->m_pSimpleTypeArray->length() == 0)
+        {
+            strJS.append(DJ_TABLE_ROW_PART_1).append(this->getTitle()).append(DJ_TABLE_ROW_PART_PLACE_HOLDER).append(this->getDefault()).append(DJ_TABLE_ROW_PART_ID_BEGIN).append(id.str()).append(DJ_TABLE_ROW_PART_ID_END);
+        }
+        else
+        {
+            m_pSimpleTypeArray->getDojoJS(strJS);
+            CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
+        }
 
         if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)
         {
-            StringBuffer strToolTip(DJ_TOOL_TIP_BEGIN);
-
-            strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
-            strToolTip.append(id.str());
-            strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
-            StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
-            strTT.replaceString("\"","\\\"");
-
-            strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
-            strToolTip.append(DJ_TOOL_TIP_END);
-
             strJS.append(DJ_ADD_CHILD);
 
             CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
         }
     }
-    else
+  /*  else
     {
         strJS.append(DJ_TABLE_ROW_PART_1).append(this->getTitle()).append(DJ_TABLE_ROW_PART_2);
-    }
+    }*/
 
-    if (m_pSimpleTypeArray == NULL)
+/*    if (m_pSimpleTypeArray == NULL)
     {
 
     }
     else
     {
         m_pSimpleTypeArray->getDojoJS(strJS);
-    }
+    }*/
 }
 
 void CAttribute::traverseAndProcessNodes() const
@@ -431,7 +432,11 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
     DEBUG_MARK_STRJS;
     strJS.append(DJ_TABLE_PART_1);
 
-    QUICK_DOJO_JS_ARRAY(strJS);
+    //QUICK_DOJO_JS_ARRAY(strJS);
+    for (int idx=0; idx < this->length(); idx++)             \
+                               {                                                            \
+                                    (this->item(idx)).getDojoJS(strJS);                         \
+                               }
     strJS.append(DJ_TABLE_PART_2);
 }
 
