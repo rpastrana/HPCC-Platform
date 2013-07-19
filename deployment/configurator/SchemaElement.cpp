@@ -283,6 +283,13 @@ void CElement::getDojoJS(StringBuffer &strJS) const
             m_pComplexTypeArray->getDojoJS(strJS);
         }
 
+        if (this->getConstAncestorNode(2)->getNodeType() == XSD_SEQUENCE)
+        {
+            strJS.append(DJ_LAYOUT_CONCAT_BEGIN);
+            strJS.append(createDojoColumnLayout(this->getName(), getRandomID()));
+            strJS.append(DJ_LAYOUT_CONCAT_END);
+        }
+
         strJS.append(DJ_LAYOUT_END);
         DEBUG_MARK_STRJS;
     }

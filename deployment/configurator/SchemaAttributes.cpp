@@ -405,39 +405,47 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
 
         genTabDojoJS(strJS, pName);
         DEBUG_MARK_STRJS;
-    }
-    else if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(2)->getNodeType() != XSD_COMPLEX_TYPE && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == true)
-    {
-        genTabDojoJS(strJS, dynamic_cast<const CElement*>(this->getConstAncestorNode(3))->getName());
+
+
+        QUICK_DOJO_JS_ARRAY(strJS);
         DEBUG_MARK_STRJS;
+
+        strJS.append(DJ_GRID);
+        strJS.append(DJ_TABLE_PART_2);
     }
-    else if (this->getConstParentNode()->getNodeType() == XSD_ATTRIBUTE_GROUP)
+    else
     {
-        const CAttributeGroup *pAttributeGroup = dynamic_cast<const CAttributeGroup*>(this->getConstParentNode());
-
-        assert(pAttributeGroup != NULL);
-
-        if (pAttributeGroup != NULL)
+        if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(2)->getNodeType() != XSD_COMPLEX_TYPE && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == true)
         {
-            genTabDojoJS(strJS, pAttributeGroup->getName());
+    //        genTabDojoJS(strJS, dynamic_cast<const CElement*>(this->getConstAncestorNode(3))->getName());
             DEBUG_MARK_STRJS;
         }
-    }
-    else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CDojoHelper::isAncestorTopElement(this) == true)
-    {
-        genTabDojoJS(strJS, "Attributes");
+        else if (this->getConstParentNode()->getNodeType() == XSD_ATTRIBUTE_GROUP)
+        {
+            const CAttributeGroup *pAttributeGroup = dynamic_cast<const CAttributeGroup*>(this->getConstParentNode());
+
+            assert(pAttributeGroup != NULL);
+
+            if (pAttributeGroup != NULL)
+            {
+                genTabDojoJS(strJS, pAttributeGroup->getName());
+                DEBUG_MARK_STRJS;
+            }
+        }
+        else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CDojoHelper::isAncestorTopElement(this) == true)
+        {
+            genTabDojoJS(strJS, "Attributes");
+            DEBUG_MARK_STRJS;
+        }
+
         DEBUG_MARK_STRJS;
+        strJS.append(DJ_TABLE_PART_1);
+
+        QUICK_DOJO_JS_ARRAY(strJS);
+
+        strJS.append(DJ_TABLE_PART_2);
+        strJS.append(DJ_TABLE_END);
     }
-
-    DEBUG_MARK_STRJS;
-    strJS.append(DJ_TABLE_PART_1);
-
-    //QUICK_DOJO_JS_ARRAY(strJS);
-    for (int idx=0; idx < this->length(); idx++)             \
-                               {                                                            \
-                                    (this->item(idx)).getDojoJS(strJS);                         \
-                               }
-    strJS.append(DJ_TABLE_PART_2);
 }
 
 void CAttributeArray::traverseAndProcessNodes() const

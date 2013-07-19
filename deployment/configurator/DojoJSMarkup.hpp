@@ -111,7 +111,10 @@ if (tc != null && cp != null)\n\
 var temp_cp = cp;\n\
 cp = null;\n\
 tc = null;\n\
+layout = [[]];\n\
 ");
+
+static const char* DJ_TABLE_END("temp_cp = null;\n");
 
 static const char* DJ_TABLE_ROW_PART_1("\nvar txt = new dijit.form.TextBox({label: \"");
 static const char* DJ_TABLE_ROW_PART_PLACE_HOLDER("\", placeHolder: \"");
@@ -141,7 +144,18 @@ columns: layout[0],\n\
 selectionMode: \"single\",\n\
 cellNavigation: false\n\
 });\n\
-if (temp_cp != null) temp_cp.addChild(grid);\n\
+if (cp != null) cp.addChild(grid);\n\
+grid.startup();\n");
+
+static const char* DJ_GRID("\nvar CustomGrid = declare([ DGrid, Keyboard, Selection ]);\n\
+\n\
+var grid = new CustomGrid({\n\
+columns: layout[0],\n\
+selectionMode: \"single\",\n\
+cellNavigation: false\n\
+});\n\
+if (temp_cp != null) temp_cp.addChild(grid); temp_cp = null;\n\
+if (cp != null) cp.addChild(grid);\n\
 grid.startup();\n");
 
 static const char* DJ_MEMORY_BEGIN(\
