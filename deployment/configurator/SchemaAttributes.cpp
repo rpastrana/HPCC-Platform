@@ -141,11 +141,15 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
         strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
         strToolTip.append(id.str());
         strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
-        StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
-        strTT.replaceString("\"","\\\"");
 
-        strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
-        strToolTip.append(DJ_TOOL_TIP_END);
+        if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
+        {
+            StringBuffer strTT(this->getAnnotation()->getAppInfo()->getToolTip());
+            strTT.replaceString("\"","\\\"");
+
+            strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
+            strToolTip.append(DJ_TOOL_TIP_END);
+        }
 
         if (this->m_pSimpleTypeArray->length() == 0)
         {
@@ -154,7 +158,11 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
         else
         {
             m_pSimpleTypeArray->getDojoJS(strJS);
-            CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
+
+            if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
+            {
+                CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
+            }
         }
 
         if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)

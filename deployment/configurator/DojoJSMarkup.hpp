@@ -7,7 +7,7 @@
 #include "jdebug.hpp"
 
 
-static const char* DJ_START_TEST("define([\n\
+static const char* DJ_START("define([\n\
                                  \"dojo/_base/declare\",\n\
                                  \"dojo/dom\",\n\
                                  \"dojo/store/Memory\",\n\
@@ -72,7 +72,7 @@ static const char* DJ_START_TEST("define([\n\
 \n\
 ");
 
-static const char* DJ_FINISH_TEST("\n},\n        init: function (params) {\n\
+static const char* DJ_FINISH("\n},\n        init: function (params) {\n\
                                          if (this.initalized)\n\
                                              return;\n\
                                          this.initalized = true;\n\
@@ -94,7 +94,7 @@ doLayout: \"true\",\n\
 id: \"");
 
 
-static const char* DJ_TAB_PART_3("\", });\n");
+static const char* DJ_TAB_PART_3("\", });\n if (bc != null) cp.addChild(bc);\n");
 
 static const char* DJ_TABLE_PART_1("\nvar tc = new dojox.layout.TableContainer(\n\
 { cols: 2,\n\
@@ -111,6 +111,7 @@ if (tc != null && cp != null)\n\
 var temp_cp = cp;\n\
 cp = null;\n\
 tc = null;\n\
+bc = null;\n\
 layout = [[]];\n\
 ");
 
@@ -121,9 +122,9 @@ static const char* DJ_TABLE_ROW_PART_PLACE_HOLDER("\", placeHolder: \"");
 static const char* DJ_TABLE_ROW_PART_ID_BEGIN("\", id: \"");
 static const char* DJ_TABLE_ROW_PART_ID_END("\", /*style: { width: '400px' }*/});\n");
 static const char* DJ_TABLE_ROW_PART_2("\"});\n\
-tc.addChild(txt);");
+if (txt != null && tc != null) tc.addChild(txt);");
 
-static const char* DJ_ADD_CHILD("\ntc.addChild(txt);");
+static const char* DJ_ADD_CHILD("\nif (txt != null && tc != null) tc.addChild(txt);");
 
 static const char* DJ_TOOL_TIP_BEGIN("\nvar mytip = new dijit.Tooltip({");
 static const char* DJ_TOOL_TIP_CONNECT_ID_BEGIN(" connectId: [\"");
@@ -144,8 +145,14 @@ columns: layout[0],\n\
 selectionMode: \"single\",\n\
 cellNavigation: false\n\
 });\n\
-if (cp != null) cp.addChild(grid);\n\
-grid.startup();\n");
+grid.startup();\n\
+var bc = new BorderContainer({\n\
+style: \"height: 300px; width: 75%;\",\n\
+region: \"left\"\n\
+});\n\
+if (cp != null) cp.addChild(bc);\n\
+bc.addChild(grid);\n\
+grid = null;\n");
 
 static const char* DJ_GRID("\nvar CustomGrid = declare([ DGrid, Keyboard, Selection ]);\n\
 \n\
@@ -154,8 +161,12 @@ columns: layout[0],\n\
 selectionMode: \"single\",\n\
 cellNavigation: false\n\
 });\n\
-if (temp_cp != null) temp_cp.addChild(grid); temp_cp = null;\n\
-if (cp != null) cp.addChild(grid);\n\
+var bc = new BorderContainer({\n\
+style: \"height: 300px; width: 75%;\",\n\
+region: \"left\"\n\
+});\n\
+if (cp != null) cp.addChild(bc);\n\
+bc.addChild(grid);\n\
 grid.startup();\n");
 
 static const char* DJ_MEMORY_BEGIN(\
@@ -239,7 +250,6 @@ static void genTabDojoJS(StringBuffer &strJS, const char *pName)
     {
         return;
     }
-
 
     StringBuffer id;
 

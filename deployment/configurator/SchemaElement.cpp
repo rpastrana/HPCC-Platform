@@ -249,7 +249,7 @@ void CElement::getDojoJS(StringBuffer &strJS) const
 
     if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
     {
-        strJS.append(DJ_START_TEST);
+        strJS.append(DJ_START);
 
         if (m_pAnnotation != NULL)
         {
@@ -263,7 +263,7 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         }
 
         strJS.append(CConfigSchemaHelper::getInstance()->getToolTipJS());
-        strJS.append(DJ_FINISH_TEST);
+        strJS.append(DJ_FINISH);
 
         return;
     }
@@ -286,8 +286,11 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         if (this->getConstAncestorNode(2)->getNodeType() == XSD_SEQUENCE)
         {
             strJS.append(DJ_LAYOUT_CONCAT_BEGIN);
+            DEBUG_MARK_STRJS;
             strJS.append(createDojoColumnLayout(this->getName(), getRandomID()));
+            DEBUG_MARK_STRJS;
             strJS.append(DJ_LAYOUT_CONCAT_END);
+            DEBUG_MARK_STRJS;
         }
 
         strJS.append(DJ_LAYOUT_END);
