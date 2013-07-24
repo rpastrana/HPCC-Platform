@@ -38,6 +38,10 @@ public:
         return m_pAttributeArray;
     }
 
+    virtual const CSequence* getSequence() const
+    {
+        return m_pSequence;
+    }
 
     static CComplexType* load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
 

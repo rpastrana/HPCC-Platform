@@ -42,6 +42,18 @@ public:
         return m_pAnnotation;
     }
 
+    static const CXSDNodeBase* getAncestorElement(const CXSDNodeBase *pNode)
+    {
+         return pNode->getParentNodeByType(XSD_ELEMENT);
+    }
+
+    static const CElement* getTopMostElement(const CXSDNodeBase *pNode);
+
+    static bool isAncestorTopElement(const CXSDNodeBase *pNode)
+    {
+        return (pNode != NULL && pNode->getParentNodeByType(XSD_ELEMENT) == getTopMostElement(pNode));
+    }
+
     static CElement* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
 
 protected:

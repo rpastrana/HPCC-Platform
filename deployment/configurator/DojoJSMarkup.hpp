@@ -117,14 +117,14 @@ layout = [[]];\n\
 
 static const char* DJ_TABLE_END("temp_cp = null;\n");
 
-static const char* DJ_TABLE_ROW_PART_1("\nvar txt = new dijit.form.TextBox({label: \"");
+static const char* DJ_TABLE_ROW_PART_1("var txt = new dijit.form.TextBox({label: \"");
 static const char* DJ_TABLE_ROW_PART_PLACE_HOLDER("\", placeHolder: \"");
 static const char* DJ_TABLE_ROW_PART_ID_BEGIN("\", id: \"");
 static const char* DJ_TABLE_ROW_PART_ID_END("\", /*style: { width: '400px' }*/});\n");
 static const char* DJ_TABLE_ROW_PART_2("\"});\n\
 if (txt != null && tc != null) tc.addChild(txt);");
 
-static const char* DJ_ADD_CHILD("\nif (txt != null && tc != null) tc.addChild(txt);");
+static const char* DJ_ADD_CHILD("\nif (txt != null && tc != null) tc.addChild(txt);\n");
 
 static const char* DJ_TOOL_TIP_BEGIN("\nvar mytip = new dijit.Tooltip({");
 static const char* DJ_TOOL_TIP_CONNECT_ID_BEGIN(" connectId: [\"");
@@ -140,34 +140,39 @@ static const char* DJ_LAYOUT_CONCAT_END(");\n");
 static const char* DJ_LAYOUT_BEGIN("\nvar layout = [[]];\n");
 static const char* DJ_LAYOUT_END("\nvar CustomGrid = declare([ DGrid, Keyboard, Selection ]);\n\
 \n\
+if (layout != null && layout[0].length != 0) {\n\
 var grid = new CustomGrid({\n\
 columns: layout[0],\n\
 selectionMode: \"single\",\n\
 cellNavigation: false\n\
 });\n\
-grid.startup();\n\
+grid.startup();\n}\n\
 var bc = new BorderContainer({\n\
 style: \"height: 300px; width: 75%;\",\n\
 region: \"left\"\n\
 });\n\
+if (layout != null && layout[0].length > 0)\n\
+{\n\
 if (cp != null) cp.addChild(bc);\n\
-bc.addChild(grid);\n\
-grid = null;\n");
+if (grid != null) bc.addChild(grid);\n\
+grid = null;\n\
+}\n");
+
 
 static const char* DJ_GRID("\nvar CustomGrid = declare([ DGrid, Keyboard, Selection ]);\n\
 \n\
+if (layout != null && layout[0].length != 0) {\n\
 var grid = new CustomGrid({\n\
 columns: layout[0],\n\
 selectionMode: \"single\",\n\
 cellNavigation: false\n\
-});\n\
+});\n}\
 var bc = new BorderContainer({\n\
 style: \"height: 300px; width: 75%;\",\n\
 region: \"left\"\n\
 });\n\
 if (cp != null) cp.addChild(bc);\n\
-bc.addChild(grid);\n\
-grid.startup();\n");
+if (grid != null)\n{\tbc.addChild(grid);\n\tgrid.startup();\n\tgrid = null; layout = null;}\n");
 
 static const char* DJ_MEMORY_BEGIN(\
 "\nvar cbStore = new Memory({\n\

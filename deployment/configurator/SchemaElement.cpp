@@ -83,6 +83,25 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 }
 
 
+const CElement* CElement::getTopMostElement(const CXSDNodeBase *pNode)
+{
+    if (pNode == NULL)
+    {
+        return NULL;
+    }
+    else if (pNode->getNodeType() == XSD_ELEMENT)
+    {
+        if (pNode->getParentNodeByType(XSD_ELEMENT) == NULL)
+        {
+            assert(dynamic_cast<const CElement*>(pNode) != NULL);
+
+            return dynamic_cast<const CElement*>(pNode);
+        }
+    }
+
+    return getTopMostElement(pNode->getParentNodeByType(XSD_ELEMENT));
+}
+
 const char* CElement::getXML(const char* /*pComponent*/)
 {
     if (m_strXML.length () == 0)
@@ -231,7 +250,14 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
 
 void CElement::getDojoJS(StringBuffer &strJS) const
 {
-    const CXSDNodeBase *pGrandParentNode = this->getConstParentNode()->getConstParentNode();
+
+    //TODO: Handle tree view
+    if (stricmp(this->getType(), "NodeType") == 0)
+    {
+        return;
+    }
+
+    const CXSDNodeBase *pGrandParentNode = this->getConstAncestorNode(2);
 
     assert(pGrandParentNode != NULL);
 
@@ -301,12 +327,12 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         if (m_pAnnotation!= NULL)
         {
             m_pAnnotation->getDojoJS(strJS);
-            DEBUG_MARK_STRJS;
         }
 
         if (pGrandParentNode->getNodeType() == XSD_CHOICE)
         {
-
+            //strJS.append(DJ_LAYOUT_END);
+            //DEBUG_MARK_STRJS;
         }
         else
         {
@@ -323,7 +349,6 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         if (m_pAnnotation!= NULL)
         {
             m_pAnnotation->getDojoJS(strJS);
-            DEBUG_MARK_STRJS;
         }
 
         if (CDojoHelper::IsElementATab(this) == true)
@@ -332,7 +357,6 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
         {
             m_pAnnotation->getDojoJS(strJS);
-            DEBUG_MARK_STRJS;
         }
 
         if (m_pAttributeArray != NULL)

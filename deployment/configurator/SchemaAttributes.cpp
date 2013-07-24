@@ -141,6 +141,7 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
         strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_BEGIN);
         strToolTip.append(id.str());
         strToolTip.append(DJ_TOOL_TIP_CONNECT_ID_END);
+        DEBUG_MARK_STRJS;
 
         if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
         {
@@ -149,6 +150,7 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
 
             strToolTip.append(DJ_TOOL_TIP_LABEL_BEGIN).append(strTT.str()).append(DJ_TOOL_TIP_LABEL_END);
             strToolTip.append(DJ_TOOL_TIP_END);
+            DEBUG_MARK_STRJS;
         }
 
         if (this->m_pSimpleTypeArray->length() == 0)
@@ -168,6 +170,7 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
         if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)
         {
             strJS.append(DJ_ADD_CHILD);
+            DEBUG_MARK_STRJS;
 
             CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
         }
@@ -411,15 +414,38 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
         assert(pName != NULL);
         assert(pName[0] != 0);
 
+
         genTabDojoJS(strJS, pName);
         DEBUG_MARK_STRJS;
 
 
-        QUICK_DOJO_JS_ARRAY(strJS);
-        DEBUG_MARK_STRJS;
+        const CComplexType *pComplexType = dynamic_cast<const CComplexType*>(this->getConstParentNode());
 
-        strJS.append(DJ_GRID);
-        strJS.append(DJ_TABLE_PART_2);
+        if (pComplexType->getSequence() == NULL)
+        {
+            strJS.append(DJ_TABLE_PART_1);
+            DEBUG_MARK_STRJS;
+        }
+
+        QUICK_DOJO_JS_ARRAY(strJS);
+
+        if (pComplexType->getSequence() != NULL)
+        {
+            strJS.append(DJ_GRID);
+            DEBUG_MARK_STRJS;
+        }
+
+        const CElementArray *pElemArray = dynamic_cast<const CElementArray*>(this->getParentNodeByType(XSD_ELEMENT_ARRAY));
+        if (pElemArray != NULL && pElemArray->getConstParentNode()->getNodeType() == XSD_CHOICE)
+        {
+            strJS.append(DJ_LAYOUT_END);
+            DEBUG_MARK_STRJS;
+        }
+        //else
+        {
+            strJS.append(DJ_TABLE_PART_2);
+            DEBUG_MARK_STRJS;
+        }
     }
     else
     {
@@ -440,14 +466,14 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
                 DEBUG_MARK_STRJS;
             }
         }
-        else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CDojoHelper::isAncestorTopElement(this) == true)
+        else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CElement::isAncestorTopElement(this) == true)
         {
             genTabDojoJS(strJS, "Attributes");
             DEBUG_MARK_STRJS;
         }
 
-        DEBUG_MARK_STRJS;
         strJS.append(DJ_TABLE_PART_1);
+        DEBUG_MARK_STRJS;
 
         QUICK_DOJO_JS_ARRAY(strJS);
 

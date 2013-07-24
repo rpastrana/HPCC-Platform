@@ -307,16 +307,16 @@ public:
     }
 
 
-    virtual const CXSDNodeBase* getParentNodeByType(NODE_TYPES eNodeType) const
+    virtual const CXSDNodeBase* getParentNodeByType(NODE_TYPES eNodeType, const CXSDNodeBase *pParent = NULL) const
     {
-        if (this->m_eNodeType == eNodeType)
+        if (this->m_eNodeType == eNodeType && pParent != NULL)
         {
             return this;
         }
 
         if (this->getConstParentNode() != NULL)
         {
-            return this->getConstParentNode()->getParentNodeByType(eNodeType);
+            return this->getConstParentNode()->getParentNodeByType(eNodeType, this);
         }
 
         return NULL;

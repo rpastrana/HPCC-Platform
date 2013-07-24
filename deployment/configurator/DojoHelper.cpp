@@ -10,7 +10,7 @@ bool CDojoHelper::IsElementATab(const CElement *pElement)
         return false;
     }
 
-    if ( pElement->getMaxOccurs() != NULL && stricmp(pElement->getMaxOccurs(), "unbounded") == 0 && isViewType(pElement, "list") == false && isViewChildNodes(pElement) == true )
+    if (pElement->getMaxOccurs() != NULL && stricmp(pElement->getMaxOccurs(), "unbounded") == 0 && isViewType(pElement, "list") == false && isViewChildNodes(pElement) == true || CElement::isAncestorTopElement(pElement) == true)
     {
         return true;
     }
@@ -49,70 +49,5 @@ bool CDojoHelper::isViewChildNodes(const CElement *pElement)
     else
     {
         return true;
-    }
-}
-
-bool CDojoHelper::isAncestorTopElement(const CXSDNodeBase *pNode)
-{
-    if (pNode == NULL)
-    {
-        return false;
-    }
-
-    if (pNode->getParentNodeByType(XSD_ELEMENT) == getTopMostElement(pNode))
-    {
-        return true;
-    }
-    else
-    {
-        return false;
-    }
-}
-
-const CXSDNodeBase* CDojoHelper::getAncestorElement(const CXSDNodeBase *pNode)
-{
-    if (pNode == NULL)
-    {
-        return NULL;
-    }
-    else
-    {
-        const CXSDNodeBase *pParentNode = pNode->getConstParentNode();
-
-        if (pParentNode != NULL && pParentNode->getNodeType() == XSD_ELEMENT)
-        {
-            return pParentNode;
-        }
-        else
-        {
-            return getAncestorElement(pParentNode);
-        }
-    }
-    return NULL;
-}
-
-const CXSDNodeBase* CDojoHelper::getTopMostElement(const CXSDNodeBase *pNode)
-{
-    if (pNode == NULL)
-    {
-        return NULL;
-    }
-
-    const CXSDNodeBase *pAncestorElementNode = getAncestorElement(pNode);
-
-    if (pAncestorElementNode == NULL)
-    {
-        if (pNode->getNodeType() == XSD_ELEMENT)
-        {
-            return pNode;
-        }
-        else
-        {
-            return NULL;
-        }
-    }
-    else
-    {
-        return getTopMostElement(pAncestorElementNode);
     }
 }
