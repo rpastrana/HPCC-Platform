@@ -10,6 +10,7 @@
 static const char* DJ_START("define([\n\
                                  \"dojo/_base/declare\",\n\
                                  \"dojo/dom\",\n\
+                                 \"dojo/dom-construct\",\n\
                                  \"dojo/store/Memory\",\n\
 \n\
                                  \"dojox/layout/TableContainer\",\n\
@@ -36,7 +37,7 @@ static const char* DJ_START("define([\n\
 \n\
                                  \"dojo/text!../templates/GlebWidget4.html\"\n\
 \n\
-                             ], function (declare, dom, Memory,\n\
+                             ], function (declare, dom, domConstruct, Memory,\n\
                                      TableContainer, DataGrid,\n\
                                      DGrid, Keyboard, Selection,\n\
                                      ComboBox, MultiSelect, Tooltip, BorderContainer, TabContainer, ContentPane, Form, TextBox,\n\
@@ -94,7 +95,7 @@ doLayout: \"true\",\n\
 id: \"");
 
 
-static const char* DJ_TAB_PART_3("\", });\n if (bc != null) cp.addChild(bc);\n");
+static const char* DJ_TAB_PART_3("\", });\n if (bc != null) cp.addChild(bc);\nvar layout = [[]];\n");
 
 static const char* DJ_TABLE_PART_1("\nvar tc = new dojox.layout.TableContainer(\n\
 { cols: 2,\n\
@@ -201,14 +202,22 @@ static const char* DJ_COMBO_BOX_SEARCHATTR_BEGIN("\nsearchAttr: \"");
 static const char* DJ_COMBO_BOX_SEARCHATTR_END("\",");
 static const char* DJ_COMBO_BOX_LABEL_BEGIN("\nlabel: \"");
 static const char* DJ_COMBO_BOX_LABEL_END("\",");
+static const char* DJ_DIV_HEADING_BEGIN("if (cp != null) dojo.place(\"<div><H1>");
+static const char* DJ_DIV_HEADING_END("</H1></div>\", cp.containerNode, cp.containerNode.length);\n");
 
-
-static unsigned getRandomID()
+static unsigned getRandomID(StringBuffer *pID = NULL)
 {
-  Owned<IRandomNumberGenerator> random = createRandomNumberGenerator();
-  random->seed(get_cycles_now());
+    Owned<IRandomNumberGenerator> random = createRandomNumberGenerator();
+    random->seed(get_cycles_now());
 
-  return (random->next() % UINT_MAX);
+    unsigned int retVal =  (random->next() % UINT_MAX);
+
+    if (pID != NULL)
+    {
+        pID->append(retVal);
+    }
+
+    return retVal;
 }
 
 static const char* createDojoComboBox(const char* pLabel, StringBuffer &strID, const char* pDefault = "")
@@ -217,7 +226,7 @@ static const char* createDojoComboBox(const char* pLabel, StringBuffer &strID, c
 
     strID.clear().append("CBID");
 
-    strID.append(getRandomID());
+    getRandomID(&strID);
 
     strBuf.clear();
     strBuf.appendf("%s %s%s%s %s%s%s %s%s%s %s%s%s %s%s%s %s", \
@@ -256,9 +265,9 @@ static void genTabDojoJS(StringBuffer &strJS, const char *pName)
         return;
     }
 
-    StringBuffer id;
+    StringBuffer id("X");
 
-    id.appendf("X%d",getRandomID());
+    getRandomID(&id);
 
     strJS.append(DJ_TAB_PART_1).append(pName).append(DJ_TAB_PART_2).append(id.str()).append(DJ_TAB_PART_3);
 }

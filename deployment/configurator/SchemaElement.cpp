@@ -250,7 +250,6 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
 
 void CElement::getDojoJS(StringBuffer &strJS) const
 {
-
     //TODO: Handle tree view
     if (stricmp(this->getType(), "NodeType") == 0)
     {
@@ -266,9 +265,17 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         return;
     }
 
-    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getViewType() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewType(), "none") == 0)
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getViewType() != NULL)
     {
-        return;
+        if (stricmp(m_pAnnotation->getAppInfo()->getViewType(), "none") == 0)
+        {
+            return;
+        }
+        /*else if (stricmp(m_pAnnotation->getAppInfo()->getViewType(), "list") == 0)
+        {
+            strJS.append("if (cp != null) dojo.place(\"<div><H1>").append(this->getName()).append("</H1></div>\", cp.containerNode, cp.containerNode.length);\n");
+          //  return;
+        }*/
     }
 
     assert(strlen(this->getName()) > 0);
@@ -293,16 +300,17 @@ void CElement::getDojoJS(StringBuffer &strJS) const
 
         return;
     }
-    /*else if (_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && ((m_pAnnotation->getAppInfo()->getViewChildNodes() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewChildNodes(), "true") == 0 && m_pComplexTypeArray != NULL) || \
-                m_pAnnotation->getAppInfo()->getViewType() != NULL && (stricmp(m_pAnnotation->getAppInfo()->getViewType(), "list") == 0 || stricmp(m_pAnnotation->getAppInfo()->getViewType(), "instance") == 0 || \
-                                                                       stricmp(m_pAnnotation->getAppInfo()->getViewType(), "Options") == 0) && m_pComplexTypeArray != NULL) || *//*stricmp(this->getMaxOccurs(), "unbounded") == 0)*/
-
-    /*else if ( (stricmp(this->getMaxOccurs(), "unbounded") == 0  && (m_pAnnotation == NULL || (m_pAnnotation != NULL && m_pAnnotation->getAppInfo()
-                m_pAnnotation->getAppInfo() == NULL*/
     else if (CDojoHelper::IsElementATab(this) == false)
     {
         strJS.append(DJ_LAYOUT_BEGIN);
         DEBUG_MARK_STRJS;
+
+
+        if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewType(), "list") == 0)
+        {
+            strJS.append(DJ_DIV_HEADING_BEGIN).append(this->getName()).append(DJ_DIV_HEADING_END);
+            DEBUG_MARK_STRJS;
+       }
 
         if (m_pComplexTypeArray != NULL)
         {

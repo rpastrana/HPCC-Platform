@@ -79,7 +79,6 @@ void CAnnotation::getDocumentation(StringBuffer &strDoc) const
     }
 }
 
-
 void CAnnotation::getDojoJS(StringBuffer &strJS) const
 {
     if (m_pAppInfo != NULL)

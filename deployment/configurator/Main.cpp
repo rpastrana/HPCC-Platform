@@ -25,7 +25,7 @@ void usage()
     std::cout << "-e -extension  <file extension>   : write docs to files with appended extension (default " <<  pDefaultExt << ")" << std::endl;
     std::cout << "-t -target <target directory>     : directory to which to docs will be written. If not specified, then output will go to std::out" << std::endl;
     std::cout << "-u -use <schema xsd>              : use specified xsd schema instead of buildset file" << std::endl;
-    std::cout << "-h -help                          : prints out this usuage" << std::endl;
+    std::cout << "-h -help                          : prints out this usage" << std::endl;
     std::cout << "** EXPERIMENTAL **" << std::endl;
     std::cout << "-j -dojo                          : prints dojo js" << std::endl;
 }
