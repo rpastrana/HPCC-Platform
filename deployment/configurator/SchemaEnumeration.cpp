@@ -4,6 +4,7 @@
 #include "jptree.hpp"
 #include "DocumentationMarkup.hpp"
 #include "DojoJSMarkup.hpp"
+#include "QMLMarkup.hpp"
 
 CEnumeration* CEnumeration::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
 {
@@ -57,6 +58,11 @@ void CEnumeration::getDojoJS(StringBuffer &strJS) const
     strJS.appendf("%s%s%s%s%s%s",DJ_MEMORY_ENTRY_NAME_BEGIN, this->getValue(), DJ_MEMORY_ENTRY_NAME_END, DJ_MEMORY_ENTRY_ID_BEGIN, this->getValue(), DJ_MEMORY_ENTRY_ID_END);
 }
 
+void CEnumeration::getQML(StringBuffer &strQML) const
+{
+    strQML.append(QML_LIST_ELEMENT_BEGIN).append(this->getValue()).append(QML_LIST_ELEMENT_END);
+}
+
 void CEnumeration::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -89,6 +95,11 @@ void CEnumerationArray::getDocumentation(StringBuffer &strDoc) const
 void CEnumerationArray::getDojoJS(StringBuffer &strJS) const
 {
     QUICK_DOJO_JS_ARRAY(strJS);
+}
+
+void CEnumerationArray::getQML(StringBuffer &strQML) const
+{
+    QUICK_QML_ARRAY(strQML);
 }
 
 void CEnumerationArray::traverseAndProcessNodes() const

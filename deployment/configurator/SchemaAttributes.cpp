@@ -7,6 +7,7 @@
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
 #include "DojoHelper.hpp"
+#include "QMLMarkup.hpp"
 
 const char* CAttribute::getTitle() const
 {
@@ -188,6 +189,59 @@ void CAttribute::getDojoJS(StringBuffer &strJS) const
     {
         m_pSimpleTypeArray->getDojoJS(strJS);
     }*/
+}
+
+void CAttribute::getQML(StringBuffer &strQML) const
+{
+    assert(this->getConstParentNode() != NULL);
+
+    const char* pViewType = NULL;
+    const char* pColumnIndex = NULL;
+    const char* pXPath = NULL;
+    const CXSDNodeBase *pGrandParentNode =this->getConstAncestorNode(2);
+    const CElement *pNextHighestElement = dynamic_cast<const CElement*>(this->getParentNodeByType(XSD_ELEMENT));
+
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
+    {
+        const CAppInfo *pAppInfo = NULL;
+        pAppInfo = m_pAnnotation->getAppInfo();
+        pViewType = pAppInfo->getViewType();
+        pColumnIndex = (pAppInfo->getColIndex() != NULL && pAppInfo->getColIndex()[0] != 0) ? pAppInfo->getColIndex() : NULL;
+        pXPath = (pAppInfo->getXPath() != NULL && pAppInfo->getXPath()[0] != 0) ? pAppInfo->getXPath() : NULL;
+    }
+
+    if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
+    {
+        return; // HIDDEN
+    }
+
+    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0) || (pNextHighestElement != NULL && pNextHighestElement->getMaxOccurs() != NULL && pNextHighestElement->getMaxOccurs()[0] != 0))
+    {
+
+    }
+    else
+    {
+        if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
+        {
+        }
+
+        if (this->m_pSimpleTypeArray->length() == 0)
+        {
+        }
+        else
+        {
+            m_pSimpleTypeArray->getQML(strQML);
+
+            if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
+            {
+            }
+        }
+
+        if (this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip() != NULL && this->getAnnotation() != NULL && this->getAnnotation()->getAppInfo()->getToolTip()[0] != 0)
+        {
+
+        }
+    }
 }
 
 void CAttribute::traverseAndProcessNodes() const
@@ -441,11 +495,9 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
             strJS.append(DJ_LAYOUT_END);
             DEBUG_MARK_STRJS;
         }
-        //else
-        {
-            strJS.append(DJ_TABLE_PART_2);
-            DEBUG_MARK_STRJS;
-        }
+
+        strJS.append(DJ_TABLE_PART_2);
+        DEBUG_MARK_STRJS;
     }
     else
     {
@@ -479,6 +531,46 @@ void CAttributeArray::getDojoJS(StringBuffer &strJS) const
 
         strJS.append(DJ_TABLE_PART_2);
         strJS.append(DJ_TABLE_END);
+    }
+}
+
+void CAttributeArray::getQML(StringBuffer &strQML) const
+{
+    assert(this->getConstParentNode() != NULL);
+    assert(this->getConstAncestorNode(2) != NULL);
+
+
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ELEMENT && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(3))) == true)
+    {
+        const char *pName = NULL;
+
+        pName = dynamic_cast<const CElement*>(this->getConstAncestorNode(3))->getName();
+
+        assert(pName != NULL);
+        assert(pName[0] != 0);
+
+        CQMLMarkupHelper::getTabQML(strQML, pName);
+        DEBUG_MARK_QML;
+    }
+    else
+    {
+        if (this->getConstParentNode()->getNodeType() == XSD_ATTRIBUTE_GROUP)
+        {
+            const CAttributeGroup *pAttributeGroup = dynamic_cast<const CAttributeGroup*>(this->getConstParentNode());
+
+            assert(pAttributeGroup != NULL);
+
+            if (pAttributeGroup != NULL)
+            {
+                CQMLMarkupHelper::getTabQML(strQML, pAttributeGroup->getName());
+                DEBUG_MARK_QML;
+            }
+        }
+        else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CElement::isAncestorTopElement(this) == true)
+        {
+            CQMLMarkupHelper::getTabQML(strQML, "Attributes");
+            DEBUG_MARK_QML;
+        }
     }
 }
 
@@ -586,6 +678,17 @@ void CAttributeGroup::getDojoJS(StringBuffer &strJS) const
         if (m_pRefAttributeGroup->getAttributeArray() != NULL)
         {
             m_pRefAttributeGroup->getAttributeArray()->getDojoJS(strJS);
+        }
+    }
+}
+
+void CAttributeGroup::getQML(StringBuffer &strQML) const
+{
+    if (this->getRef() != NULL && this->getRef()[0] != 0 && m_pRefAttributeGroup != NULL)
+    {
+        if (m_pRefAttributeGroup->getAttributeArray() != NULL)
+        {
+            m_pRefAttributeGroup->getAttributeArray()->getQML(strQML);
         }
     }
 }
@@ -778,6 +881,20 @@ void CAttributeGroupArray::getDojoJS(StringBuffer &strJS) const
     }
 
     QUICK_DOJO_JS_ARRAY(strJS);
+}
+
+void CAttributeGroupArray::getQML(StringBuffer &strQML) const
+{
+    StringBuffer strQMLDupe1(strQML);
+
+    QUICK_QML_ARRAY(strQMLDupe1);
+
+    if (strQMLDupe1.length() == strQML.length())
+    {
+       return;
+    }
+
+    QUICK_QML_ARRAY(strQML);
 }
 
 void CAttributeGroupArray::traverseAndProcessNodes() const

@@ -24,6 +24,8 @@ public:
 
     virtual void getDojoJS(StringBuffer &strJS) const;
 
+    virtual void getQML(StringBuffer &strQML) const;
+
     virtual void traverseAndProcessNodes() const;
 
     virtual const char* getXML(const char* /*pComponent*/);

@@ -28,6 +28,7 @@ void usage()
     std::cout << "-h -help                          : prints out this usage" << std::endl;
     std::cout << "** EXPERIMENTAL **" << std::endl;
     std::cout << "-j -dojo                          : prints dojo js" << std::endl;
+    std::cout << "-q -qml                           : prints QML" << std::endl;
 }
 
 int main(int argc, char *argv[])
@@ -52,10 +53,10 @@ int main(int argc, char *argv[])
     strncpy(pTargetDocExt, pDefaultExt, sizeof(pTargetDocExt));
 
 
-    bool bListXSDs = false;
-    bool bGenDocs = false;
+    bool bListXSDs  = false;
+    bool bGenDocs   = false;
     bool bGenDojoJS = false;
-
+    bool bGenQML    = false;
 
     StringArray arrXSDs;
 
@@ -182,6 +183,10 @@ int main(int argc, char *argv[])
         else if (stricmp(argv[idx], "-dojo") == 0 | stricmp(argv[idx], "-j") == 0)
         {
             bGenDojoJS = true;
+        }
+        else if (stricmp(argv[idx], "-qml") == 0 | stricmp(argv[idx], "-q") == 0)
+        {
+            bGenQML = true;
         }
 
         idx++;
@@ -315,4 +320,33 @@ int main(int argc, char *argv[])
         }
     }
 
+    for (int idx =  0; bGenQML == true && idx < arrXSDs.length(); idx++)
+    {
+        if (pTargetDocDir[0] == 0)
+        {
+            std::cout << pSchemaHelper->printQML(arrXSDs.item(idx));
+        }
+        else
+        {
+            Owned<IFile>   pFile;
+            Owned<IFileIO> pFileIO;
+            StringBuffer strTargetPath;
+
+            const char *pXSDFile = strrchr(arrXSDs.item(idx), '/') == NULL ? arrXSDs.item(idx) : strrchr(arrXSDs.item(idx),'/');
+
+            strTargetPath.append(pTargetDocDir).append("/").append(pXSDFile).append(pTargetDocExt);
+
+            pFile.setown(createIFile(strTargetPath.str()));
+            pFileIO.setown(pFile->open(IFOcreaterw));
+
+            const char *pQML = pSchemaHelper->printQML(arrXSDs.item(idx));
+
+            if (pQML == NULL)
+            {
+                continue;
+            }
+
+            pFileIO->write(0, strlen(pQML), pQML);
+        }
+    }
 }

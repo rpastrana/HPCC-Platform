@@ -48,6 +48,14 @@ void CSimpleType::getDojoJS(StringBuffer &strJS) const
     }
 }
 
+void CSimpleType::getQML(StringBuffer &strQML) const
+{
+    if (m_pRestriction != NULL)
+    {
+        m_pRestriction->getQML(strQML);
+    }
+}
+
 void CSimpleType::traverseAndProcessNodes() const
 {
     CSimpleType::processEntryHandlers(this);
@@ -198,4 +206,9 @@ void CSimpleTypeArray::getDocumentation(StringBuffer &strDoc) const
 void CSimpleTypeArray::getDojoJS(StringBuffer &strJS) const
 {
     QUICK_DOJO_JS_ARRAY(strJS);
+}
+
+void CSimpleTypeArray::getQML(StringBuffer &strQML) const
+{
+    QUICK_QML_ARRAY(strQML);
 }

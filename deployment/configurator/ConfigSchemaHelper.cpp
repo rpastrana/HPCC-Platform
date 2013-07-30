@@ -208,6 +208,36 @@ const char* CConfigSchemaHelper::printDojoJS(const char* comp)
     return NULL;
 }
 
+const char* CConfigSchemaHelper::printQML(const char* comp) const
+{
+    if (comp == NULL)
+    {
+        return NULL;
+    }
+
+    CSchema* pSchema = NULL;
+
+    LOOP_THRU_BUILD_SET
+    {
+        if (m_buildSetArray.item(idx).getSchema() != NULL && strcmp(comp, m_buildSetArray.item(idx).getSchema()) == 0)
+        {
+             pSchema = m_schemaMap.getValue(m_buildSetArray.item(idx).getSchema());
+
+             assert(pSchema != NULL);
+
+             if (pSchema != NULL)
+             {
+                static StringBuffer strQML;
+                pSchema->getQML(strQML);
+
+                return strQML.str();
+             }
+        }
+    }
+
+    return NULL;
+}
+
 //test purposes
 bool CConfigSchemaHelper::getXMLFromSchema(StringBuffer& strXML, const char* pComponent)
 {

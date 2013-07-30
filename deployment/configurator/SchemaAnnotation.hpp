@@ -28,6 +28,8 @@ public:
 
     virtual void getDojoJS(StringBuffer &strJS) const;
 
+    virtual void getQML(StringBuffer &strQML) const;
+
     const CAppInfo* getAppInfo() const
     {
         return m_pAppInfo;

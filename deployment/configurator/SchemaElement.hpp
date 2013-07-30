@@ -35,6 +35,8 @@ public:
 
     virtual void getDojoJS(StringBuffer &strDoc) const;
 
+    virtual void getQML(StringBuffer &strQML) const;
+
     virtual void traverseAndProcessNodes() const;
 
     const CAnnotation* getAnnotation() const
@@ -90,6 +92,8 @@ public:
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
     virtual void getDojoJS(StringBuffer &strJS) const;
+
+    virtual void getQML(StringBuffer &strQML) const;
 
     virtual void traverseAndProcessNodes() const;
 

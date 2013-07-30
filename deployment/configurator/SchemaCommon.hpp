@@ -26,6 +26,11 @@
                                 (this->item(idx)).getDojoJS(X);                         \
                            }
 
+#define QUICK_QML_ARRAY(X) for (int idx=0; idx < this->length(); idx++)                 \
+                           {                                                            \
+                                (this->item(idx)).getQML(X);                            \
+                           }
+
 #define QUICK_TRAVERSE_AND_PROCESS  for (int idx=0; idx < this->length(); idx++)        \
 {                                                                                       \
     CXSDNodeBase::processEntryHandlers(this);                                           \
@@ -39,7 +44,9 @@
 #define SETPARENTNODE(X, Y) if (X!= NULL && Y != NULL) X->setParentNode(Y);
 //#define DEBUG_MARK_STRDOC strDoc.append(__FILE__).append(":").append(__LINE__).append("\n");
 #define DEBUG_MARK_STRDOC
-#define DEBUG_MARK_STRJS strJS.append("//  ").append(__FILE__).append(":").append(__LINE__).append("\n");
+#define DEBUG_MARK_COMMENT(X) X.append("//  ").append(__FILE__).append(":").append(__LINE__).append("\n");
+#define DEBUG_MARK_STRJS DEBUG_MARK_COMMENT(strJS)
+#define DEBUG_MARK_QML DEBUG_MARK_COMMENT(strQML)
 //#define DEBUG_MARK_STRJS
 
 enum NODE_TYPES
@@ -434,6 +441,11 @@ public:
     virtual void getDocumentation(StringBuffer &strDoc) const = 0;
 
     virtual void getDojoJS(StringBuffer &strJS) const = 0;
+
+    virtual void getDojoQML(StringBuffer &strQML) const
+    {
+
+    }
 
     static void addEntryHandler(CXSDNodeHandler &Handler)
     {

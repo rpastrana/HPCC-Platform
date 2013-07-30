@@ -132,6 +132,39 @@ void CComplexType::getDojoJS(StringBuffer &strJS) const
     }
 }
 
+void CComplexType::getQML(StringBuffer &strQML) const
+{
+    if (m_pSequence != NULL)
+    {
+        m_pSequence->getQML(strQML);
+    }
+
+    if (m_pComplexContent != NULL)
+    {
+        m_pComplexContent->getQML(strQML);
+    }
+
+    if (m_pAttributeArray != NULL)
+    {
+        m_pAttributeArray->getQML(strQML);
+    }
+
+    if (m_pChoice != NULL)
+    {
+        m_pChoice->getQML(strQML);
+    }
+
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getQML(strQML);
+    }
+
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->getQML(strQML);
+    }
+}
+
 void CComplexType::traverseAndProcessNodes() const
 {
     CComplexType::processEntryHandlers(this);
@@ -297,6 +330,11 @@ void CComplexTypeArray::getDocumentation(StringBuffer &strDoc) const
 void CComplexTypeArray::getDojoJS(StringBuffer &strJS) const
 {
     QUICK_DOJO_JS_ARRAY(strJS);
+}
+
+void CComplexTypeArray::getQML(StringBuffer &strQML) const
+{
+   QUICK_QML_ARRAY(strQML);
 }
 
 void CComplexTypeArray::traverseAndProcessNodes() const

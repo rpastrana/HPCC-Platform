@@ -227,6 +227,30 @@ void CSchema::getDojoJS(StringBuffer &strJS) const
     }
 }
 
+void CSchema::getQML(StringBuffer &strQML) const
+{
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getQML(strQML);
+    }
+    if (m_pComplexTypeArray != NULL)
+    {
+        m_pComplexTypeArray->getQML(strQML);
+    }
+    if (m_pAttributeGroupArray != NULL)
+    {
+        m_pAttributeGroupArray->getQML(strQML);
+    }
+    if (m_pSimpleTypeArray != NULL)
+    {
+        m_pSimpleTypeArray->getQML(strQML);
+    }
+    if (m_pIncludeArray != NULL)
+    {
+        m_pIncludeArray->getQML(strQML);
+    }
+}
+
 void CSchema::traverseAndProcessNodes() const
 {
     CSchema::processEntryHandlers(this);

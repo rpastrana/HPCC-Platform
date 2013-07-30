@@ -65,6 +65,14 @@ void CSequence::getDojoJS(StringBuffer &strJS) const
     }
 }
 
+void CSequence::getQML(StringBuffer &strQML) const
+{
+    if (p_mElementArray != NULL)
+    {
+        p_mElementArray->getQML(strQML);
+    }
+}
+
 void CSequence::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);

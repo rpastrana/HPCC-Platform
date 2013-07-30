@@ -92,6 +92,14 @@ void CChoice::getDojoJS(StringBuffer &strJS) const
     }
 }
 
+void CChoice::getQML(StringBuffer &strQML) const
+{
+    if (m_pElementArray != NULL)
+    {
+        m_pElementArray->getQML(strQML);
+    }
+}
+
 void CChoice::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);

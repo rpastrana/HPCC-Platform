@@ -14,6 +14,7 @@
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
 #include "DojoHelper.hpp"
+#include "QMLMarkup.hpp"
 
 
 CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)
@@ -283,11 +284,11 @@ void CElement::getDojoJS(StringBuffer &strJS) const
     if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
     {
         strJS.append(DJ_START);
+        DEBUG_MARK_STRJS;
 
         if (m_pAnnotation != NULL)
         {
             m_pAnnotation->getDojoJS(strJS);
-            DEBUG_MARK_STRJS;
         }
 
         if (m_pComplexTypeArray != NULL)
@@ -310,7 +311,7 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         {
             strJS.append(DJ_DIV_HEADING_BEGIN).append(this->getName()).append(DJ_DIV_HEADING_END);
             DEBUG_MARK_STRJS;
-       }
+        }
 
         if (m_pComplexTypeArray != NULL)
         {
@@ -376,6 +377,101 @@ void CElement::getDojoJS(StringBuffer &strJS) const
     }
 }
 
+void CElement::getQML(StringBuffer &strQML) const
+{
+    //TODO: Handle tree view
+    if (stricmp(this->getType(), "NodeType") == 0)
+    {
+        return;
+    }
+
+    const CXSDNodeBase *pGrandParentNode = this->getConstAncestorNode(2);
+
+    assert(pGrandParentNode != NULL);
+
+    if (pGrandParentNode == NULL)
+    {
+        return;
+    }
+
+    if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && m_pAnnotation->getAppInfo()->getViewType() != NULL)
+    {
+        if (stricmp(m_pAnnotation->getAppInfo()->getViewType(), "none") == 0)
+        {
+            return;
+        }
+    }
+
+    assert(strlen(this->getName()) > 0);
+
+    if (pGrandParentNode->getNodeType() == XSD_SCHEMA)
+    {
+        strQML.append(QML_START);
+        DEBUG_MARK_QML;
+        strQML.append(QML_TAB_VIEW_BEGIN);
+        DEBUG_MARK_QML;
+
+
+        if (m_pAnnotation != NULL)
+        {
+            m_pAnnotation->getQML(strQML);
+        }
+
+        if (m_pComplexTypeArray != NULL)
+        {
+            m_pComplexTypeArray->getQML(strQML);
+        }
+
+        strQML.append(QML_TAB_VIEW_STYLE);
+        DEBUG_MARK_QML;
+        strQML.append(QML_TAB_VIEW_END);
+        DEBUG_MARK_QML;
+        strQML.append(QML_TAB_TEXT_STYLE);
+        DEBUG_MARK_QML;
+        strQML.append(QML_END);
+        DEBUG_MARK_QML;
+
+        return;
+    }
+    else if (CDojoHelper::IsElementATab(this) == false)
+    {
+        if (m_pComplexTypeArray != NULL)
+        {
+            m_pComplexTypeArray->getQML(strQML);
+        }
+    }
+    else if (m_pComplexTypeArray != NULL)
+    {
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getQML(strQML);
+        }
+
+        m_pComplexTypeArray->getQML(strQML);
+
+    }
+    else if (m_pComplexTypeArray == NULL)
+    {
+        if (m_pAnnotation!= NULL)
+        {
+            m_pAnnotation->getQML(strQML);
+        }
+
+        if (CDojoHelper::IsElementATab(this) == true)
+            CQMLMarkupHelper::getTabQML(strQML, this->getName());
+
+        if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
+        {
+            m_pAnnotation->getQML(strQML);
+        }
+
+        if (m_pAttributeArray != NULL)
+        {
+            m_pAttributeArray->getQML(strQML);
+        }
+    }
+}
+
 void CElement::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -412,6 +508,11 @@ void CElementArray::getDocumentation(StringBuffer &strDoc) const
 void CElementArray::getDojoJS(StringBuffer &strDoc) const
 {
     QUICK_DOJO_JS_ARRAY(strDoc);
+}
+
+void CElementArray::getQML(StringBuffer &strQML) const
+{
+    QUICK_QML_ARRAY(strQML);
 }
 
 void CElementArray::traverseAndProcessNodes() const

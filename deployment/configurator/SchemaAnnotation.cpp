@@ -91,3 +91,16 @@ void CAnnotation::getDojoJS(StringBuffer &strJS) const
         m_pDocumentation->getDojoJS(strJS);
     }
 }
+
+void CAnnotation::getQML(StringBuffer &strQML) const
+{
+    if (m_pAppInfo != NULL)
+    {
+        m_pAppInfo->getDojoQML(strQML);
+    }
+
+    if (m_pDocumentation != NULL)
+    {
+        m_pDocumentation->getDojoQML(strQML);
+    }
+}

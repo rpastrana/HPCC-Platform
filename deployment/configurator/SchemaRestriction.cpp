@@ -5,6 +5,7 @@
 #include "XMLTags.h"
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
+#include "QMLMarkup.hpp"
 
 void CRestriction::dump(std::ostream& cout, unsigned int offset) const
 {
@@ -62,6 +63,18 @@ void CRestriction::getDojoJS(StringBuffer &strJS) const
         strToolTip.append(DJ_TOOL_TIP_END);
 
         CConfigSchemaHelper::getInstance()->addToolTip(strToolTip.str());
+    }
+}
+
+void CRestriction::getQML(StringBuffer &strQML) const
+{
+    if (m_pEnumerationArray != NULL)
+    {
+        strQML.append(QML_LIST_MODEL_BEGIN);
+        m_pEnumerationArray->getQML(strQML);
+        strQML.append(QML_LIST_MODEL_END);
+
+        assert(this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ATTRIBUTE);
     }
 }
 

@@ -48,6 +48,8 @@ public:
 
     virtual void getDojoJS(StringBuffer &strJS) const;
 
+    virtual void getQML(StringBuffer &strQML) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CAttribute* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);
@@ -104,6 +106,8 @@ public:
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
     virtual void getDojoJS(StringBuffer &strJS) const;
+
+    virtual void getQML(StringBuffer &strQML) const;
 
     virtual void traverseAndProcessNodes() const;
 
@@ -166,6 +170,8 @@ public:
 
     virtual void getDojoJS(StringBuffer &strJS) const;
 
+    virtual void getQML(StringBuffer &strQML) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CAttributeGroup* load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath);
@@ -199,6 +205,8 @@ public:
     virtual void getDocumentation(StringBuffer &strDoc) const;
 
     virtual void getDojoJS(StringBuffer &strJS) const;
+
+    virtual void getQML(StringBuffer &strQML) const;
 
     virtual void traverseAndProcessNodes() const;
 

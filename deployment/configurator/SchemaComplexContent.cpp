@@ -68,6 +68,11 @@ void CComplexContent::getDojoJS(StringBuffer &strJS) const
 
 }
 
+void CComplexContent::getQML(StringBuffer &strQML) const
+{
+
+}
+
 void CComplexContent::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);

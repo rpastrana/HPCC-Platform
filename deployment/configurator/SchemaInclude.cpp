@@ -29,6 +29,11 @@ void CInclude::getDojoJS(StringBuffer &strJS) const
 {
 }
 
+void CInclude::getQML(StringBuffer &strQML) const
+{
+
+}
+
 void CInclude::traverseAndProcessNodes() const
 {
     CXSDNodeBase::processEntryHandlers(this);
@@ -164,6 +169,11 @@ void CIncludeArray::getDocumentation(StringBuffer &strDoc) const
 void CIncludeArray::getDojoJS(StringBuffer &strJS) const
 {
     QUICK_DOJO_JS_ARRAY(strJS);
+}
+
+void CIncludeArray::getQML(StringBuffer &strQML) const
+{
+    QUICK_QML_ARRAY(strQML);
 }
 
 void CIncludeArray::traverseAndProcessNodes() const

@@ -24,6 +24,8 @@ public:
 
     virtual void getDojoJS(StringBuffer &strJS) const;
 
+    virtual void getQML(StringBuffer &strQML) const;
+
     virtual void traverseAndProcessNodes() const;
 
     static CSequence* load(CXSDNodeBase* pRootNode, IPropertyTree *pSchemaRoot, const char* xpath = NULL);

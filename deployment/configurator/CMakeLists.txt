@@ -5,7 +5,7 @@ set ( SRCS Main.cpp ConfigFileComponentUtils.cpp ConfigFileUtils.cpp ConfigFileU
       SchemaAttributes.cpp SchemaComplexType.cpp SchemaSequence.cpp SchemaElement.cpp
       SchemaAppInfo.cpp SchemaAnnotation.cpp SchemaComplexContent.cpp SchemaComplexType.cpp SchemaDocumentation.cpp
       SchemaExtension.cpp SchemaChoice.cpp SchemaInclude.cpp SchemaSchema.cpp SchemaSimpleType.cpp SchemaRestriction.cpp NodeHandlerDocumentation.cpp DojoHelper.cpp
-      SchemaEnumeration.cpp DocumentationMarkup.hpp DojoJSMarkup.hpp )
+      SchemaEnumeration.cpp DocumentationMarkup.hpp DojoJSMarkup.hpp QMLMarkup.hpp QMLMarkup.cpp SchemaCommon.hpp)
 
 include_directories (
          ./../../system/include
