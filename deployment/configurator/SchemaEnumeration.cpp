@@ -61,6 +61,7 @@ void CEnumeration::getDojoJS(StringBuffer &strJS) const
 void CEnumeration::getQML(StringBuffer &strQML) const
 {
     strQML.append(QML_LIST_ELEMENT_BEGIN).append(this->getValue()).append(QML_LIST_ELEMENT_END);
+    DEBUG_MARK_QML;
 }
 
 void CEnumeration::traverseAndProcessNodes() const

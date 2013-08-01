@@ -24,8 +24,8 @@ static const char* DM_TGROUP4_END = "</tgroup>\n";
 static const char* DM_TGROUP_END = "</tgroup>\n";
 static const char* DM_TBODY_BEGIN = "<thead><row>\n<entry>attribute</entry>\n<entry>values</entry>\n<entry>default</entry>\n<entry>required</entry>\n</row>\n</thead><tbody>\n";
 static const char* DM_TBODY_END = "</tbody>\n";
-static const char* DM_COL_SPEC4 = "<colspec colwidth=\"192pt\" /><colspec colwidth=\"195pt\" />\n";
+static const char* DM_COL_SPEC4  = "<colspec colwidth=\"155pt\" /><colspec colwidth=\"2*\" /><colspec colwidth=\"1*\" /><colspec colwidth=\"0.5*\" />\n";
 static const char* DM_XI_INCLUDE = "xi:include";
-
+static const char* DM_HEADING = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE sect1 PUBLIC \"-//OASIS//DTD DocBook XML V4.5//EN\"\n\"http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd\">\n";
 
 #endif // _DOCUMENTATION_MARKUP_HPP

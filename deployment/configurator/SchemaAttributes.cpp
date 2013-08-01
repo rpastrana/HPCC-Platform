@@ -227,6 +227,21 @@ void CAttribute::getQML(StringBuffer &strQML) const
 
         if (this->m_pSimpleTypeArray->length() == 0)
         {
+            strQML.append(QML_ROW_BEGIN).append(QML_RECTANGLE_BEGIN);
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_TEXT_BEGIN_2).append(this->getTitle()).append(QML_TEXT_END_2);
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_RECTANGLE_END);
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_TEXT_FIELD_BEGIN).append(QML_TEXT_FIELD_END);
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_ROW_END);
+            DEBUG_MARK_QML;
+
         }
         else
         {
@@ -551,6 +566,18 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
 
         CQMLMarkupHelper::getTabQML(strQML, pName);
         DEBUG_MARK_QML;
+
+        strQML.append(QML_GRID_LAYOUT_BEGIN);
+        DEBUG_MARK_QML;
+
+        QUICK_QML_ARRAY(strQML);
+
+        strQML.append(QML_GRID_LAYOUT_END);
+        DEBUG_MARK_QML;
+
+
+        strQML.append(QML_TAB_END);
+        DEBUG_MARK_QML;
     }
     else
     {
@@ -564,13 +591,37 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
             {
                 CQMLMarkupHelper::getTabQML(strQML, pAttributeGroup->getName());
                 DEBUG_MARK_QML;
+
+                strQML.append(QML_GRID_LAYOUT_BEGIN);
+                DEBUG_MARK_QML;
+
+                QUICK_QML_ARRAY(strQML);
+
+                strQML.append(QML_GRID_LAYOUT_END);
+                DEBUG_MARK_QML;
+
+                strQML.append(QML_TAB_END);
+                DEBUG_MARK_QML;
             }
         }
         else if (CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(2))) == false && CElement::isAncestorTopElement(this) == true)
         {
             CQMLMarkupHelper::getTabQML(strQML, "Attributes");
             DEBUG_MARK_QML;
+
+
+            strQML.append(QML_GRID_LAYOUT_BEGIN);
+            DEBUG_MARK_QML;
+
+            QUICK_QML_ARRAY(strQML);
+
+            strQML.append(QML_GRID_LAYOUT_END);
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_TAB_END);
+            DEBUG_MARK_QML;
         }
+
     }
 }
 

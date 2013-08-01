@@ -12,16 +12,8 @@ static const char* QML_START("\
  \n\
  Item {\n\
      id: root\n\
-     width: 300\n\
-     height: 200\n\
- \n\
-     property int columnWidth: 120\n\
-     GridLayout {\n\
-         rowSpacing: 12\n\
-         columnSpacing: 30\n\
-         anchors.top: parent.top\n\
-         anchors.horizontalCenter: parent.horizontalCenter\n\
-         anchors.margins: 30\n\
+     width: 900\n\
+     height: 700\n\
 ");
 
 static const char* QML_END("\
@@ -51,15 +43,15 @@ property Component textfieldStyle: TextFieldStyle {\n\
 ");
 
 static const char* QML_TAB_VIEW_BEGIN("\
-        TabView {\n\
-            Layout.row: 5\n\
-            Layout.columnSpan: 3\n\
-            Layout.fillWidth: true\n\
-            implicitHeight: 600\n\
-            implicitWidth: 1400\n\
+    TabView {\n\
+        Layout.row: 5\n\
+        Layout.columnSpan: 3\n\
+        Layout.fillWidth: true\n\
+        implicitHeight: 700\n\
+        implicitWidth: 1600\n\
 ");
 
-static const char* QML_TAB_VIEW_END("}\n}\n");
+static const char* QML_TAB_VIEW_END("}\n");
 
 
 static const char* QML_TAB_VIEW_STYLE("\
@@ -79,9 +71,9 @@ static const char* QML_TAB_VIEW_STYLE("\
                     }\n\
                 }\n\
                 frame: Rectangle { color: \"steelblue\" }\n\
-}\n");
+      }\n");
 
-static const char* QML_TAB_BEGIN("\n\
+static const char* QML_TAB_BEGIN("\
     Tab {\n");
 
 static const char* QML_TAB_TITLE_BEGIN("\ttitle: \"");
@@ -114,16 +106,87 @@ static const char* QML_TAB_TEXT_STYLE("\
 \n\
 ");
 
-static const char* QML_TEXT_FIELD_BEGIN("");
-static const char* QML_TEXT_FIELD_END("");
+static const char* QML_ROW_BEGIN("\
+        Row {\n");
 
-static const char* QML_LIST_MODEL_BEGIN("            ListModel {\n\
-                                 id: cbItems");
+static const char* QML_ROW_END("\n\
+          }\n");
 
-static const char* QML_LIST_MODEL_END("}\n");
+static const char* QML_RECTANGLE_BEGIN("\
+         Rectangle {\n\
+            color: \"lightsteelblue\"\n");
 
-static const char* QML_LIST_ELEMENT_BEGIN("ListElement { text: \"");
+static const char* QML_RECTANGLE_END("\n\
+         width: childrenRect.width\n\
+         height: childrenRect.height\n\
+          }\n");
+
+static const char* QML_TEXT_BEGIN("\
+      Row {\n\
+        Rectangle {\n\
+          color: \"lightsteelblue\"\n\
+          Text {\n\
+               width: 200\n\
+               height: 25\n\
+               verticalAlignment: Text.AlignVCenter\n\
+               text: \"");
+
+static const char* QML_TEXT_END("\"\n\
+            }\n\
+        width: childrenRect.width\n\
+        height: childrenRect.height\n\
+         }\n");
+
+static const char* QML_TEXT_BEGIN_2("\
+          Text {\n\
+                 width: 200\n\
+                 height: 25\n\
+                 verticalAlignment: Text.AlignVCenter\n\
+                 text: \"");
+
+static const char* QML_TEXT_END_2("\"\n\
+           }\n");
+
+static const char* QML_TEXT_FIELD_BEGIN("\
+        TextField {\n\
+        horizontalAlignment: Text.AlignLeft\n\
+        implicitWidth: 250\n\
+        text:\"");
+
+static const char* QML_TEXT_FIELD_END("\"\n\
+            //}\n\
+          }\n");
+
+static const char* QML_LIST_MODEL_BEGIN("\
+              model: ListModel {\n");
+
+static const char* QML_LIST_MODEL_END("\
+                }\n");
+
+static const char* QML_COMBO_BOX_BEGIN("\
+    ComboBox {\n\
+");
+
+static const char* QML_COMBO_BOX_END("\
+              }\n");
+
+static const char* QML_LIST_ELEMENT_BEGIN("\
+                ListElement { text: \"");
+
 static const char* QML_LIST_ELEMENT_END("\" }\n");
+
+
+
+static const char* QML_GRID_LAYOUT_BEGIN("\
+          GridLayout {\n\
+              rowSpacing: 1\n\
+              columnSpacing: 1\n\
+              columns: 3\n\
+              flow: GridLayout.LeftToRight\n\
+");
+
+static const char* QML_GRID_LAYOUT_END("\
+          }\n");
 
 class CQMLMarkupHelper
 {

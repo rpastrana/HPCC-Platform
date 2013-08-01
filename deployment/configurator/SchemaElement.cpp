@@ -83,7 +83,6 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     return pElement;
 }
 
-
 const CElement* CElement::getTopMostElement(const CXSDNodeBase *pNode)
 {
     if (pNode == NULL)
@@ -181,6 +180,8 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
 
         strName.replace(' ', '_');
 
+        strDoc.append(DM_HEADING);
+
         // component name would be here
         strDoc.appendf("<%s %s=\"%s%s\">\n", DM_SECT2, DM_ID, strName.str(),"_mod");
         strDoc.appendf("<%s>%s</%s>\n", DM_TITLE_LITERAL, this->getName(), DM_TITLE_LITERAL);
@@ -190,7 +191,6 @@ void CElement::getDocumentation(StringBuffer &strDoc) const
             m_pAnnotation->getDocumentation(strDoc);
             DEBUG_MARK_STRDOC;
         }
-
 
         strDoc.append(DM_SECT3_BEGIN);
         DEBUG_MARK_STRDOC;
@@ -306,7 +306,6 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         strJS.append(DJ_LAYOUT_BEGIN);
         DEBUG_MARK_STRJS;
 
-
         if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL && stricmp(m_pAnnotation->getAppInfo()->getViewType(), "list") == 0)
         {
             strJS.append(DJ_DIV_HEADING_BEGIN).append(this->getName()).append(DJ_DIV_HEADING_END);
@@ -361,7 +360,9 @@ void CElement::getDojoJS(StringBuffer &strJS) const
         }
 
         if (CDojoHelper::IsElementATab(this) == true)
+        {
             genTabDojoJS(strJS, this->getName());
+        }
 
         if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
         {
@@ -411,7 +412,6 @@ void CElement::getQML(StringBuffer &strQML) const
         strQML.append(QML_TAB_VIEW_BEGIN);
         DEBUG_MARK_QML;
 
-
         if (m_pAnnotation != NULL)
         {
             m_pAnnotation->getQML(strQML);
@@ -458,7 +458,13 @@ void CElement::getQML(StringBuffer &strQML) const
         }
 
         if (CDojoHelper::IsElementATab(this) == true)
+        {
             CQMLMarkupHelper::getTabQML(strQML, this->getName());
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_TAB_END);
+            DEBUG_MARK_QML;
+        }
 
         if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
         {

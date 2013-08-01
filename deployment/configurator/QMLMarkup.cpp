@@ -7,7 +7,7 @@ void CQMLMarkupHelper::getTabQML(StringBuffer &strJS, const char *pName)
 {
     assert(pName != NULL);
 
-    strJS.append(QML_TAB_BEGIN).append(QML_TAB_TITLE_BEGIN).append(pName).append(QML_TAB_TITLE_END).append(QML_TAB_END);
+    strJS.append(QML_TAB_BEGIN).append(QML_TAB_TITLE_BEGIN).append(pName).append(QML_TAB_TITLE_END);
 }
 
 

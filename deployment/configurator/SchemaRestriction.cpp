@@ -70,11 +70,35 @@ void CRestriction::getQML(StringBuffer &strQML) const
 {
     if (m_pEnumerationArray != NULL)
     {
+        assert(this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ATTRIBUTE);
+
+        const CAttribute *pAttrib = dynamic_cast<const CAttribute*>(this->getConstAncestorNode(3));
+
+        assert(pAttrib != NULL);
+        /*strQML.append(QML_TEXT_BEGIN).append(pAttrib->getName()).append(QML_TEXT_END);*/
+
+        strQML.append(QML_ROW_BEGIN);
+        strQML.append(QML_RECTANGLE_BEGIN);
+        DEBUG_MARK_QML;
+
+        strQML.append(QML_TEXT_BEGIN_2).append(pAttrib->getName()).append(QML_TEXT_END_2);
+
+        strQML.append(QML_RECTANGLE_END);
+
+        strQML.append(QML_COMBO_BOX_BEGIN);
+
         strQML.append(QML_LIST_MODEL_BEGIN);
+        DEBUG_MARK_QML;
+
         m_pEnumerationArray->getQML(strQML);
+        DEBUG_MARK_QML;
+
         strQML.append(QML_LIST_MODEL_END);
 
-        assert(this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ATTRIBUTE);
+        strQML.append(QML_COMBO_BOX_END);
+
+        strQML.append(QML_ROW_END);
+        DEBUG_MARK_QML;
     }
 }
 
