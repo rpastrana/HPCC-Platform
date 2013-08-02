@@ -221,22 +221,29 @@ void CAttribute::getQML(StringBuffer &strQML) const
     }
     else
     {
-        if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
-        {
-        }
-
         if (this->m_pSimpleTypeArray->length() == 0)
         {
-            strQML.append(QML_ROW_BEGIN).append(QML_RECTANGLE_BEGIN);
+            strQML.append(QML_ROW_BEGIN).append(QML_RECTANGLE_LIGHT_STEEEL_BLUE_BEGIN);
             DEBUG_MARK_QML;
 
             strQML.append(QML_TEXT_BEGIN_2).append(this->getTitle()).append(QML_TEXT_END_2);
             DEBUG_MARK_QML;
 
-            strQML.append(QML_RECTANGLE_END);
+            strQML.append(QML_RECTANGLE_LIGHT_STEEEL_BLUE_END);
             DEBUG_MARK_QML;
 
-            strQML.append(QML_TEXT_FIELD_BEGIN).append(QML_TEXT_FIELD_END);
+            strQML.append(QML_TEXT_FIELD_BEGIN);
+
+            strQML.append(QML_TEXT_FIELD_PLACE_HOLDER_TEXT_BEGIN);
+            strQML.append(this->getDefault());
+            strQML.append(QML_TEXT_FIELD_PLACE_HOLDER_TEXT_END);
+
+            if (this->getAnnotation()->getAppInfo() != NULL) // check for tooltip
+            {
+                CQMLMarkupHelper::getToolTipQML(strQML, this->getAnnotation()->getAppInfo()->getToolTip());
+            }
+
+            strQML.append(QML_TEXT_FIELD_END);
             DEBUG_MARK_QML;
 
             strQML.append(QML_ROW_END);
