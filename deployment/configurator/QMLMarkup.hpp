@@ -215,88 +215,82 @@ static const char* QML_GRID_LAYOUT_BEGIN("\
 static const char* QML_GRID_LAYOUT_END("\
           }\n");
 
-
 static const char* QML_TOOLTIP_TEXT_BEGIN("\
 \n\
-              Rectangle {\n\
-                  color: \"lightblue\"\n\
-                  x: parent.x-275\n\
-                  y: parent.y-50\n\
-                  width: 250\n\
-                  height: 50\n\
-                  visible: false\n\
-                  radius: 5\n\
-                  smooth: true\n\
-                  id: ");
+        Rectangle {\n\
+          color: \"lightblue\"\n\
+          x: parent.x-275\n\
+          y: parent.y-50\n\
+          width: 250\n\
+          height: 50\n\
+          visible: false\n\
+          radius: 5\n\
+          smooth: true\n\
+          id: ");
 
 static const char* QML_TOOLTIP_TEXT_PART_1("\n\
-          }\n\
+        \n\
           Text {\n\
-              verticalAlignment: Text.AlignVCenter\n\
-              horizontalAlignment: Text.AlignHCenter\n\
-              visible: true\n\
-              width: 250\n\
-              height: 50\n\
-              wrapMode: Text.WordWrap\n\
-              text: \"");
+            verticalAlignment: Text.AlignVCenter\n\
+            horizontalAlignment: Text.AlignHCenter\n\
+            visible: true\n\
+            width: 250\n\
+            height: 50\n\
+            wrapMode: Text.WordWrap\n\
+            font.pointSize: 8\n\
+            text: \"");
 
 static const char* QML_TOOLTIP_TEXT_PART_2("\"\n\
-          Timer {\n\
-              id: ");
+                          }\n\
+                       }\n");
 
-static const char* QML_TOOLTIP_TEXT_PART_3("\n\
-              interval: 2000\n\
-              repeat: false\n\
-              running: false\n\
-              onTriggered: {\n\
-                ");
+static const char* QML_TOOLTIP_TIMER_BEGIN("\
+     Timer {\n\
+         interval: 2000\n\
+         repeat: false\n\
+         running: false\n\
+         onTriggered: {\n");
 
-static const char* QML_TOOLTIP_TEXT_PART_4(".visible = true;\n\
-                ");
-
-
-static const char* QML_TOOLTIP_TEXT_PART_5(".enabled = true;\n\
-                ");
-
-static const char* QML_TOOLTIP_TEXT_PART_6(".start();\n\
+static const char* QML_TOOLTIP_TIMER_RECTANGLE_APPEND_TRUE(".visible = true;\n");
+static const char* QML_TOOLTIP_TIMER_RECTANGLE_APPEND_FALSE(".visible = false;\n");
+static const char* QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_TRUE(".enabled = true;\n");
+static const char* QML_TOOLTIP_TIMER_TIMER_APPEND_START(".start();\n\
                 }\n\
+         id: ");
+
+static const char* QML_TOOLTIP_TIMER_TIMER_APPEND_STOP(".stop();\n\
+             }\n\
+         id: ");
+
+static const char* QML_TOOLTIP_TIMER_END("\n\
+         }");
+
+
+static const char* QML_MOUSE_AREA_BEGIN("\n\
+        MouseArea {\n\
+            height: 25\n\
+            width: 250\n\
+            visible: true\n\
+            hoverEnabled: true;\n\
+            id: ");
+
+static const char* QML_MOUSE_AREA_ID_APPEND("\n\
+            onEntered: {\n\
+            enabled = false;\n");
+
+static const char* QML_MOUSE_AREA_TIMER_APPEND(".start();\n\
             }\n\
-    Timer {\n\
-    id:");
+            onExited:  {\n");
 
-static const char* QML_TOOLTIP_TEXT_PART_7("\n\
-          interval: 2000\n\
-          repeat: false\n\
-          running: false\n\
-          onTriggered: {\n\
-            ");
+static const char* QML_MOUSE_AREA_RECTANGLE_APPEND(".visible = false\n\
+        }\n");
 
-//static const char* QML_TOOLTIP_TEXT_PART_8(".enabled = true;\n");
-//static const char* QML_TOOLTIP_TEXT_PART_9(".visible = false;\n\
-//static const char* QML_TOOLTIP_TEXT_PART_8(QML_TOOLTIP_TEXT_PART_5);
-static const char* QML_TOOLTIP_TEXT_PART_8(".enabled = true;\n\
-            ");
-static const char* QML_TOOLTIP_TEXT_PART_9(QML_TOOLTIP_TEXT_PART_4);
+static const char* QML_MOUSE_AREA_END("\
+        }\n");
 
-static const char* QML_TOOLTIP_TEXT_PART_10(".stop();\n\
-          }\n\
-\n\
-          MouseArea {\n\
-              id: ");
+static const char* QML_STYLE_IDENT("\t\t\t");
 
-static const char* QML_TOOLTIP_TEXT_PART_11("\n\
-              height: 25\n\
-              width: 250\n\
-              visible: true\n\
-              hoverEnabled: true;\n\
-              onEntered: {\n\
-                  enabled = false;\n\
-                  mytimer1.start();\n\
-              }\n\
-              onExited:  {\n");
-
-static const char* QML_TOOLTIP_TEXT_PART_12(".visible = false;\n\
-            }\n");
+static const char* QML_STYLE_NEW_LINE("\n");
 
 static const char* QML_TOOLTIP_TEXT_END("\
     }\n");
@@ -309,6 +303,12 @@ public:
     static void getComboBoxListElement(const char* pLabel, StringBuffer &strID, const char* pDefault = "");
 
     static void getToolTipQML(StringBuffer &strQML, const char *pToolTip);
+
+    static void getToolTipRectangle(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID);
+
+    static void getToolTipTimer(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID);
+
+    static void getToolMouseArea(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID);
 
     static unsigned getRandomID(StringBuffer *pID = 0);
 

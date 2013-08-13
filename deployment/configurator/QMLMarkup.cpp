@@ -10,7 +10,6 @@ void CQMLMarkupHelper::getTabQML(StringBuffer &strJS, const char *pName)
     strJS.append(QML_TAB_BEGIN).append(QML_TAB_TITLE_BEGIN).append(pName).append(QML_TAB_TITLE_END);
 }
 
-
 void CQMLMarkupHelper::getComboBoxListElement(const char* pLabel, StringBuffer &strID, const char* pDefault)
 {
     static StringBuffer strBuf;
@@ -20,7 +19,6 @@ void CQMLMarkupHelper::getComboBoxListElement(const char* pLabel, StringBuffer &
 
 void CQMLMarkupHelper::getToolTipQML(StringBuffer &strQML, const char *pToolTip)
 {
-    return;
     assert(pToolTip != NULL);
 
     StringBuffer strTimer1("timer1");
@@ -36,12 +34,27 @@ void CQMLMarkupHelper::getToolTipQML(StringBuffer &strQML, const char *pToolTip)
     CQMLMarkupHelper::getRandomID(&strMouseArea);
     CQMLMarkupHelper::getRandomID(&strRectangle);
 
-    strQML.append(QML_TOOLTIP_TEXT_BEGIN).append(strRectangle).append(QML_TOOLTIP_TEXT_PART_1).append(strToolTip).append(QML_TOOLTIP_TEXT_PART_2);
-    strQML.append(strTimer1).append(QML_TOOLTIP_TEXT_PART_3).append(strRectangle).append(QML_TOOLTIP_TEXT_PART_4).append(strMouseArea).append(QML_TOOLTIP_TEXT_PART_5).append(strTimer2).append(QML_TOOLTIP_TEXT_PART_6).append("\t").append(strTimer2);
-    strQML.append(QML_TOOLTIP_TEXT_PART_7).append(strMouseArea).append(QML_TOOLTIP_TEXT_PART_8).append("\t\t\t").append(strRectangle).append(QML_TOOLTIP_TEXT_PART_9).append("\t\t\t").append(strTimer1).append(QML_TOOLTIP_TEXT_PART_10).append(strMouseArea).append(QML_TOOLTIP_TEXT_PART_11).append(strRectangle).append(QML_TOOLTIP_TEXT_PART_12);
-    strQML.append(QML_TOOLTIP_TEXT_END);
+    CQMLMarkupHelper::getToolTipRectangle(strQML, strToolTip.str(), strRectangle.str());
+    CQMLMarkupHelper::getToolTipTimer(strQML, strToolTip.str(), strRectangle.str(), strTimer1.str(), strTimer2.str(), strMouseArea.str());
+    CQMLMarkupHelper::getToolMouseArea(strQML, strToolTip.str(), strRectangle.str(), strTimer1.str(), strTimer2.str(), strMouseArea.str());
 }
 
+void CQMLMarkupHelper::getToolTipTimer(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID)
+{
+    strQML.append(QML_TOOLTIP_TIMER_BEGIN).append(QML_STYLE_IDENT).append(pRectangleID).append(QML_TOOLTIP_TIMER_RECTANGLE_APPEND_TRUE).append(QML_STYLE_IDENT).append(pMouseAreaID).append(QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_TRUE).append(QML_STYLE_IDENT).append(pTimerID_2).append(QML_TOOLTIP_TIMER_TIMER_APPEND_START).append(pTimerID_1).append(QML_TOOLTIP_TIMER_END);
+
+    strQML.append(QML_STYLE_NEW_LINE).append(QML_TOOLTIP_TIMER_BEGIN).append(QML_STYLE_IDENT).append(pRectangleID).append(QML_TOOLTIP_TIMER_RECTANGLE_APPEND_FALSE).append(QML_STYLE_IDENT).append(pMouseAreaID).append(QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_TRUE).append(QML_STYLE_IDENT).append(pTimerID_1).append(QML_TOOLTIP_TIMER_TIMER_APPEND_STOP).append(pTimerID_2).append(QML_TOOLTIP_TIMER_END);
+}
+
+void CQMLMarkupHelper::getToolTipRectangle(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID)
+{
+    strQML.append(QML_TOOLTIP_TEXT_BEGIN).append(pRectangleID).append(QML_TOOLTIP_TEXT_PART_1).append(pToolTip).append(QML_TOOLTIP_TEXT_PART_2);
+}
+
+void CQMLMarkupHelper::getToolMouseArea(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID)
+{
+    strQML.append(QML_MOUSE_AREA_BEGIN).append(pMouseAreaID).append(QML_MOUSE_AREA_ID_APPEND).append(QML_STYLE_IDENT).append(pTimerID_1).append(QML_MOUSE_AREA_TIMER_APPEND).append(QML_STYLE_IDENT).append(pRectangleID).append(QML_MOUSE_AREA_RECTANGLE_APPEND).append(QML_MOUSE_AREA_END);
+}
 
 unsigned CQMLMarkupHelper::getRandomID(StringBuffer *pID)
 {
