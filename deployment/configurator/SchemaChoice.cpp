@@ -2,6 +2,7 @@
 #include "XMLTags.h"
 #include "SchemaChoice.hpp"
 #include "SchemaElement.hpp"
+#include "DocumentationMarkup.hpp"
 
 
 CChoice* CChoice::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, const char* xpath)

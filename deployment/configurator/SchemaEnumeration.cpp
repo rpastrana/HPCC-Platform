@@ -50,7 +50,8 @@ void CEnumeration::dump(std::ostream &cout, unsigned int offset) const
 
 void CEnumeration::getDocumentation(StringBuffer &strDoc) const
 {
-    strDoc.appendf("<%s>* %s </%s>\n", DM_PARA, this->getValue(), DM_PARA);
+    strDoc.appendf("* %s %s\n", this->getValue(), DM_LINE_BREAK);
+
 }
 
 void CEnumeration::getDojoJS(StringBuffer &strJS) const

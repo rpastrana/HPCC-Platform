@@ -6,6 +6,7 @@
 #include "DojoJSMarkup.hpp"
 #include "ConfigSchemaHelper.hpp"
 #include "QMLMarkup.hpp"
+#include "DocumentationMarkup.hpp"
 
 void CRestriction::dump(std::ostream& cout, unsigned int offset) const
 {
@@ -31,7 +32,13 @@ void CRestriction::getDocumentation(StringBuffer &strDoc) const
 {
     if (m_pEnumerationArray != NULL)
     {
+        strDoc.appendf("<%s>",DM_PARA);
+        DEBUG_MARK_STRDOC
+
         m_pEnumerationArray->getDocumentation(strDoc);
+
+        strDoc.appendf("</%s>",DM_PARA);
+        DEBUG_MARK_STRDOC
     }
 }
 

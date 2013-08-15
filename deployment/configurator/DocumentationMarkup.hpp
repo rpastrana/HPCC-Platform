@@ -11,6 +11,7 @@ static const char* DM_ID = "id";
 static const char* DM_PARA = "para";
 static const char* DM_PARA_BEGIN = "<para><emphasis role=\"bold\">";
 static const char* DM_PARA_END = "</emphasis></para>\n";
+static const char* DM_LINE_BREAK = "<?linebreak?>";
 static const char* DM_TITLE_BEGIN = DM_PARA_BEGIN;//"<para>";//"<title>";
 static const char* DM_TITLE_END = DM_PARA_END;//"</para>\n";//</title>\n";
 static const char* DM_TITLE_LITERAL = "title";
