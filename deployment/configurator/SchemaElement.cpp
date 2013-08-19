@@ -439,6 +439,12 @@ void CElement::getQML(StringBuffer &strQML) const
         {
             m_pComplexTypeArray->getQML(strQML);
         }
+
+        if (this->getConstAncestorNode(2)->getNodeType() == XSD_SEQUENCE)
+        {
+            CQMLMarkupHelper::getTableViewColumn(strQML, this->getName());
+            DEBUG_MARK_QML;
+        }
     }
     else if (m_pComplexTypeArray != NULL)
     {

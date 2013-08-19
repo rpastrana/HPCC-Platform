@@ -78,12 +78,9 @@ static const char* QML_TAB_BEGIN("\
 
 static const char* QML_TAB_TITLE_BEGIN("\ttitle: \"");
 static const char* QML_TAB_TITLE_END("\"\n");
-
 static const char* QML_TAB_END("\t}\n");
 
-
 static const char* QML_TAB_TEXT_STYLE("\
-          // Style delegates:\n\
 \n\
           property Component textfieldStyle: TextFieldStyle {\n\
               background: Rectangle {\n\
@@ -181,6 +178,10 @@ static const char* QML_TEXT_FIELD_BEGIN("\
         implicitWidth: 250\n\
         text:\"\"");
 
+static const char* QML_TEXT_FIELD_ID_BEGIN("\
+        id: ");
+static const char* QML_TEXT_FIELD_ID_END("\n");
+
 static const char* QML_TEXT_FIELD_END("\n\
           }\n");
 
@@ -202,8 +203,6 @@ static const char* QML_LIST_ELEMENT_BEGIN("\
                 ListElement { text: \"");
 
 static const char* QML_LIST_ELEMENT_END("\" }\n");
-
-
 
 static const char* QML_GRID_LAYOUT_BEGIN("\
           GridLayout {\n\
@@ -244,56 +243,116 @@ static const char* QML_TOOLTIP_TEXT_PART_2("\"\n\
                           }\n\
                        }\n");
 
-static const char* QML_TOOLTIP_TIMER_BEGIN("\
+static const char* QML_TOOLTIP_TIMER_BEGIN("\n\
      Timer {\n\
          interval: 2000\n\
          repeat: false\n\
-         running: false\n\
+         running: false\n");
+
+static const char* QML_TOOLTIP_TIMER_END("\n\
+     }");
+
+static const char* QML_TOOLTIP_TIMER_ON_TRIGGERED_BEGIN("\n\
          onTriggered: {\n");
+
+static const char* QML_TOOLTIP_TIMER_ON_TRIGGERED_END("\
+          console.log(\"timer triggered\");\n\
+         }\n");
+
 
 static const char* QML_TOOLTIP_TIMER_RECTANGLE_APPEND_TRUE(".visible = true;\n");
 static const char* QML_TOOLTIP_TIMER_RECTANGLE_APPEND_FALSE(".visible = false;\n");
 static const char* QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_TRUE(".enabled = true;\n");
-static const char* QML_TOOLTIP_TIMER_TIMER_APPEND_START(".start();\n\
-                }\n\
-         id: ");
+static const char* QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_FALSE(".enabled = false;\n");
+static const char* QML_TOOLTIP_TIMER_TIMER_APPEND_START(".start();\n");
+static const char* QML_TOOLTIP_TIMER_ID("\
+        id: ");
 
-static const char* QML_TOOLTIP_TIMER_TIMER_APPEND_STOP(".stop();\n\
-             }\n\
-         id: ");
-
-static const char* QML_TOOLTIP_TIMER_END("\n\
-         }");
-
+static const char* QML_TOOLTIP_TIMER_STOP(".stop();\n");
+static const char* QML_TOOLTIP_TIMER_RESTART(".restart();\n");
 
 static const char* QML_MOUSE_AREA_BEGIN("\n\
-        MouseArea {\n\
-            height: 25\n\
-            width: 250\n\
-            visible: true\n\
-            hoverEnabled: true;\n\
-            id: ");
+     MouseArea {\n\
+        height: 25\n\
+        width: 250\n\
+        visible: true\n\
+        hoverEnabled: true;\n\
+        id: ");
 
-static const char* QML_MOUSE_AREA_ID_APPEND("\n\
+static const char* QML_MOUSE_AREA_END("\
+    }\n");
+
+static const char* QML_MOUSE_AREA_ID_APPEND("\n");
+
+static const char* QML_MOUSE_AREA_ON_ENTERED_BEGIN("\
             onEntered: {\n\
-            enabled = false;\n");
+            console.log(\"entered mouse area\");\n");
+
+static const char* QML_MOUSE_AREA_ON_ENTERED_END("\
+             }\n");
+
+static const char* QML_MOUSE_AREA_ON_EXITED_BEGIN("\
+            onExited: {\n\
+            console.log(\"exited mouse area\");\n");
+
+static const char* QML_MOUSE_AREA_ON_EXITED_END("\
+            }\n");
+
 
 static const char* QML_MOUSE_AREA_TIMER_APPEND(".start();\n\
             }\n\
-            onExited:  {\n");
+            onExited:  {\n\
+            console.log(\"exited mouse area\");\n");
 
-static const char* QML_MOUSE_AREA_RECTANGLE_APPEND(".visible = false\n\
+static const char* QML_MOUSE_AREA_RECTANGLE_APPEND(".visible = false;\n\
         }\n");
 
-static const char* QML_MOUSE_AREA_END("\
-        }\n");
+static const char* QML_MOUSE_AREA_RECTANGLE_VISIBLE_FALSE(".visible = false;\n");
 
-static const char* QML_STYLE_IDENT("\t\t\t");
+static const char* QML_MOUSE_AREA_ON_POSITION_CHANGED_BEGIN("\
+            onPositionChanged: {\n");
+
+static const char* QML_MOUSE_AREA_ON_POSITION_CHANGED_END("\n\
+            console.log(\"onPositionChanged\");\n\
+            }");
+
+
+static const char* QML_MOUSE_AREA_ON_PRESSED_BEGIN("\n\
+            onPressed: {\n");
+
+static const char* QML_MOUSE_AREA_ON_PRESSED_END("\
+                console.log(\"mouse area pressed\");\n\
+            }\n");
+
+
+static const char* QML_MOUSE_AREA_ENABLE("enable = true\n");
+
+static const char* QML_TEXT_AREA_FORCE_FOCUS(".forceActiveFocus()\n");
+
+static const char* QML_STYLE_INDENT("\t\t\t");
 
 static const char* QML_STYLE_NEW_LINE("\n");
 
 static const char* QML_TOOLTIP_TEXT_END("\
     }\n");
+
+static const char* QML_TABLE_VIEW_BEGIN("\
+    TableView {\n");
+
+static const char* QML_TABLE_VIEW_END("\n\
+    }\n");
+
+static const char* QML_TABLE_VIEW_COLUMN_BEGIN("\
+        TableViewColumn {\n\
+            width: 120\n");
+
+static const char* QML_TABLE_VIEW_COLUMN_END("\
+     }\n");
+
+static const char* QML_TABLE_VIEW_COLUMN_TITLE_BEGIN("\
+            title: \"");
+
+static const char* QML_TABLE_VIEW_COLUMN_TITLE_END("\"\n");
 
 class CQMLMarkupHelper
 {
@@ -308,7 +367,9 @@ public:
 
     static void getToolTipTimer(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID);
 
-    static void getToolMouseArea(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID);
+    static void getToolMouseArea(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID, const char* pTimerID_1, const char* pTimerID_2, const char *pMouseAreaID, const char* pTextAreaID);
+
+    static void getTableViewColumn(StringBuffer &strQML, const char* colTitle);
 
     static unsigned getRandomID(StringBuffer *pID = 0);
 

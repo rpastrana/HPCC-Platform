@@ -90,7 +90,7 @@ void CEnumerationArray::dump(std::ostream &cout, unsigned int offset) const
 
 void CEnumerationArray::getDocumentation(StringBuffer &strDoc) const
 {
-    strDoc.append("\nChoices are: \n");
+    strDoc.append("\nChoices are: \n").append(DM_LINE_BREAK);
     QUICK_DOC_ARRAY(strDoc);
 }
 

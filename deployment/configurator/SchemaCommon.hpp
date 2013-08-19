@@ -46,8 +46,8 @@
 #define DEBUG_MARK_STRDOC
 #define DEBUG_MARK_COMMENT(X) X.append("//  ").append(__FILE__).append(":").append(__LINE__).append("\n");
 #define DEBUG_MARK_STRJS DEBUG_MARK_COMMENT(strJS)
-//#define DEBUG_MARK_QML DEBUG_MARK_COMMENT(strQML)
-#define DEBUG_MARK_QML
+#define DEBUG_MARK_QML DEBUG_MARK_COMMENT(strQML)
+//#define DEBUG_MARK_QML
 //#define DEBUG_MARK_STRJS
 
 enum NODE_TYPES

@@ -244,7 +244,6 @@ void CAttribute::getQML(StringBuffer &strQML) const
             }
 
             strQML.append(QML_TEXT_FIELD_END);
-            DEBUG_MARK_QML;
 
             strQML.append(QML_ROW_END);
             DEBUG_MARK_QML;
@@ -581,7 +580,6 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
 
         strQML.append(QML_GRID_LAYOUT_END);
         DEBUG_MARK_QML;
-
 
         strQML.append(QML_TAB_END);
         DEBUG_MARK_QML;
