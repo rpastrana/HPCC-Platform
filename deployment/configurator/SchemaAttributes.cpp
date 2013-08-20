@@ -570,18 +570,7 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
         assert(pName != NULL);
         assert(pName[0] != 0);
 
-        CQMLMarkupHelper::getTabQML(strQML, pName);
-        DEBUG_MARK_QML;
-
-        strQML.append(QML_GRID_LAYOUT_BEGIN);
-        DEBUG_MARK_QML;
-
         QUICK_QML_ARRAY(strQML);
-
-        strQML.append(QML_GRID_LAYOUT_END);
-        DEBUG_MARK_QML;
-
-        strQML.append(QML_TAB_END);
         DEBUG_MARK_QML;
     }
     else

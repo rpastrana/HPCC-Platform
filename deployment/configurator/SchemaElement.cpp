@@ -448,12 +448,25 @@ void CElement::getQML(StringBuffer &strQML) const
     }
     else if (m_pComplexTypeArray != NULL)
     {
-        if (m_pAnnotation!= NULL)
+        if (m_pAnnotation != NULL)
         {
             m_pAnnotation->getQML(strQML);
         }
 
+        CQMLMarkupHelper::getTabQML(strQML, this->getName());
+        DEBUG_MARK_QML;
+
+        strQML.append(QML_GRID_LAYOUT_BEGIN);
+        DEBUG_MARK_QML;
+
         m_pComplexTypeArray->getQML(strQML);
+
+        strQML.append(QML_GRID_LAYOUT_END);
+        DEBUG_MARK_QML;
+
+
+        strQML.append(QML_TAB_END);
+        DEBUG_MARK_QML;
 
     }
     else if (m_pComplexTypeArray == NULL)

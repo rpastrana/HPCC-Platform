@@ -74,11 +74,13 @@ static const char* QML_TAB_VIEW_STYLE("\
       }\n");
 
 static const char* QML_TAB_BEGIN("\
-        Tab {\n");
+    Tab {\n");
 
-static const char* QML_TAB_TITLE_BEGIN("\ttitle: \"");
+static const char* QML_TAB_TITLE_BEGIN("\
+         title: \"");
 static const char* QML_TAB_TITLE_END("\"\n");
-static const char* QML_TAB_END("\t}\n");
+static const char* QML_TAB_END("\
+    }\n");
 
 static const char* QML_TAB_TEXT_STYLE("\
 \n\
