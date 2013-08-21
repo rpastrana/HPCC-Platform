@@ -213,6 +213,13 @@ static const char* QML_GRID_LAYOUT_BEGIN("\
               columns: 3\n\
               flow: GridLayout.LeftToRight\n");
 
+static const char* QML_GRID_LAYOUT_BEGIN_1("\
+         GridLayout {\n\
+             rowSpacing: 1\n\
+             columnSpacing: 1\n\
+             columns: 1\n\
+             flow: GridLayout.LeftToRight\n");
+
 static const char* QML_GRID_LAYOUT_END("\
           }\n");
 
@@ -347,7 +354,7 @@ static const char* QML_TABLE_VIEW_END("\n\
 
 static const char* QML_TABLE_VIEW_COLUMN_BEGIN("\
         TableViewColumn {\n\
-            /*width: 200*/\n");
+            width: 200\n");
 
 static const char* QML_TABLE_VIEW_COLUMN_END("\
         }\n");

@@ -456,25 +456,25 @@ void CElement::getQML(StringBuffer &strQML) const
         CQMLMarkupHelper::getTabQML(strQML, this->getName());
         DEBUG_MARK_QML;
 
-        strQML.append(QML_GRID_LAYOUT_BEGIN);
+        strQML.append(QML_GRID_LAYOUT_BEGIN_1);
         DEBUG_MARK_QML;
 
-        strQML.append(QML_ROW_BEGIN);
-        DEBUG_MARK_QML;
+        //strQML.append(QML_ROW_BEGIN);
+        //DEBUG_MARK_QML;
 
-        strQML.append(QML_TABLE_VIEW_BEGIN);
-        DEBUG_MARK_QML;
+        //strQML.append(QML_TABLE_VIEW_BEGIN);
+        //DEBUG_MARK_QML;
 
         m_pComplexTypeArray->getQML(strQML);
 
         strQML.append(QML_GRID_LAYOUT_END);
         DEBUG_MARK_QML;
 
-        strQML.append(QML_TABLE_VIEW_END);
-        DEBUG_MARK_QML;
+        //strQML.append(QML_TABLE_VIEW_END);
+        //DEBUG_MARK_QML;
 
-        strQML.append(QML_ROW_END);
-        DEBUG_MARK_QML;
+        //strQML.append(QML_ROW_END);
+        //DEBUG_MARK_QML;
 
         strQML.append(QML_TAB_END);
         DEBUG_MARK_QML;

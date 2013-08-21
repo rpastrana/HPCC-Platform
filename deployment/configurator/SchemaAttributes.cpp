@@ -208,8 +208,6 @@ void CAttribute::getQML(StringBuffer &strQML) const
         pViewType = pAppInfo->getViewType();
         pColumnIndex = (pAppInfo->getColIndex() != NULL && pAppInfo->getColIndex()[0] != 0) ? pAppInfo->getColIndex() : NULL;
         pXPath = (pAppInfo->getXPath() != NULL && pAppInfo->getXPath()[0] != 0) ? pAppInfo->getXPath() : NULL;
-
-       CQMLMarkupHelper::getTableViewColumn(strQML, this->getTitle());
     }
 
     if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
@@ -219,7 +217,8 @@ void CAttribute::getQML(StringBuffer &strQML) const
 
     if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0) || (pNextHighestElement != NULL && pNextHighestElement->getMaxOccurs() != NULL && pNextHighestElement->getMaxOccurs()[0] != 0))
     {
-
+        CQMLMarkupHelper::getTableViewColumn(strQML, this->getTitle());
+        DEBUG_MARK_QML;
     }
     else
     {
@@ -246,6 +245,7 @@ void CAttribute::getQML(StringBuffer &strQML) const
             }
 
             strQML.append(QML_TEXT_FIELD_END);
+            DEBUG_MARK_QML;
 
             strQML.append(QML_ROW_END);
             DEBUG_MARK_QML;
@@ -572,7 +572,19 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
         assert(pName != NULL);
         assert(pName[0] != 0);
 
+        strQML.append(QML_ROW_BEGIN);
+        DEBUG_MARK_QML;
+
+        strQML.append(QML_TABLE_VIEW_BEGIN);
+        DEBUG_MARK_QML;
+
         QUICK_QML_ARRAY(strQML);
+        DEBUG_MARK_QML;
+
+        strQML.append(QML_TABLE_VIEW_END);
+        DEBUG_MARK_QML;
+
+        strQML.append(QML_ROW_END);
         DEBUG_MARK_QML;
     }
     else
@@ -618,6 +630,9 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
         }
         else
         {
+            strQML.append(QML_ROW_BEGIN);
+            DEBUG_MARK_QML;
+
             strQML.append(QML_TABLE_VIEW_BEGIN);
             DEBUG_MARK_QML;
 
@@ -625,6 +640,10 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
 
             strQML.append(QML_TABLE_VIEW_END);
             DEBUG_MARK_QML;
+
+            strQML.append(QML_ROW_END);
+            DEBUG_MARK_QML;
+
         }
     }
 }
