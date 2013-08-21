@@ -70,11 +70,7 @@ void CSequence::getQML(StringBuffer &strQML) const
 {
     if (p_mElementArray != NULL)
     {
-        strQML.append(QML_TABLE_VIEW_BEGIN);
-        DEBUG_MARK_QML;
         p_mElementArray->getQML(strQML);
-        strQML.append(QML_TABLE_VIEW_END);
-        DEBUG_MARK_QML;
     }
 }
 

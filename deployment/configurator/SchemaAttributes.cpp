@@ -208,6 +208,8 @@ void CAttribute::getQML(StringBuffer &strQML) const
         pViewType = pAppInfo->getViewType();
         pColumnIndex = (pAppInfo->getColIndex() != NULL && pAppInfo->getColIndex()[0] != 0) ? pAppInfo->getColIndex() : NULL;
         pXPath = (pAppInfo->getXPath() != NULL && pAppInfo->getXPath()[0] != 0) ? pAppInfo->getXPath() : NULL;
+
+       CQMLMarkupHelper::getTableViewColumn(strQML, this->getName());
     }
 
     if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
@@ -615,7 +617,10 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
             strQML.append(QML_TAB_END);
             DEBUG_MARK_QML;
         }
-
+        else
+        {
+            DEBUG_MARK_QML;
+        }
     }
 }
 
