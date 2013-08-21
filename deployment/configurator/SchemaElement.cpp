@@ -442,8 +442,8 @@ void CElement::getQML(StringBuffer &strQML) const
 
         if (this->getConstAncestorNode(2)->getNodeType() == XSD_SEQUENCE)
         {
-            CQMLMarkupHelper::getTableViewColumn(strQML, this->getName());
-            DEBUG_MARK_QML;
+            //CQMLMarkupHelper::getTableViewColumn(strQML, this->getName());
+            //DEBUG_MARK_QML;
         }
     }
     else if (m_pComplexTypeArray != NULL)
@@ -459,6 +459,9 @@ void CElement::getQML(StringBuffer &strQML) const
         strQML.append(QML_GRID_LAYOUT_BEGIN);
         DEBUG_MARK_QML;
 
+        strQML.append(QML_ROW_BEGIN);
+        DEBUG_MARK_QML;
+
         strQML.append(QML_TABLE_VIEW_BEGIN);
         DEBUG_MARK_QML;
 
@@ -468,6 +471,9 @@ void CElement::getQML(StringBuffer &strQML) const
         DEBUG_MARK_QML;
 
         strQML.append(QML_TABLE_VIEW_END);
+        DEBUG_MARK_QML;
+
+        strQML.append(QML_ROW_END);
         DEBUG_MARK_QML;
 
         strQML.append(QML_TAB_END);

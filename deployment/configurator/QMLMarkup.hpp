@@ -115,7 +115,7 @@ static const char* QML_ROW_BEGIN("\
         Row {\n");
 
 static const char* QML_ROW_END("\n\
-          }\n");
+        }\n");
 
 static const char* QML_RECTANGLE_LIGHT_STEEEL_BLUE_BEGIN("\
          Rectangle {\n\
@@ -339,17 +339,18 @@ static const char* QML_TOOLTIP_TEXT_END("\
     }\n");
 
 static const char* QML_TABLE_VIEW_BEGIN("\
-    TableView {\n");
+    TableView {\n\
+        width: 1200\n");
 
 static const char* QML_TABLE_VIEW_END("\n\
     }\n");
 
 static const char* QML_TABLE_VIEW_COLUMN_BEGIN("\
         TableViewColumn {\n\
-            width: 120\n");
+            /*width: 200*/\n");
 
 static const char* QML_TABLE_VIEW_COLUMN_END("\
-     }\n");
+        }\n");
 
 static const char* QML_TABLE_VIEW_COLUMN_TITLE_BEGIN("\
             title: \"");

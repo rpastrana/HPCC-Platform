@@ -54,18 +54,10 @@ void CQMLMarkupHelper::getToolTipTimer(StringBuffer &strQML, const char *pToolTi
     strQML.append(QML_TOOLTIP_TIMER_BEGIN)\
             .append(QML_TOOLTIP_TIMER_ON_TRIGGERED_BEGIN)\
                 .append(QML_STYLE_INDENT).append(pRectangleID).append(QML_TOOLTIP_TIMER_RECTANGLE_APPEND_TRUE)\
-                //.append(QML_STYLE_INDENT).append(pMouseAreaID).append(QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_TRUE)
                 .append(QML_STYLE_INDENT).append(pTimerID_2).append(QML_TOOLTIP_TIMER_TIMER_APPEND_START)\
             .append(QML_TOOLTIP_TIMER_ON_TRIGGERED_END)\
             .append(QML_TOOLTIP_TIMER_ID).append(pTimerID_1)\
            .append(QML_TOOLTIP_TIMER_END);
-
-    /*strQML.append(QML_TOOLTIP_TIMER_BEGIN)\
-            .append(QML_TOOLTIP_TIMER_ON_TRIGGERED_BEGIN)\
-                //.append(QML_STYLE_INDENT).append(pMouseAreaID).append(QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_TRUE)
-            .append(QML_TOOLTIP_TIMER_ON_TRIGGERED_END)\
-            .append(QML_TOOLTIP_TIMER_ID).append(pTimerID_2)\
-           .append(QML_TOOLTIP_TIMER_END);*/
 }
 
 void CQMLMarkupHelper::getToolTipRectangle(StringBuffer &strQML, const char *pToolTip, const char *pRectangleID)
@@ -89,8 +81,6 @@ void CQMLMarkupHelper::getToolMouseArea(StringBuffer &strQML, const char *pToolT
                         .append(QML_STYLE_INDENT).append(pRectangleID).append(QML_MOUSE_AREA_RECTANGLE_VISIBLE_FALSE)\
                 .append(QML_MOUSE_AREA_ON_POSITION_CHANGED_END).append(QML_STYLE_INDENT)\
                 .append(QML_MOUSE_AREA_ON_PRESSED_BEGIN)\
-                        //.append(QML_STYLE_INDENT).append(pTimerID_2).append(QML_TOOLTIP_TIMER_STOP)
-                        //.append(QML_STYLE_INDENT).append(pMouseAreaID).append(QML_TOOLTIP_TIMER_MOUSE_AREA_APPEND_FALSE)
                         .append(QML_STYLE_INDENT).append(pTextAreaID).append(QML_TEXT_AREA_FORCE_FOCUS)\
                 .append(QML_MOUSE_AREA_ON_PRESSED_END)\
             .append(QML_MOUSE_AREA_END);
@@ -102,7 +92,6 @@ void CQMLMarkupHelper::getTableViewColumn(StringBuffer &strQML, const char* colT
 
     if (colTitle != NULL)
     {
-        DEBUG_MARK_QML;
         strQML.append(QML_TABLE_VIEW_COLUMN_BEGIN).append(QML_TABLE_VIEW_COLUMN_TITLE_BEGIN).append(colTitle).append(QML_TABLE_VIEW_COLUMN_TITLE_END).append(QML_TABLE_VIEW_COLUMN_END);
         DEBUG_MARK_QML;
     }
