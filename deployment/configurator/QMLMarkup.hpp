@@ -2,6 +2,7 @@
 #define _QMLMARKUP_HPP_
 
 class StringBuffer;
+class CAttribute;
 
 static const char* QML_START("\
  import QtQuick 2.1\n\
@@ -382,6 +383,8 @@ public:
     static void getTableViewColumn(StringBuffer &strQML, const char* colTitle);
 
     static unsigned getRandomID(StringBuffer *pID = 0);
+
+    static bool isTableRequired(const CAttribute *pAttrib);
 
 };
 

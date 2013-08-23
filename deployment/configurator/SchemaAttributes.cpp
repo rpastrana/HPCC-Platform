@@ -196,18 +196,12 @@ void CAttribute::getQML(StringBuffer &strQML) const
     assert(this->getConstParentNode() != NULL);
 
     const char* pViewType = NULL;
-    const char* pColumnIndex = NULL;
-    const char* pXPath = NULL;
-    const CXSDNodeBase *pGrandParentNode =this->getConstAncestorNode(2);
-    const CElement *pNextHighestElement = dynamic_cast<const CElement*>(this->getParentNodeByType(XSD_ELEMENT));
 
     if (m_pAnnotation != NULL && m_pAnnotation->getAppInfo() != NULL)
     {
         const CAppInfo *pAppInfo = NULL;
         pAppInfo = m_pAnnotation->getAppInfo();
         pViewType = pAppInfo->getViewType();
-        pColumnIndex = (pAppInfo->getColIndex() != NULL && pAppInfo->getColIndex()[0] != 0) ? pAppInfo->getColIndex() : NULL;
-        pXPath = (pAppInfo->getXPath() != NULL && pAppInfo->getXPath()[0] != 0) ? pAppInfo->getXPath() : NULL;
     }
 
     if (pViewType != NULL && stricmp("hidden", pViewType) == 0)
@@ -215,7 +209,7 @@ void CAttribute::getQML(StringBuffer &strQML) const
         return; // HIDDEN
     }
 
-    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0) || (pNextHighestElement != NULL && pNextHighestElement->getMaxOccurs() != NULL && pNextHighestElement->getMaxOccurs()[0] != 0))
+    if (CQMLMarkupHelper::isTableRequired(this) == true)
     {
         CQMLMarkupHelper::getTableViewColumn(strQML, this->getTitle());
         DEBUG_MARK_QML;
@@ -563,7 +557,7 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
     assert(this->getConstAncestorNode(2) != NULL);
 
 
-    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ELEMENT && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(3))) == true)
+    if (this->getConstParentNode()->getNodeType() == XSD_COMPLEX_TYPE && this->getConstAncestorNode(3) != NULL && this->getConstAncestorNode(3)->getNodeType() == XSD_ELEMENT && CDojoHelper::IsElementATab(dynamic_cast<const CElement*>(this->getConstAncestorNode(3))) == true  && *(dynamic_cast<const CElement*>(this->getConstAncestorNode(3)))->getMaxOccurs() != 0)
     {
         const char *pName = NULL;
 
@@ -628,7 +622,7 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
             strQML.append(QML_TAB_END);
             DEBUG_MARK_QML;
         }
-        else
+        else if (CQMLMarkupHelper::isTableRequired(&(this->item(0))) == true)
         {
             strQML.append(QML_ROW_BEGIN);
             DEBUG_MARK_QML;
@@ -643,7 +637,10 @@ void CAttributeArray::getQML(StringBuffer &strQML) const
 
             strQML.append(QML_ROW_END);
             DEBUG_MARK_QML;
-
+        }
+        else
+        {
+            QUICK_QML_ARRAY(strQML);
         }
     }
 }

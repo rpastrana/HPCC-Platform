@@ -3,6 +3,10 @@
 #include "jstring.hpp"
 #include "jutil.hpp"
 #include "jdebug.hpp"
+#include "SchemaAttributes.hpp"
+#include "SchemaElement.hpp"
+#include "SchemaAppInfo.hpp"
+#include "SchemaAnnotation.hpp"
 
 void CQMLMarkupHelper::getTabQML(StringBuffer &strJS, const char *pName)
 {
@@ -111,4 +115,39 @@ unsigned CQMLMarkupHelper::getRandomID(StringBuffer *pID)
     }
 
     return retVal;
+}
+
+bool CQMLMarkupHelper::isTableRequired(const CAttribute *pAttrib)
+{
+    assert(pAttrib != NULL);
+
+    if (pAttrib == NULL)
+    {
+        return false;
+    }
+
+    const char* pViewType = NULL;
+    const char* pColumnIndex = NULL;
+    const char* pXPath = NULL;
+    const CXSDNodeBase *pGrandParentNode = pAttrib->getConstAncestorNode(2);
+    const CElement *pNextHighestElement = dynamic_cast<const CElement*>(pAttrib->getParentNodeByType(XSD_ELEMENT));
+
+    if (pAttrib->getAnnotation() != NULL && pAttrib->getAnnotation()->getAppInfo() != NULL)
+    {
+        const CAppInfo *pAppInfo = NULL;
+        pAppInfo = pAttrib->getAnnotation()->getAppInfo();
+        pViewType = pAppInfo->getViewType();
+        pColumnIndex = (pAppInfo->getColIndex() != NULL && pAppInfo->getColIndex()[0] != 0) ? pAppInfo->getColIndex() : NULL;
+        pXPath = (pAppInfo->getXPath() != NULL && pAppInfo->getXPath()[0] != 0) ? pAppInfo->getXPath() : NULL;
+    }
+
+
+    if ((pColumnIndex != NULL && pColumnIndex[0] != 0) || (pXPath != NULL && pXPath[0] != 0) || (pGrandParentNode != NULL && pGrandParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP && pGrandParentNode->getNodeType() != XSD_COMPLEX_TYPE && pGrandParentNode->getNodeType() != XSD_ELEMENT) || (pGrandParentNode->getNodeType() == XSD_ELEMENT && stricmp( (dynamic_cast<const CElement*>(pGrandParentNode))->getMaxOccurs(), "unbounded") == 0) || (pNextHighestElement != NULL && pNextHighestElement->getMaxOccurs() != NULL && pNextHighestElement->getMaxOccurs()[0] != 0))
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
