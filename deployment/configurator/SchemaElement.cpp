@@ -487,23 +487,33 @@ void CElement::getQML(StringBuffer &strQML) const
             m_pAnnotation->getQML(strQML);
         }
 
-        if (CDojoHelper::IsElementATab(this) == true)
-        {
-            CQMLMarkupHelper::getTabQML(strQML, this->getName());
-            DEBUG_MARK_QML;
-
-            strQML.append(QML_TAB_END);
-            DEBUG_MARK_QML;
-        }
 
         if (m_pAnnotation != NULL && m_pAnnotation->getDocumentation() != NULL)
         {
             m_pAnnotation->getQML(strQML);
         }
 
+        if (CDojoHelper::IsElementATab(this) == true)
+        {
+            CQMLMarkupHelper::getTabQML(strQML, this->getName());
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_GRID_LAYOUT_BEGIN);
+            DEBUG_MARK_QML;
+        }
+
         if (m_pAttributeArray != NULL)
         {
             m_pAttributeArray->getQML(strQML);
+        }
+
+        if (CDojoHelper::IsElementATab(this) == true)
+        {
+            strQML.append(QML_GRID_LAYOUT_END);
+            DEBUG_MARK_QML;
+
+            strQML.append(QML_TAB_END);
+            DEBUG_MARK_QML;
         }
     }
 }
