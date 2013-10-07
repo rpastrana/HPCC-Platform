@@ -147,7 +147,6 @@ protected:
     bool                    m_includeSoapTest;
     StringBuffer            m_challenge_realm;
     StringAttr              m_defaultSvcVersion;
-    bool                    m_roxieOption;
 
 public:
     EspHttpBinding(IPropertyTree* cfg, const char *bindname=NULL, const char *procname=NULL);
