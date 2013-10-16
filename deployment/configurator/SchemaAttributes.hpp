@@ -32,6 +32,7 @@ public:
     GETTERSETTER(Type)
     GETTERSETTER(Default)
     GETTERSETTER(Use)
+    GETTERSETTER(InstanceValue)
 
     const CAnnotation* getAnnotation() const
     {
@@ -49,6 +50,8 @@ public:
     virtual void getDojoJS(StringBuffer &strJS) const;
 
     virtual void getQML(StringBuffer &strQML) const;
+
+    //virtual void loadXML();
 
     virtual void traverseAndProcessNodes() const;
 
@@ -108,6 +111,8 @@ public:
     virtual void getDojoJS(StringBuffer &strJS) const;
 
     virtual void getQML(StringBuffer &strQML) const;
+
+    //virtual void loadXML();
 
     virtual void traverseAndProcessNodes() const;
 
@@ -171,6 +176,8 @@ public:
     virtual void getDojoJS(StringBuffer &strJS) const;
 
     virtual void getQML(StringBuffer &strQML) const;
+
+    //virtual void loadXML();
 
     virtual void traverseAndProcessNodes() const;
 

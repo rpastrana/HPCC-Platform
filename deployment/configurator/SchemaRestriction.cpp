@@ -129,6 +129,8 @@ CRestriction* CRestriction::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
 
     CRestriction* pRestriction = new CRestriction(pParentNode, pID, pBase);
 
+    pRestriction->setXSDXPath(xpath);
+
     StringBuffer strXPathExt(xpath);
 
     strXPathExt.append("/").append(XSD_TAG_ENUMERATION);

@@ -23,6 +23,8 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     CSchema* pSchema = new CSchema(pSchemaLocation);
 
+    pSchema->setXSDXPath(xpath);
+
     IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
 
     if (pTree == NULL)

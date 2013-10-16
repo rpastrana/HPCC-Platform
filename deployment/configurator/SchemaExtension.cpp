@@ -82,6 +82,7 @@ CExtension* CExtension::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRo
         if (pBase != NULL)
         {
             pExtension = new CExtension(pParentNode);
+            pExtension->setXSDXPath(xpath);
             pExtension->setBase(pBase);
 
             /*CXSDNodeBase *pBaseNode = pExtension->getNodeByTypeAndNameAscending( XSD_SIMPLE_TYPE | XSD_COMPLEX_TYPE, pBase);

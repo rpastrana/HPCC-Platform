@@ -39,7 +39,11 @@ CDocumentation* CDocumentation::load(CXSDNodeBase* pParentNode, IPropertyTree *p
         strDoc.append(pSchemaRoot->queryPropTree(xpath)->queryProp(""));
     }
 
-    return new CDocumentation(pParentNode, strDoc.str());
+    CDocumentation *pDocumentation = new CDocumentation(pParentNode, strDoc.str());
+
+    pDocumentation->setXSDXPath(xpath);
+
+    return pDocumentation;
 }
 
 void  CDocumentation::getDocumentation(StringBuffer &strDoc) const

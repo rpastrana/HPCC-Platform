@@ -29,6 +29,8 @@ CSequence* CSequence::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot
     if (pElemArray != NULL)
     {
         pSequence = new CSequence(pParentNode, pElemArray);
+
+        pSequence->setXSDXPath(xpath);
     }
 
     SETPARENTNODE(pElemArray, pSequence)

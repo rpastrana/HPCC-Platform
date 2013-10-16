@@ -104,6 +104,8 @@ CSimpleType* CSimpleType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchema
 
     CSimpleType* pSimpleType = new CSimpleType(pParentNode, pName,pID);
 
+    pSimpleType->setXSDXPath(xpath);
+
     assert(pSimpleType != NULL);
 
     if (pSimpleType == NULL)
@@ -176,6 +178,8 @@ CSimpleTypeArray* CSimpleTypeArray::load(CXSDNodeBase* pParentNode, IPropertyTre
     }
 
     CSimpleTypeArray *pSimpleTypeArray = new CSimpleTypeArray(pParentNode);
+
+    pSimpleTypeArray->setXSDXPath(xpath);
 
     Owned<IPropertyTreeIterator> elemIter = pSchemaRoot->getElements(xpath);
 

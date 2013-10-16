@@ -41,6 +41,8 @@ CChoice* CChoice::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, co
         return NULL;
     }
 
+    pChoice->setXSDXPath(xpath);
+
     pElemArray->setParentNode(pChoice);
 
     return pChoice;

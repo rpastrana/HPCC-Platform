@@ -22,7 +22,9 @@ CAnnotation* CAnnotation::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchema
     strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_APP_INFO);
     CAppInfo *pAnnInfo = CAppInfo::load(NULL, pSchemaRoot, strXPathExt.str());
 
-    CAnnotation *pAnnotation = new CAnnotation(pParentNode, pDocumentation,pAnnInfo);
+    CAnnotation *pAnnotation = new CAnnotation(pParentNode, pDocumentation, pAnnInfo);
+
+    pAnnotation->setXSDXPath(xpath);
 
     SETPARENTNODE(pDocumentation, pAnnotation);
     SETPARENTNODE(pAnnInfo, pAnnotation);

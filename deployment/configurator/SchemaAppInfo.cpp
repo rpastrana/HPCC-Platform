@@ -107,6 +107,8 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 
     CAppInfo *pAppInfo = new CAppInfo(pParentNode, strViewType.str(),  strColIndex.str(), strToolTip.str(), strTitle.str(), strWidth.str(), strAutoGenForWizard.str(), strAutoGenDefaultValue.str(), NULL, strViewChildNodes.str(), strDocInclude.str(), strXPath.str());
 
+    pAppInfo->setXSDXPath(xpath);
+
     return pAppInfo;
 }
 

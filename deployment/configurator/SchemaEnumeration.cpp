@@ -17,6 +17,8 @@ CEnumeration* CEnumeration::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
 
     CEnumeration *pEnumeration = new CEnumeration(pParentNode);
 
+    pEnumeration->setXSDXPath(xpath);
+
     if (xpath && *xpath)
     {
         IPropertyTree* pTree = pSchemaRoot->queryPropTree(xpath);
@@ -124,6 +126,8 @@ CEnumerationArray* CEnumerationArray::load(CXSDNodeBase* pParentNode, IPropertyT
     }
 
     CEnumerationArray *pEnumerationArray = new CEnumerationArray(pParentNode);
+
+    pEnumerationArray->setXSDXPath(xpath);
 
     Owned<IPropertyTreeIterator> elemIter = pSchemaRoot->getElements(xpath);
 

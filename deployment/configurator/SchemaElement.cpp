@@ -29,6 +29,8 @@ CElement* CElement::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 
     CElement *pElement = new CElement();
 
+    pElement->setXSDXPath(xpath);
+
     IPropertyTree *pTree = pSchemaRoot->queryPropTree(xpath);
 
     if (pElement != NULL && pTree != NULL)
@@ -606,6 +608,8 @@ CElementArray* CElementArray::load(CXSDNodeBase* pParentNode, IPropertyTree *pSc
     }
 
     CElementArray *pElemArray = new CElementArray(pParentNode);
+
+    pElemArray->setXSDXPath(xpath);
 
     Owned<IPropertyTreeIterator> elemIter = pSchemaRoot->getElements(xpath);
 

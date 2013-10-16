@@ -289,6 +289,8 @@ CAttribute* CAttribute::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRo
 
     CAttribute *pAttribute = new CAttribute(pParentNode);
 
+    pAttribute->setXSDXPath(xpath);
+
     Owned<IAttributeIterator> iterAttrib = pSchemaRoot->queryPropTree(xpath)->getAttributes(true);
 
     ForEach(*iterAttrib)
@@ -399,6 +401,8 @@ CAttributeArray* CAttributeArray::load(CXSDNodeBase* pParentNode, IPropertyTree 
     StringBuffer strXPathExt(xpath);
 
     CAttributeArray *pAttribArray = new CAttributeArray(pParentNode);
+
+    pAttribArray->setXSDXPath(xpath);
 
     Owned<IPropertyTreeIterator> attributeIter = pSchemaRoot->getElements(xpath, ipt_ordered);
 
@@ -801,6 +805,8 @@ CAttributeGroup* CAttributeGroup::load(CXSDNodeBase* pParentNode, IPropertyTree 
     assert(pParentNode->getNodeType() != XSD_ATTRIBUTE_GROUP);
     CAttributeGroup *pAttributeGroup = new CAttributeGroup(pParentNode);
 
+    pAttributeGroup->setXSDXPath(xpath);
+
     assert(pAttributeGroup);
 
     if (pAttributeGroup == NULL)
@@ -881,6 +887,8 @@ CAttributeGroupArray* CAttributeGroupArray::load(CXSDNodeBase* pParentNode, IPro
     }
 
     CAttributeGroupArray *pAttribGroupArray = new CAttributeGroupArray(pParentNode);
+
+    pAttribGroupArray->setXSDXPath(xpath);
 
     StringBuffer strXPathExt(xpath);
 

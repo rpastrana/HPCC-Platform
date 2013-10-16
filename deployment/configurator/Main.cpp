@@ -1,4 +1,4 @@
-﻿#include "EnvironmentConfiguration.hpp"
+#include "EnvironmentConfiguration.hpp"
 #include "WizardBase.hpp"
 #include "ConfigSchemaHelper.hpp"
 #include "SchemaCommon.hpp"
@@ -25,11 +25,16 @@ void usage()
     std::cout << "-e -extension  <file extension>   : write docs to files with appended extension (default " <<  pDefaultExt << ")" << std::endl;
     std::cout << "-t -target <target directory>     : directory to which to docs will be written. If not specified, then output will go to std::out" << std::endl;
     std::cout << "-u -use <schema xsd>              : use specified xsd schema instead of buildset file" << std::endl;
+    std::cout << "-m -xml                           : generate XML configuration file" << std::endl;
     std::cout << "-h -help                          : prints out this usage" << std::endl;
-    std::cout << "** EXPERIMENTAL **" << std::endl;
     std::cout << "-j -dojo                          : prints dojo js" << std::endl;
     std::cout << "-q -qml                           : prints QML" << std::endl;
+    std::cout << "-dump                             : dump out xsd internal structure [NOT IMPLEMENTED]" << std::endl;
 }
+
+
+extern "C" void StartQMLUI();
+
 
 int main(int argc, char *argv[])
 {
@@ -57,6 +62,7 @@ int main(int argc, char *argv[])
     bool bGenDocs   = false;
     bool bGenDojoJS = false;
     bool bGenQML    = false;
+    bool bDump      = false;
 
     StringArray arrXSDs;
 
@@ -72,6 +78,10 @@ int main(int argc, char *argv[])
         {
             usage();
             return 0;
+        }
+        if (stricmp(argv[idx], "-dump") == 0)
+        {
+            bDump = true;
         }
         else if (stricmp(argv[idx], "-file") == 0 || stricmp(argv[idx], "-f") == 0)
         {
@@ -349,4 +359,11 @@ int main(int argc, char *argv[])
             pFileIO->write(0, strlen(pQML), pQML);
         }
     }
+
+
+    if (bDump == true)
+    {
+         std::cout << pSchemaHelper->printDocumentation(arrXSDs.item(idx));
+    }
+
 }

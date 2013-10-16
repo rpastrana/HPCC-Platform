@@ -10,10 +10,11 @@
 #include "SchemaSchema.hpp"
 #include "SchemaExtension.hpp"
 #include "BuildSet.hpp"
+//#include "XMLConfiguration.hpp"
 
 class CSimpleType;
 
-class CConfigSchemaHelper : public CInterface
+class CConfigSchemaHelper : public CInterface//, CXMLConfiguration
 {
 public:
 
@@ -58,6 +59,7 @@ public:
     const char* printDocumentation(const char* comp);
     const char* printDojoJS(const char* comp);
     const char* printQML(const char* comp) const;
+    void dumpStdOut() const;
 
     void setBuildSetArray(const StringArray &strArray);
 

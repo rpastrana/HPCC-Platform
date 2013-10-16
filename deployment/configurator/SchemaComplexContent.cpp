@@ -25,6 +25,8 @@ CComplexContent* CComplexContent::load(CXSDNodeBase* pParentNode, IPropertyTree 
 
     CComplexContent *pComplexContent = new CComplexContent(pParentNode, pExtension);
 
+    pComplexContent->setXSDXPath(xpath);
+
     assert(pExtension != NULL);
     assert(pComplexContent != NULL);
 

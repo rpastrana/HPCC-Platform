@@ -238,6 +238,11 @@ const char* CConfigSchemaHelper::printQML(const char* comp) const
     return NULL;
 }
 
+void CConfigSchemaHelper::dumpStdOut() const
+{
+    assert("NOT IMPLEMENTED");
+}
+
 //test purposes
 bool CConfigSchemaHelper::getXMLFromSchema(StringBuffer& strXML, const char* pComponent)
 {

@@ -83,7 +83,10 @@ CInclude* CInclude::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
 
             pInclude = new CInclude(pParentNode, pSchemaLocation);*/
             CSchema* pSchema = CSchema::load(pSchemaLocation, NULL); // no parent across XSD files
+
             pInclude = new CInclude(NULL, pSchemaLocation);
+
+            pInclude->setXSDXPath(xpath);
             pInclude->setIncludedSchema(pSchema);
         }
     }
@@ -99,6 +102,8 @@ CIncludeArray* CIncludeArray::load(CXSDNodeBase* pParentNode, IPropertyTree *pSc
     }
 
     CIncludeArray *pIncludeArray = new CIncludeArray(pParentNode);
+
+    pIncludeArray->setXSDXPath(xpath);
 
 
     Owned<IPropertyTreeIterator> elemIter = pSchemaRoot->getElements(xpath);

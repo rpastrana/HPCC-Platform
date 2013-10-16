@@ -290,6 +290,8 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
 
     CComplexType *pComplexType = new CComplexType(pParentNode, pName, pSequence, pComplexContent, pAttributeArray, pChoice, pElementArray, pAttributeGroupArray);
 
+    pComplexType->setXSDXPath(xpath);
+
     assert(pComplexType != NULL);
 
     if (pComplexType != NULL)
@@ -374,6 +376,8 @@ CComplexTypeArray* CComplexTypeArray::load(CXSDNodeBase* pParentNode, IPropertyT
     }
 
     CComplexTypeArray *pComplexTypeArray = new CComplexTypeArray(pParentNode);
+
+    pComplexTypeArray->setXSDXPath(xpath);
 
     Owned<IPropertyTreeIterator> complexTypeIter = pSchemaRoot->getElements(xpath);
 
