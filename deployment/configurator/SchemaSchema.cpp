@@ -20,7 +20,6 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
         return pSchemaHelper->getSchemaForXSD(pSchemaLocation);
     }
 
-
     CSchema* pSchema = new CSchema(pSchemaLocation);
 
     pSchema->setXSDXPath(xpath);
@@ -39,50 +38,7 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     StringBuffer strXPathExt(xpath);
 
-
-    CIncludeArray* pIncludeArray = NULL;
-    CSimpleTypeArray* pSimpleTypeArray = NULL;
-    CComplexTypeArray* pComplexTypeArray = NULL;
-    CElementArray* pElemArray = NULL;
-    CAttributeGroupArray* pAttributeGroupArray  = NULL;
-
-    StringBuffer strXPathExt2(strXPathExt);
-    strXPathExt2.append("*");
-
-    Owned<IPropertyTreeIterator> iter = pSchemaRoot->getElements(strXPathExt2.str());
-
-    ForEach(*iter)
-    {
-        if (strcmp(XSD_TAG_INCLUDE, iter->get().queryName()) == 0)
-        {
-
-            strXPathExt.clear().append(xpath).append(XSD_TAG_INCLUDE);
-            pIncludeArray = CIncludeArray::load(pSchema, pSchemaRoot, strXPathExt);
-        }
-        else if (strcmp(XSD_TAG_SIMPLE_TYPE, iter->get().queryName()) == 0)
-        {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_SIMPLE_TYPE);
-            pSimpleTypeArray = CSimpleTypeArray::load(pSchema, pSchemaRoot, strXPathExt);
-        }
-        else if (strcmp(XSD_TAG_COMPLEX_TYPE, iter->get().queryName()) == 0)
-        {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_COMPLEX_TYPE);
-            pComplexTypeArray = CComplexTypeArray::load(pSchema, pSchemaRoot, strXPathExt);
-
-        }
-        else if (strcmp(XSD_TAG_ELEMENT, iter->get().queryName()) == 0)
-        {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_ELEMENT);
-            pElemArray = CElementArray::load(pSchema, pSchemaRoot, strXPathExt.str());
-        }
-        else if (strcmp(XSD_TAG_ATTRIBUTE_GROUP, iter->get().queryName()) == 0)
-        {
-            strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
-            pAttributeGroupArray = CAttributeGroupArray::load(pSchema, pSchemaRoot, strXPathExt);
-        }
-    }
-
-    /*strXPathExt.clear().append(xpath).append(XSD_TAG_INCLUDE);
+    strXPathExt.clear().append(xpath).append(XSD_TAG_INCLUDE);
     CIncludeArray* pIncludeArray = CIncludeArray::load(pSchema, pSchemaRoot, strXPathExt);
 
     strXPathExt.clear().append(xpath).append(XSD_TAG_SIMPLE_TYPE);
@@ -96,7 +52,6 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
 
     strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
     CAttributeGroupArray* pAttributeGroupArray = CAttributeGroupArray::load(pSchema, pSchemaRoot, strXPathExt);
-*/
 
     pSchema->m_pElementArray = pElemArray;
     pSchema->m_pComplexTypeArray = pComplexTypeArray;
