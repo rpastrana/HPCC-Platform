@@ -67,6 +67,11 @@ public:
 
     const char* getToolTipJS() const;
 
+    const char* getBasePath() const
+    {
+        return m_pBasePath;
+    }
+
 protected:
 
     CConfigSchemaHelper(const char* pBuildSetFile = DEFAULT_BUILD_SET_XML_FILE, const char* pBuildSetDir = DEFAULT_BUILD_SET_DIRECTORY, const char* pDefaultDirOverride = NULL);
@@ -84,8 +89,14 @@ protected:
 
 private:
 
-    const char *m_pDefaultDirOverride;
     static CConfigSchemaHelper* s_pCConfigSchemaHelper;
+    const char *m_pBasePath;
+
+    void setBasePath(const char* pBasePath)
+    {
+        assert(m_pBasePath == NULL); // why ever set this twice?
+        m_pBasePath = pBasePath;
+    }
 };
 
 #endif // _CONFIG_SCHEMA_HELPER_HPP_

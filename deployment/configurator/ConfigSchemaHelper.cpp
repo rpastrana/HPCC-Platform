@@ -20,7 +20,7 @@ CConfigSchemaHelper* CConfigSchemaHelper::getInstance(const char* pDefaultDirOve
 
         if (s_pCConfigSchemaHelper != NULL && pDefaultDirOverride != NULL)
         {
-            s_pCConfigSchemaHelper->m_pDefaultDirOverride = pDefaultDirOverride;
+            s_pCConfigSchemaHelper->setBasePath(pDefaultDirOverride);
         }
     }
 
@@ -104,12 +104,11 @@ bool CConfigSchemaHelper::populateSchema()
     LOOP_THRU_BUILD_SET
     {
         const char *pSchemaFile = m_buildSetArray.item(idx).getSchema();
-        //const char *pCompName = m_buildSetArray.item(idx).getName();
 
         if (pSchemaFile != NULL)
         {
             CXSDNodeBase *pNull = NULL;
-            CSchema *pSchema = CSchema::load(pSchemaFile, pNull, m_pDefaultDirOverride);
+            CSchema *pSchema = CSchema::load(pSchemaFile, pNull);
             m_schemaMap.setValue(pSchemaFile, pSchema);
         }
     }
@@ -529,11 +528,14 @@ void CConfigSchemaHelper::setBuildSetArray(const StringArray &strArray)
     m_buildSetArray.kill();
 
     //Owned<CBuildSet> pBSet = new CBuildSet((NULL, strArray.item(0), NULL, strArray.item(0)));
-    Owned<CBuildSet> pBSet = new CBuildSet(NULL, strArray.item(0), NULL, strArray.item(0));
+    for (int idx = 0; idx < strArray.length(); idx++)
+    {
+        Owned<CBuildSet> pBSet = new CBuildSet(NULL, strArray.item(idx), NULL, strArray.item(idx));
 
-    assert (pBSet != NULL);
+        assert (pBSet != NULL);
 
-    m_buildSetArray.append(*pBSet.getClear());
+        m_buildSetArray.append(*pBSet.getClear());
+    }
 }
 
 

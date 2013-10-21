@@ -16,13 +16,15 @@ const char *pDefaultExt =  ".mod.xml";
 
 void usage()
 {
-    std::cout << "configurator -f <build set file> -p <base dir path>" << std::endl;
+    std::cout << "configurator -use <xsd files>  -b <base dir path>" << std::endl;
+    std::cout << "Example Usage: ./configurator -use dali.xsd -use thor.xsd -u esp.xsd -b /opt/HPCCSystems/initfiles/componentfiles/configxml -t /tmp " << std::endl;
     std::cout << "-f -file <build set file>         : buildset file name (required if base directory is specfied" << std::endl;
     std::cout << "-p -path <base dir path>          : base directory path (required if buildset file name is specified)" << std::endl;
+    std::cout << "-b -base <base dir path>          : base directory path to use with -use option and for xs:include references in xsd files" << std::endl;
     std::cout << "-x -xsd  <xsd file name>          : xsd file name (can be more than one)" << std::endl;
     std::cout << "-l -list                          : list available xsd files" << std::endl;
     std::cout << "-d -doc                           : generate docs" << std::endl;
-    std::cout << "-e -extension  <file extension>   : write docs to files with appended extension (default " <<  pDefaultExt << ")" << std::endl;
+    std::cout << "-e -extension <file extension>    : write docs to files with appended extension (default " <<  pDefaultExt << ")" << std::endl;
     std::cout << "-t -target <target directory>     : directory to which to docs will be written. If not specified, then output will go to std::out" << std::endl;
     std::cout << "-u -use <schema xsd>              : use specified xsd schema instead of buildset file" << std::endl;
     std::cout << "-m -xml                           : generate XML configuration file" << std::endl;
@@ -49,6 +51,7 @@ int main(int argc, char *argv[])
     char pTargetDocDir[BUFF_SIZE];
     char pTargetDocExt[BUFF_SIZE];
     char pOverrideSchema[BUFF_SIZE];
+    char pBasePath[BUFF_SIZE];
 
     memset(pBuildSetFile, 0, sizeof(pBuildSetFile));
     memset(pBuildSetFileDir, 0, sizeof(pBuildSetFileDir));
@@ -110,6 +113,20 @@ int main(int argc, char *argv[])
             }
 
             strncpy(pBuildSetFileDir, argv[idx], BUFF_SIZE);
+        }
+        else if (stricmp(argv[idx], "-base") == 0 || stricmp(argv[idx], "-b") == 0)
+        {
+            idx++;
+
+            assert(argv[idx]);
+
+            if (argv[idx] == NULL)
+            {
+                std::cout << "Missing base dir parameter!" << std::endl;
+                return 0;
+            }
+
+            strncpy(pBasePath, argv[idx], BUFF_SIZE);
         }
         else if (stricmp(argv[idx], "-xsd") == 0 || stricmp(argv[idx], "-x") == 0)
         {
@@ -222,11 +239,11 @@ int main(int argc, char *argv[])
 
     if (pBuildSetFile[0] == 0 && pOverrideSchema[0] == 0)
     {
-        pSchemaHelper = CConfigSchemaHelper::getInstance();
+        pSchemaHelper = CConfigSchemaHelper::getInstance(pBasePath);
     }
     else if (pBuildSetFile[0] == 0)
     {
-        pSchemaHelper = CConfigSchemaHelper::getInstance("");
+        pSchemaHelper = CConfigSchemaHelper::getInstance(pBasePath);
     }
     else
     {
@@ -237,10 +254,7 @@ int main(int argc, char *argv[])
 
     if (pOverrideSchema[0] != 0)
     {
-        static StringArray arrSchema;
-
-        arrSchema.append(pOverrideSchema);
-        pSchemaHelper->setBuildSetArray(arrSchema);
+        pSchemaHelper->setBuildSetArray(arrXSDs);
     }
     else if (pSchemaHelper->populateBuildSet() == false)
     {

@@ -43,7 +43,7 @@ public:
     }
 
     static CSchema* load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, const char* xpath);
-    static CSchema* load(const char* pSchemaLocation, CXSDNodeBase* pParentNode,  const char *pDefaultDirOverride = NULL);
+    static CSchema* load(const char* pSchemaLocation, CXSDNodeBase* pParentNode);
 
 protected:
 
