@@ -3737,6 +3737,12 @@ bool CWsWorkunitsEx::onWUReportBug(IEspContext &context, IEspWUReportBugRequest 
             fs.clear().append("bugReport_").append(req.getWUID()).append('_').append(userName.str()).append(".xml");
             zipper->addContentToZIP(wuXmlMB.length(), (void*)wuXmlMB.toByteArray(), (char*)fs.str(), true);
 
+            //Add Workunit XML file
+            MemoryBuffer wuXmlMB;
+            winfo.getWorkunitXml(NULL, wuXmlMB);
+            fs.clear().append("bugReport_").append(req.getWUID()).append('_').append(userName.str()).append(".xml");
+            zipper->addContentToZIP(wuXmlMB.length(), (void*)wuXmlMB.toByteArray(), (char*)fs.str(), true);
+
             //Write out ZIP file
             zipper->zipToFile(zipFile.str());
 
