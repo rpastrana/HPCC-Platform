@@ -604,7 +604,7 @@ void CCsvPartitioner::storeFieldName(const char * start, unsigned len)
     // Check the field name
     StringBuffer fieldName;
     MemoryBuffer temp;
-    if( convertUtf(temp, UtfReader::Utf8, len, start, utfFormat))
+    if (convertUtf(temp, UtfReader::Utf8, len, start, utfFormat))
     {
         fieldName.append(temp.length(), temp.toByteArray());
         fieldName.trim();
