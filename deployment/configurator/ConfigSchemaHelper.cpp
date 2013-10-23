@@ -3,6 +3,7 @@
 #include "SchemaElement.hpp"
 #include "jptree.hpp"
 #include "XMLTags.h"
+#include "ExceptionStrings.hpp"
 #include <cstring>
 
 #define LOOP_THRU_BUILD_SET for (int idx = 0; idx < m_buildSetArray.length(); idx++)
@@ -164,6 +165,7 @@ const char* CConfigSchemaHelper::printDocumentation(const char* comp)
              if (pSchema != NULL)
              {
                 static StringBuffer strDoc;
+                strDoc.clear(); // needed when printing more than 1 component
                 pSchema->getDocumentation(strDoc);
 
                 return strDoc.str();
@@ -354,6 +356,11 @@ void CConfigSchemaHelper::setSimpleTypeWithName(const char* pName, CSimpleType *
         return;
     }
 
+    if (m_simpleTypePtrMap.getValue(pName) != NULL)
+    {
+        throw MakeExceptionFromMap(EX_STR_SIMPLE_TYPE_ALREADY_DEFINED);
+    }
+
     m_simpleTypePtrMap.setValue(pName, pSimpleType);
 }
 
@@ -384,6 +391,11 @@ void CConfigSchemaHelper::setComplexTypeWithName(const char* pName, CComplexType
         return;
     }
 
+    if (m_complexTypePtrsMap.getValue(pName) != NULL)
+    {
+        throw MakeExceptionFromMap(EX_STR_COMPLEX_TYPE_ALREADY_DEFINED);
+    }
+
     m_complexTypePtrsMap.setValue(pName, pComplexType);
 }
 
@@ -412,6 +424,11 @@ void CConfigSchemaHelper::setAttributeGroupTypeWithName(const char* pName, CAttr
     if (pName == NULL || pAttributeGroup == NULL)
     {
         return;
+    }
+
+    if (m_attributeGroupTypePtrsMap.getValue(pName) != NULL)
+    {
+        throw MakeExceptionFromMap(EX_STR_ATTRIBUTE_GROUP_ALREADY_DEFINED);
     }
 
     m_attributeGroupTypePtrsMap.setValue(pName, pAttributeGroup);
@@ -500,6 +517,7 @@ void CConfigSchemaHelper::traverseAndProcessArray(const char *pXSDName)
 {
     const char *pComponent = NULL;
     CSchema* pSchema = NULL;
+
     LOOP_THRU_BUILD_SET
     {
         if (pComponent == NULL || strcmp(pComponent, m_buildSetArray.item(idx).getSchema()) == 0)
@@ -527,7 +545,6 @@ void CConfigSchemaHelper::setBuildSetArray(const StringArray &strArray)
 {
     m_buildSetArray.kill();
 
-    //Owned<CBuildSet> pBSet = new CBuildSet((NULL, strArray.item(0), NULL, strArray.item(0)));
     for (int idx = 0; idx < strArray.length(); idx++)
     {
         Owned<CBuildSet> pBSet = new CBuildSet(NULL, strArray.item(idx), NULL, strArray.item(idx));

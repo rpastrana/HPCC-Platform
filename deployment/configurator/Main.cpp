@@ -3,6 +3,7 @@
 #include "ConfigSchemaHelper.hpp"
 #include "SchemaCommon.hpp"
 #include "NodeHandlerDocumentation.hpp"
+#include "ExceptionStrings.hpp"
 #include <iostream>
 #include "jfile.hpp"
 
@@ -261,10 +262,13 @@ int main(int argc, char *argv[])
         std::cout << "Failed to populate buildset.  Are the buildset file name and path set correctly?  Do they exist? Are permissions set properly?" << std::endl;
     }
 
-    pSchemaHelper->populateSchema();
-    pSchemaHelper->processExtensionArr();
-    pSchemaHelper->processAttributeGroupArr();
-
+    try
+    {
+        pSchemaHelper->populateSchema();
+        pSchemaHelper->processExtensionArr();
+        pSchemaHelper->processAttributeGroupArr();
+    }
+    CATCH_EXCEPTION
 
     if (bListXSDs == true)
     {

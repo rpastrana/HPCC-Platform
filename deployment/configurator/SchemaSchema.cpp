@@ -91,7 +91,16 @@ CSchema* CSchema::load(const char* pSchemaLocation, CXSDNodeBase* pParentNode)
         schemaPath.appendf("%s/%s", CConfigSchemaHelper::getInstance()->getBasePath(), pSchemaLocation);
     }
 
-    pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
+    try
+    {
+       pSchemaRoot.setown(createPTreeFromXMLFile(schemaPath.str()));
+    }
+    catch (...)
+    {
+        // TODO: Hanlde exceptions
+        std::cout << "Can't open " << schemaPath.str();
+        exit(-1);
+    }
 
     CSchema *pSchema = CSchema::load(pSchemaLocation, pSchemaRoot, XSD_TAG_SCHEMA);
 
