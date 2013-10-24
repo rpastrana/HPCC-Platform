@@ -1456,7 +1456,7 @@ void CWsDfuEx::getDefFile(IUserDescriptor* udesc, const char* FileName,StringBuf
 
     data->setProp("filename",fname ? fname+1 : FileName);
 
-    toXML(data, returnStr, 0, 0); 
+    toXML(data, returnStr, 0, 0);
 }
 
 bool CWsDfuEx::checkFileContent(IEspContext &context, IUserDescriptor* udesc, const char * logicalName, const char * cluster)
