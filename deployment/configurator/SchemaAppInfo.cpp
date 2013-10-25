@@ -39,14 +39,14 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     StringBuffer strXPathAutoGenDefaultForMultiNode(xpath);
     strXPathAutoGenDefaultForMultiNode.append("/").append(TAG_AUTOGENDEFAULTVALUEFORMULTINODE);
 
-    StringBuffer strXPathDocInclude(xpath);
-    strXPathDocInclude.append("/").append(TAG_DOCINCLUDE);
-
     StringBuffer strXPathViewChildNodes(xpath);
     strXPathViewChildNodes.append("/").append(TAG_VIEWCHILDNODES);
 
     StringBuffer strXPathXPath(xpath);
     strXPathXPath.append("/").append(TAG_XPATH);
+
+    StringBuffer strXPathDocID(xpath);
+    strXPathDocID.append("/").append(TAG_DOC_ID);
 
     StringBuffer strViewType;
     StringBuffer strColIndex;
@@ -56,9 +56,9 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     StringBuffer strAutoGenForWizard;
     StringBuffer strAutoGenDefaultValue;
     StringBuffer strAutoGenDefaultForMultiNode;
-    StringBuffer strDocInclude;
     StringBuffer strViewChildNodes;
     StringBuffer strXPath;
+    StringBuffer strDocTableID;
 
     if (pSchemaRoot->queryPropTree(strXPathViewType.str()) != NULL)
     {
@@ -92,10 +92,6 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     {
         strAutoGenDefaultForMultiNode.append(pSchemaRoot->queryPropTree(strXPathAutoGenDefaultForMultiNode.str())->queryProp(""));
     }
-    if (pSchemaRoot->queryPropTree(strXPathDocInclude.str()) != NULL)
-    {
-        strDocInclude.append(pSchemaRoot->queryPropTree(strXPathDocInclude.str())->queryProp(""));
-    }
     if (pSchemaRoot->queryPropTree(strXPathViewChildNodes.str()) != NULL)
     {
         strViewChildNodes.append(pSchemaRoot->queryPropTree(strXPathViewChildNodes.str())->queryProp(""));
@@ -104,8 +100,13 @@ CAppInfo* CAppInfo::load(CXSDNodeBase* pParentNode, IPropertyTree *pSchemaRoot, 
     {
         strXPath.append(pSchemaRoot->queryPropTree(strXPathXPath.str())->queryProp(""));
     }
+    if (pSchemaRoot->queryPropTree(strXPathDocID.str()) != NULL)
+    {
+        strDocTableID.append(pSchemaRoot->queryPropTree(strXPathDocID.str())->queryProp(""));
+    }
 
-    CAppInfo *pAppInfo = new CAppInfo(pParentNode, strViewType.str(),  strColIndex.str(), strToolTip.str(), strTitle.str(), strWidth.str(), strAutoGenForWizard.str(), strAutoGenDefaultValue.str(), NULL, strViewChildNodes.str(), strDocInclude.str(), strXPath.str());
+
+    CAppInfo *pAppInfo = new CAppInfo(pParentNode, strViewType.str(),  strColIndex.str(), strToolTip.str(), strTitle.str(), strWidth.str(), strAutoGenForWizard.str(), strAutoGenDefaultValue.str(), NULL, strViewChildNodes.str(), strXPath.str(), strDocTableID.str());
 
     pAppInfo->setXSDXPath(xpath);
 
@@ -126,7 +127,6 @@ void CAppInfo::dump(std::ostream &cout, unsigned int offset) const
     QUICK_OUT(cout, AutoGenForWizard, offset);
     QUICK_OUT(cout, AutoGenDefaultValue, offset);
     QUICK_OUT(cout, AutoGenDefaultValueForMultiNode, offset);
-    QUICK_OUT(cout, DocInclude, offset);
     QUICK_OUT(cout, ViewChildNodes, offset);
     QUICK_OUT(cout, XPath, offset);
 
@@ -141,10 +141,6 @@ void CAppInfo::traverseAndProcessNodes() const
 
 void CAppInfo::getDocumentation(StringBuffer &strDoc) const
 {
-    if (this->getDocInclude() != NULL && this->getDocInclude()[0] != 0)
-    {
-        strDoc.appendf("<%s %s />\n", DM_XI_INCLUDE, this->getDocInclude());
-    }
 }
 
 void CAppInfo::getDojoJS(StringBuffer &strJS) const

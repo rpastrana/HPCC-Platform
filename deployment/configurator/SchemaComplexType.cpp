@@ -51,6 +51,11 @@ void CComplexType::dump(std::ostream& cout, unsigned int offset) const
         m_pAttributeGroupArray->dump(cout, offset);
     }
 
+    if (m_pAnnotation != NULL)
+    {
+        m_pAnnotation->dump(cout, offset);
+    }
+
     QuickOutFooter(cout, XSD_COMPLEX_TYPE_STR, offset);
 }
 
@@ -237,6 +242,7 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
     CElementArray *pElementArray = NULL;
     CSequence *pSequence  = NULL;
     CAttributeGroupArray *pAttributeGroupArray = NULL;
+    CAnnotation *pAnnotation = NULL;
 
     if (pSchemaRoot == NULL)
     {
@@ -254,41 +260,46 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
 
     Owned<IPropertyTreeIterator> iter = pSchemaRoot->getElements(strXPathExt2.str());
 
-    ForEach(*iter)
-    {
-        if (strcmp(XSD_TAG_SEQUENCE, iter->get().queryName()) == 0)
-        {
+//    ForEach(*iter)
+//    {
+//        if (strcmp(XSD_TAG_SEQUENCE, iter->get().queryName()) == 0)
+//        {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_SEQUENCE);
             pSequence = CSequence::load(NULL, pSchemaRoot, strXPathExt.str());
-        }
-        else if (strcmp(XSD_TAG_COMPLEX_CONTENT, iter->get().queryName()) == 0)
-        {
+//        }
+//        else if (strcmp(XSD_TAG_ANNOTATION, iter->get().queryName()) == 0)
+//        {
+            strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ANNOTATION);
+            pAnnotation = CAnnotation::load(NULL, pSchemaRoot, strXPathExt.str());
+//        }
+//        else if (strcmp(XSD_TAG_COMPLEX_CONTENT, iter->get().queryName()) == 0)
+//        {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_COMPLEX_CONTENT);
             pComplexContent = CComplexContent::load(NULL, pSchemaRoot, strXPathExt.str());
-        }
-        else if (strcmp(XSD_TAG_ATTRIBUTE, iter->get().queryName()) == 0)
-        {
+//        }
+//        else if (strcmp(XSD_TAG_ATTRIBUTE, iter->get().queryName()) == 0)
+//        {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE);
             pAttributeArray = CAttributeArray::load(NULL, pSchemaRoot, strXPathExt.str());
-        }
-        else if (strcmp(XSD_TAG_CHOICE, iter->get().queryName()) == 0)
-        {
+//        }
+//        else if (strcmp(XSD_TAG_CHOICE, iter->get().queryName()) == 0)
+//        {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_CHOICE);
             pChoice = CChoice::load(NULL, pSchemaRoot, strXPathExt.str());
-        }
-        else if (strcmp(XSD_TAG_ELEMENT, iter->get().queryName()) == 0)
-        {
+//        }
+//        else if (strcmp(XSD_TAG_ELEMENT, iter->get().queryName()) == 0)
+//        {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ELEMENT);
             pElementArray = CElementArray::load(NULL, pSchemaRoot, strXPathExt.str());
-        }
-        else if (strcmp(XSD_TAG_ATTRIBUTE_GROUP, iter->get().queryName()) == 0)
-        {
+//        }
+//        else if (strcmp(XSD_TAG_ATTRIBUTE_GROUP, iter->get().queryName()) == 0)
+//        {
             strXPathExt.clear().append(xpath).append("/").append(XSD_TAG_ATTRIBUTE_GROUP);
             pAttributeGroupArray = CAttributeGroupArray::load(NULL, pSchemaRoot, strXPathExt.str());
-        }
-    }
+//        }
+//    }
 
-    CComplexType *pComplexType = new CComplexType(pParentNode, pName, pSequence, pComplexContent, pAttributeArray, pChoice, pElementArray, pAttributeGroupArray);
+    CComplexType *pComplexType = new CComplexType(pParentNode, pName, pSequence, pComplexContent, pAttributeArray, pChoice, pElementArray, pAttributeGroupArray, pAnnotation);
 
     pComplexType->setXSDXPath(xpath);
 
@@ -303,6 +314,7 @@ CComplexType* CComplexType::load(CXSDNodeBase* pParentNode, IPropertyTree *pSche
         SETPARENTNODE(pChoice, pComplexType)
         SETPARENTNODE(pElementArray, pComplexType)
         SETPARENTNODE(pAttributeGroupArray, pComplexType)
+        SETPARENTNODE(pAnnotation, pComplexType);
 
         if (pName != NULL)
         {

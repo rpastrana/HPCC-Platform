@@ -1,6 +1,7 @@
 #include "SchemaAnnotation.hpp"
 #include "SchemaAppInfo.hpp"
 #include "SchemaAttributes.hpp"
+#include "SchemaAttributeGroup.hpp"
 #include "SchemaChoice.hpp"
 #include "SchemaCommon.hpp"
 #include "SchemaComplexContent.hpp"

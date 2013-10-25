@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
 
     if (pBuildSetFile[0] == 0 && pOverrideSchema[0] == 0)
     {
-        pSchemaHelper = CConfigSchemaHelper::getInstance(pBasePath);
+        pSchemaHelper = CConfigSchemaHelper::getInstance();
     }
     else if (pBuildSetFile[0] == 0)
     {

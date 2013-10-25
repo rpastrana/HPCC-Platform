@@ -53,6 +53,10 @@ CSchema* CSchema::load(const char* pSchemaLocation, IPropertyTree *pSchemaRoot, 
     strXPathExt.clear().append(xpath).append(XSD_TAG_ATTRIBUTE_GROUP);
     CAttributeGroupArray* pAttributeGroupArray = CAttributeGroupArray::load(pSchema, pSchemaRoot, strXPathExt);
 
+    strXPathExt.clear().append(xpath).append(XSD_TAG_ANNOTATION);
+    CAnnotation* pAnnotation = CAnnotation::load(pSchema, pSchemaRoot, strXPathExt);
+    pSchema->m_pAnnotation = pAnnotation;
+
     pSchema->m_pElementArray = pElemArray;
     pSchema->m_pComplexTypeArray = pComplexTypeArray;
 
@@ -139,6 +143,10 @@ void CSchema::dump(std::ostream& cout, unsigned int offset) const
     {
         m_pIncludeArray->dump(cout, offset);
     }
+    if (m_pAnnotation != NULL)
+    {
+        m_pAnnotation->dump(cout, offset);
+    }
 
     QuickOutFooter(cout, XSD_SCHEMA_STR, offset);
 }
@@ -165,6 +173,8 @@ void CSchema::getDocumentation(StringBuffer &strDoc) const
     {
         m_pIncludeArray->getDocumentation(strDoc);
     }
+
+    // not processing m_pAnnotation?
 
     strDoc.append(DM_SECT2_END);
 }

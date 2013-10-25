@@ -26,15 +26,15 @@ enum eExceptionCodes
 };
 
 const char pExceptionStringArray[EX_STR_LAST_ENTRY][MAX_EXCEPTION_STRING_LENGTH] = { "can not open xsd file",
-                                                                                     "simple type already defined",
-                                                                                     "complex type already defined",
-                                                                                     "attribute group already defined"
+                                                                                     "Simple type already defined. Multiple xs:simpleType tags with the same name defined in xsd files.",
+                                                                                     "complex type already defined. Multiple xs:complexType tags with the same name defined in xsd files.",
+                                                                                     "Multiple xs:attributeGroup tags with the same name defined in xsd files. Attribute group already defined"
                                                                                     };
 
 const char pExceptionStringActionArray[EX_STR_LAST_ENTRY][MAX_EXCEPTION_STRING_LENGTH] = {  "Ensure that input xsd files exist and that it's permissions are set properly",
-                                                                                            "Multiple xs:simpleType tags with the same name defined in xsd files. Try processing xsd files using -use parameter and only specify 1 xsd file for processing." ,
-                                                                                            "Multiple xs:complexType tags with the same name defined in xsd files. Try processing xsd files using -use parameter and only specify 1 xsd file for processing.",
-                                                                                            "Multiple xs:attributeGroup tags with the same name defined in xsd files. Try processing xsd files using -use parameter and only specify 1 xsd file for processing.",
+                                                                                            "Try processing xsd files using -use parameter and only specify 1 xsd file for processing." ,
+                                                                                            "Try processing xsd files using -use parameter and only specify 1 xsd file for processing.",
+                                                                                            "Try processing xsd files using -use parameter and only specify 1 xsd file for processing.",
                                                                                          };
 
 IException *MakeExceptionFromMap(int code, enum eExceptionCodes);

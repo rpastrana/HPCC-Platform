@@ -19,7 +19,11 @@ CConfigSchemaHelper* CConfigSchemaHelper::getInstance(const char* pDefaultDirOve
     {
         s_pCConfigSchemaHelper = new CConfigSchemaHelper();
 
-        if (s_pCConfigSchemaHelper != NULL && pDefaultDirOverride != NULL)
+        if (s_pCConfigSchemaHelper != NULL && pDefaultDirOverride == NULL)
+        {
+            s_pCConfigSchemaHelper->setBasePath(DEFAULT_BUILD_SET_DIRECTORY);
+        }
+        else
         {
             s_pCConfigSchemaHelper->setBasePath(pDefaultDirOverride);
         }

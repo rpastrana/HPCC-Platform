@@ -7,7 +7,7 @@ IException *MakeExceptionFromMap(int code, enum eExceptionCodes eCode)
 {
     static StringBuffer strExceptionMessage;
 
-    strExceptionMessage.setf("Exception: %s\nPossible Action(s): %s",  pExceptionStringArray[eCode-1], pExceptionStringActionArray[eCode-1]);
+    strExceptionMessage.setf("Exception: %s\nPossible Action(s): %s\n",  pExceptionStringArray[eCode-1], pExceptionStringActionArray[eCode-1]);
 
     return MakeStringException(code, strExceptionMessage.str());
 }
