@@ -448,11 +448,11 @@ bool CWsWorkunitsEx::isValidCluster(const char *cluster)
     }
     return false;
 }
-
+/*
 void CWsWorkunitsEx::checkAndTrimWorkunit(const char* methodName, StringBuffer& input)
 {
     WsWuProcess::checkAndTrimWorkunit(methodName, input);
-}
+}*/
 
 bool CWsWorkunitsEx::onWUCreate(IEspContext &context, IEspWUCreateRequest &req, IEspWUCreateResponse &resp)
 {
@@ -499,7 +499,7 @@ bool CWsWorkunitsEx::onWUUpdate(IEspContext &context, IEspWUUpdateRequest &req, 
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUUpdate", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUUpdate", wuid);
 
         ensureWsWorkunitAccess(context, wuid.str(), SecAccess_Write);
 
@@ -796,7 +796,7 @@ bool CWsWorkunitsEx::onWUResubmit(IEspContext &context, IEspWUResubmitRequest &r
         for(aindex_t i=0; i<req.getWuids().length();i++)
         {
             StringBuffer requestWuid = req.getWuids().item(i);
-            checkAndTrimWorkunit("WUResubmit", requestWuid);
+            WsWuProcess::checkAndTrimWorkunit("WUResubmit", requestWuid);
 
             ensureWsWorkunitAccess(context, requestWuid.str(), SecAccess_Write);
 
@@ -900,7 +900,7 @@ bool CWsWorkunitsEx::onWUSchedule(IEspContext &context, IEspWUScheduleRequest &r
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUSchedule", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUSchedule", wuid);
 
         const char* cluster = req.getCluster();
         if (isEmpty(cluster))
@@ -960,7 +960,7 @@ bool CWsWorkunitsEx::onWUSubmit(IEspContext &context, IEspWUSubmitRequest &req, 
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUSubmit", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUSubmit", wuid);
 
         const char *cluster = req.getCluster();
         if (isEmpty(cluster))
@@ -1073,7 +1073,7 @@ bool CWsWorkunitsEx::onWUWaitCompiled(IEspContext &context, IEspWUWaitRequest &r
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUWaitCompiled", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUWaitCompiled", wuid);
         secWaitForWorkUnitToCompile(wuid.str(), *context.querySecManager(), *context.queryUser(), req.getWait());
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -1093,7 +1093,7 @@ bool CWsWorkunitsEx::onWUWaitComplete(IEspContext &context, IEspWUWaitRequest &r
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUWaitComplete", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUWaitComplete", wuid);
         resp.setStateID(secWaitForWorkUnitToComplete(wuid.str(), *context.querySecManager(), *context.queryUser(), req.getWait(), req.getReturnOnWait()));
     }
     catch(IException* e)
@@ -1108,7 +1108,7 @@ bool CWsWorkunitsEx::onWUCDebug(IEspContext &context, IEspWUDebugRequest &req, I
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUCDebug", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUCDebug", wuid);
         StringBuffer result;
         secDebugWorkunit(wuid.str(), *context.querySecManager(), *context.queryUser(), req.getCommand(), result);
         resp.setResult(result);
@@ -1418,7 +1418,7 @@ bool CWsWorkunitsEx::onWUInfo(IEspContext &context, IEspWUInfoRequest &req, IEsp
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUInfo", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUInfo", wuid);
 
         if (req.getType() && strieq(req.getType(), "archived workunits"))
             getArchivedWUInfo(context, sashaServerIp.get(), sashaServerPort, wuid.str(), resp);
@@ -1513,7 +1513,7 @@ bool CWsWorkunitsEx::onWUInfoDetails(IEspContext &context, IEspWUInfoRequest &re
 bool CWsWorkunitsEx::onWUResultView(IEspContext &context, IEspWUResultViewRequest &req, IEspWUResultViewResponse &resp)
 {
     StringBuffer wuid = req.getWuid();
-    checkAndTrimWorkunit("WUResultView", wuid);
+    WsWuProcess::checkAndTrimWorkunit("WUResultView", wuid);
 
     ensureWsWorkunitAccess(context, wuid.str(), SecAccess_Read);
 
@@ -2552,7 +2552,7 @@ bool CWsWorkunitsEx::onWUResultSummary(IEspContext &context, IEspWUResultSummary
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUResultSummary", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUResultSummary", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -2877,7 +2877,7 @@ bool CWsWorkunitsEx::onWUListLocalFileRequired(IEspContext& context, IEspWUListL
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUListLocalFileRequired", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUListLocalFileRequired", wuid);
 
         ensureWsWorkunitAccess(context, wuid.str(), SecAccess_Read);
 
@@ -2976,7 +2976,7 @@ bool CWsWorkunitsEx::onWUAddLocalFileToWorkunit(IEspContext& context, IEspWUAddL
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUAddLocalFileToWorkunit", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUAddLocalFileToWorkunit", wuid);
         ensureWsWorkunitAccess(context, wuid.str(), SecAccess_Write);
         resp.setWuid(wuid.str());
 
@@ -3098,7 +3098,7 @@ bool CWsWorkunitsEx::onWUProcessGraph(IEspContext &context,IEspWUProcessGraphReq
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUProcessGraph", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUProcessGraph", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -3139,7 +3139,7 @@ bool CWsWorkunitsEx::onWUGetGraph(IEspContext& context, IEspWUGetGraphRequest& r
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUGetGraph", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUGetGraph", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -3242,7 +3242,7 @@ bool CWsWorkunitsEx::onWUGraphInfo(IEspContext &context,IEspWUGraphInfoRequest &
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUGraphInfo", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUGraphInfo", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -3271,7 +3271,7 @@ bool CWsWorkunitsEx::onWUGVCGraphInfo(IEspContext &context,IEspWUGVCGraphInfoReq
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUGVCGraphInfo", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUGVCGraphInfo", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -3311,7 +3311,7 @@ bool CWsWorkunitsEx::onWUGraphTiming(IEspContext &context, IEspWUGraphTimingRequ
     try
     {
         StringBuffer wuid = req.getWuid();
-        checkAndTrimWorkunit("WUGraphTiming", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUGraphTiming", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid.str(), false);
@@ -3780,7 +3780,7 @@ bool CWsWorkunitsEx::onWUGetBugReportInfo(IEspContext &context, IEspWUGetBugRepo
     try
     {
         StringBuffer wuid = req.getWUID();
-        checkAndTrimWorkunit("WUGetBugReportInfo", wuid);
+        WsWuProcess::checkAndTrimWorkunit("WUGetBugReportInfo", wuid);
 
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
         Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid, false);
