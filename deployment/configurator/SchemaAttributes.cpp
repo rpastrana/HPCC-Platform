@@ -460,7 +460,6 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
 
     const CComplexType *pParentComplexType = dynamic_cast<const CComplexType*>(this->getConstParentNode());
     const CAttributeGroup *pParentAttributeGroup = dynamic_cast<const CAttributeGroup*>(this->getConstParentNode());
-    //assert (pParentComplexType);
 
     strDoc.append(DM_TABLE_BEGIN);
     DEBUG_MARK_STRDOC;
@@ -470,14 +469,18 @@ void CAttributeArray::getDocumentation(StringBuffer &strDoc) const
     if (pParentComplexType != NULL && pParentComplexType->getAnnotation() != NULL && pParentComplexType->getAnnotation()->getAppInfo() != NULL && pParentComplexType->getAnnotation()->getAppInfo()->getDocTableID() != NULL)
     {
         strDoc.append(pParentComplexType->getAnnotation()->getAppInfo()->getDocTableID());
+        DEBUG_MARK_STRDOC;
     }
     else if  (pParentAttributeGroup != NULL && pParentAttributeGroup->getAnnotation() != NULL && pParentAttributeGroup->getAnnotation()->getAppInfo() != NULL && pParentAttributeGroup->getAnnotation()->getAppInfo()->getDocTableID() != NULL)
     {
         strDoc.append(pParentAttributeGroup->getAnnotation()->getAppInfo()->getDocTableID());
+        DEBUG_MARK_STRDOC;
     }
     else
     {
-        strDoc.append(DM_TABLE_ID_UNDEFINED);
+        static unsigned undefined_counter = 1;
+        strDoc.append(DM_TABLE_ID_UNDEFINED).append("-").append(undefined_counter++);
+        DEBUG_MARK_STRDOC;
     }
 
     strDoc.append(DM_TABLE_ID_END);

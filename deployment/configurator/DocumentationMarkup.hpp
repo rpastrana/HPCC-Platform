@@ -17,7 +17,7 @@ static const char* DM_TITLE_END = DM_PARA_END;
 static const char* DM_TITLE_LITERAL = "title";
 static const char* DM_TABLE_BEGIN = "<informaltable colsep=\"1\" rowsep=\"1\" ";
 static const char* DM_TABLE_ID_BEGIN = "id=\"";
-static const char* DM_TABLE_ID_UNDEFINED = "*UNDEFINED*";
+static const char* DM_TABLE_ID_UNDEFINED = "UNDEFINED";
 static const char* DM_TABLE_ID_END = "\">\n";
 static const char* DM_TABLE_END = "</informaltable>\n";
 static const char* DM_TABLE_ROW = "row";
