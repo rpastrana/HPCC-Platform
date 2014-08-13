@@ -255,6 +255,7 @@ static void eclsyntaxerror(HqlGram * parser, const char * s, short yystate, int 
   ITERATE
   JOIN
   JOINED
+  JSON_TOKEN
   KEEP
   KEYDIFF
   KEYED
@@ -3208,6 +3209,16 @@ outputFlag
                             HqlExprArray args;
                             $3.unwindCommaList(args);
                             $$.setExpr(createExprAttribute(xmlAtom, args), $1);
+                        }
+    | JSON_TOKEN        {
+                            $$.setExpr(createAttribute(jsonAtom));
+                            $$.setPosition($1);
+                        }
+    | JSON_TOKEN '(' xmlOptions ')' //exact same options as XML for now
+                        {
+                            HqlExprArray args;
+                            $3.unwindCommaList(args);
+                            $$.setExpr(createExprAttribute(jsonAtom, args), $1);
                         }
     | UPDATE            {
                             $$.setExpr(createComma(createAttribute(updateAtom), createAttribute(overwriteAtom)), $1);

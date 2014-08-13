@@ -1622,6 +1622,7 @@ void CXmlQuickPartitioner::findSplitPoint(offset_t splitOffset, PartitionCursor 
         cursor.outputOffset = cursor.inputOffset - thisOffset;
 }
 
+
 //----------------------------------------------------------------------------
 
 CRemotePartitioner::CRemotePartitioner(const SocketEndpoint & _ep, const FileFormat & _srcFormat, const FileFormat & _tgtFormat, const char * _slave, const char *_wuid)

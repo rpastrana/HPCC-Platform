@@ -737,6 +737,7 @@ ISVALID             { RETURNSYM(ISVALID); }
 ITERATE             { RETURNSYM(ITERATE); }
 JOIN                { RETURNSYM(JOIN); }
 JOINED              { RETURNSYM(JOINED); }
+JSON                { RETURNSYM(JSON_TOKEN); }
 KEEP                { RETURNSYM(KEEP); }
 KEYDIFF             { RETURNSYM(KEYDIFF); }
 KEYED               { RETURNSYM(KEYED); }

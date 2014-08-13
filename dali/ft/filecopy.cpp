@@ -1480,7 +1480,15 @@ void FileSprayer::analyseFileHeaders(bool setcurheadersize)
                 cur.size -= headerSize;
             }
         }
-        if (srcFormat.rowTag&&setcurheadersize)
+        bool isJson = (cur.properties && cur.properties->hasProp("@kind") && strieq(cur.properties->queryProp("@kind"), "json"));
+        if (isJson)
+        {
+            cur.xmlHeaderLength = cur.properties->getPropInt("@headerLength");
+            cur.xmlFooterLength = cur.properties->getPropInt("@footerLength");
+            cur.headerSize += (unsigned)cur.xmlHeaderLength;
+            cur.size -= (cur.xmlHeaderLength + cur.xmlFooterLength);
+        }
+        else if (srcFormat.rowTag && setcurheadersize)
         {
             try
             {
@@ -1540,8 +1548,6 @@ void FileSprayer::locateXmlHeader(IFileIO * io, unsigned headerSize, offset_t & 
     reader.seek(endOffset);
     xmlFooterLength = splitter.getFooterLength(reader, size);
 }
-
-
 
 void FileSprayer::derivePartitionExtra()
 {

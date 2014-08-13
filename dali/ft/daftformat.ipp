@@ -358,10 +358,18 @@ protected:
     byte * buffer;
     Linked<IFileIOStream> stream;
 };
-
-class DALIFT_API XmlSplitter
+interface IContentSplitter : extends IInterface
+{
+    virtual size32_t getRecordSize(const byte * record, unsigned maxToRead, bool throwOnError)=0;
+    virtual size32_t getEndOfRecord(const byte * record, unsigned maxToRead)=0;
+    virtual offset_t getHeaderLength(BufferedDirectReader & reader)=0;
+    virtual offset_t getFooterLength(BufferedDirectReader & reader, offset_t size)=0;
+    virtual unsigned getMaxElementLength()=0;
+};
+class DALIFT_API XmlSplitter : public CInterface, implements IContentSplitter
 {
 public:
+    IMPLEMENT_IINTERFACE;
     XmlSplitter(const FileFormat & format);
 
     size32_t getRecordSize(const byte * record, unsigned maxToRead, bool throwOnError);
@@ -378,8 +386,6 @@ protected:
     unsigned        unitSize;
     UtfReader::UtfFormat utfFormat;
 };
-
-
 
 class DALIFT_API CXmlPartitioner : public CInputBasePartitioner
 {

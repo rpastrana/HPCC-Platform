@@ -27,9 +27,10 @@
 class CXmlWriteActivityMaster : public CWriteMasterBase
 {
     IHThorXmlWriteArg *helper;
+    ThorActivityKind kind;
 
 public:
-    CXmlWriteActivityMaster(CMasterGraphElement *info) : CWriteMasterBase(info)
+    CXmlWriteActivityMaster(CMasterGraphElement *info, ThorActivityKind _kind) : CWriteMasterBase(info), kind(_kind)
     {
         helper = (IHThorXmlWriteArg *)queryHelper();
     }
@@ -52,12 +53,12 @@ public:
         }
         props.setProp("@rowTag", rowTag.str());
         props.setProp("@format", "utf8n");
-        props.setProp("@kind", "xml");
+        props.setProp("@kind", (kind==TAKjsonwrite) ? "json" : "xml");
     }
 };
 
-CActivityBase *createXmlWriteActivityMaster(CMasterGraphElement *container)
+CActivityBase *createXmlWriteActivityMaster(CMasterGraphElement *container, ThorActivityKind kind)
 {
-    return new CXmlWriteActivityMaster(container);
+    return new CXmlWriteActivityMaster(container, kind);
 }
 

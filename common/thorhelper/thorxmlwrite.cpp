@@ -38,7 +38,7 @@ CommonXmlWriter::~CommonXmlWriter()
     flush(true);
 }
 
-CommonXmlWriter & CommonXmlWriter::clear()
+IXmlWriterExt & CommonXmlWriter::clear()
 {
     out.clear();
     indent = 0;
@@ -361,7 +361,7 @@ CommonJsonWriter::~CommonJsonWriter()
     flush(true);
 }
 
-CommonJsonWriter & CommonJsonWriter::clear()
+IXmlWriterExt & CommonJsonWriter::clear()
 {
     out.clear();
     indent = 0;
@@ -939,7 +939,7 @@ CommonXmlWriter * CreateCommonXmlWriter(unsigned _flags, unsigned _initialIndent
 
 //=====================================================================================
 
-IXmlWriter * createIXmlWriter(unsigned _flags, unsigned _initialIndent, IXmlStreamFlusher *_flusher, XMLWriterType xmlType)
+IXmlWriterExt * createIXmlWriterExt(unsigned _flags, unsigned _initialIndent, IXmlStreamFlusher *_flusher, XMLWriterType xmlType)
 {
     if (xmlType==WTJSON)
         return new CommonJsonWriter(_flags, _initialIndent, _flusher);

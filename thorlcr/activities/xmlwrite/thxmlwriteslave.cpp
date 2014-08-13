@@ -31,9 +31,10 @@
 class CXmlWriteSlaveActivity : public CDiskWriteSlaveActivityBase
 {
     IHThorXmlWriteArg *helper;
+    ThorActivityKind kind;
 
 public:
-    CXmlWriteSlaveActivity(CGraphElementBase *container) : CDiskWriteSlaveActivityBase(container)
+    CXmlWriteSlaveActivity(CGraphElementBase *container, ThorActivityKind _kind) : CDiskWriteSlaveActivityBase(container), kind(_kind)
     {
         helper = static_cast <IHThorXmlWriteArg *> (queryHelper());
     }
@@ -53,50 +54,68 @@ public:
             rowTag.append(path);
         }
 
-        StringBuffer xmlOutput;
-        CommonXmlWriter xmlWriter(helper->getXmlFlags());
+        StringBuffer out;
+        Owned<IXmlWriterExt> writer = createIXmlWriterExt(helper->getXmlFlags(), 0, NULL, (kind==TAKjsonwrite) ? WTJSON : WTStandard);
+        writer->outputBeginArray(rowTag); //need this to format rows, even if not outputting it below
         if (!dlfn.isExternal() || firstNode()) // if external, 1 header,footer
         {
             OwnedRoxieString header(helper->getHeader());
             if (header)
-                xmlOutput.clear().append(header);
+                out.set(header.get());
             else
-                xmlOutput.clear().append("<Dataset>").newline();
-            outraw->write(xmlOutput.length(), xmlOutput.toCharArray());
+            {
+                if (kind==TAKjsonwrite)
+                {
+                    out.set("{");
+                    appendJSONName(out, "Dataset").append('{');
+                    appendJSONName(out, rowTag).append('[').newline();
+                }
+                else
+                    out.set("<Dataset>").newline();
+            }
+            outraw->write(out.length(), out.toCharArray());
+            if (writer->length())
+            {
+                outraw->write(writer->length(), writer->str());
+                if (calcFileCrc)
+                    fileCRC.tally(writer->length(), writer->str());
+            }
             if (calcFileCrc)
-                fileCRC.tally(xmlOutput.length(), xmlOutput.toCharArray());
+                fileCRC.tally(out.length(), out.toCharArray());
         }
         while(!abortSoon)
         {
             OwnedConstThorRow row = input->ungroupedNextRow();
             if (!row)
                 break;
-            xmlWriter.clear().outputBeginNested(rowTag, false);
-            helper->toXML((const byte *)row.get(), xmlWriter);
-            xmlWriter.outputEndNested(rowTag);
-            outraw->write(xmlWriter.length(), xmlWriter.str());
+            writer->clear().outputBeginNested(rowTag, false);
+            helper->toXML((const byte *)row.get(), *writer);
+            writer->outputEndNested(rowTag);
+            outraw->write(writer->length(), writer->str());
             if (calcFileCrc)
-                fileCRC.tally(xmlWriter.length(), xmlWriter.str());
+                fileCRC.tally(writer->length(), writer->str());
             processed++;
         }
+        writer->outputEndArray(rowTag); //set this, but don't output it
+        writer->clear();
         if (!dlfn.isExternal() || lastNode()) // if external, 1 header,footer
         {
             OwnedRoxieString footer(helper->getFooter());
             if (footer)
-                xmlOutput.clear().append(footer);
+                out.clear().append(footer);
             else
-                xmlOutput.clear().append("</Dataset>").newline();
-            outraw->write(xmlOutput.length(), xmlOutput.toCharArray());
+                out.clear().append((kind==TAKjsonwrite) ? "]}}" : "</Dataset>").newline();
+            outraw->write(out.length(), out.toCharArray());
             if (calcFileCrc)
-                fileCRC.tally(xmlOutput.length(), xmlOutput.toCharArray());
+                fileCRC.tally(out.length(), out.toCharArray());
         }
     }
     virtual bool wantRaw() { return true; }
 };
 
-CActivityBase *createXmlWriteSlave(CGraphElementBase *container)
+CActivityBase *createXmlWriteSlave(CGraphElementBase *container, ThorActivityKind kind)
 {
-    return new CXmlWriteSlaveActivity(container);
+    return new CXmlWriteSlaveActivity(container, kind);
 }
 
 

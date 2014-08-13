@@ -880,7 +880,7 @@ void CHThorCsvWriteActivity::setFormat(IFileDescriptor * desc)
 
 //=====================================================================================================
 
-CHThorXmlWriteActivity::CHThorXmlWriteActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorXmlWriteArg &_arg, ThorActivityKind _kind) : CHThorDiskWriteActivity(_agent, _activityId, _subgraphId, _arg, _kind), helper(_arg)
+CHThorXmlWriteActivity::CHThorXmlWriteActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorXmlWriteArg &_arg, ThorActivityKind _kind) : CHThorDiskWriteActivity(_agent, _activityId, _subgraphId, _arg, _kind), helper(_arg), headerLength(0), footerLength(0)
 {
     OwnedRoxieString xmlpath(helper.getXmlIteratorPath());
     if (!xmlpath)
@@ -898,12 +898,33 @@ void CHThorXmlWriteActivity::execute()
 {
     // Loop thru the results
     numRecords = 0;
+    StringBuffer header;
     OwnedRoxieString suppliedHeader(helper.getHeader());
-    const char *header = suppliedHeader;
-    if (!header) header = "<Dataset>\n";
-    diskout->write(strlen(header), header);
+    if (suppliedHeader)
+    {
+        header.set(suppliedHeader);
+        if (rowTag.length())
+            appendJSONName(header, rowTag).append("[\n");
+    }
+    else if (kind==TAKjsonwrite)
+    {
+        if (rowTag.length())
+        {
+            header.append('{');
+            appendJSONName(header, rowTag).append("[\n");
+        }
+        else
+            header.append("[\n");
+    }
+    else
+        header.set("<Dataset>\n");
+    headerLength = header.length();
+    diskout->write(headerLength, header.str());
 
-    CommonXmlWriter xmlOutput(helper.getXmlFlags());
+    Owned<IXmlWriterExt> writer = createIXmlWriterExt(helper.getXmlFlags(), 0, NULL, (kind==TAKjsonwrite) ? WTJSON : WTStandard);
+    writer->outputBeginArray(rowTag); //need to set up the array
+    writer->clear(); //but not output it
+
     loop
     {
         OwnedConstRoxieRow nextrec(input->nextInGroup());
@@ -916,29 +937,51 @@ void CHThorXmlWriteActivity::execute()
 
         try
         {
-            xmlOutput.clear().outputBeginNested(rowTag, false);
-            helper.toXML((const byte *)nextrec.get(), xmlOutput);
-            xmlOutput.outputEndNested(rowTag);
+            writer->clear().outputBeginNested(rowTag, false);
+            helper.toXML((const byte *)nextrec.get(), *writer);
+            writer->outputEndNested(rowTag);
         }
         catch(IException * e)
         {
             throw makeWrappedException(e);
         }
 
-        diskout->write(xmlOutput.length(), xmlOutput.str());
+        diskout->write(writer->length(), writer->str());
         numRecords++;
     }
+    writer->clear().outputEndArray(rowTag);  //need to close this
+    writer->clear(); //but not output it
+
     OwnedRoxieString suppliedFooter(helper.getFooter());
-    const char *footer = suppliedFooter;
-    if (!footer) footer = "</Dataset>\n";
-    diskout->write(strlen(footer), footer);
+    StringBuffer footer;
+    if (suppliedFooter)
+    {
+        if (kind==TAKjsonwrite && rowTag.length())
+            footer.append(']');
+        footer.append(suppliedFooter);
+    }
+    else
+    {
+        if (kind==TAKjsonwrite)
+            footer.append(rowTag.length() ? "]}" : "]");
+        else
+            footer.append("</Dataset>");
+    }
+
+    footerLength=footer.length();
+    diskout->write(footerLength, footer);
 }
 
 void CHThorXmlWriteActivity::setFormat(IFileDescriptor * desc)
 {
     desc->queryProperties().setProp("@format","utf8n");
     desc->queryProperties().setProp("@rowTag",rowTag.str());
-    desc->queryProperties().setProp("@kind", "xml");
+    desc->queryProperties().setProp("@kind", (kind==TAKjsonwrite) ? "json" : "xml");
+    if (headerLength)
+        desc->queryProperties().setPropInt("@headerLength", headerLength);
+    if (footerLength)
+        desc->queryProperties().setPropInt("@footerLength", footerLength);
+
     const char *recordECL = helper.queryRecordECL();
     if (recordECL && *recordECL)
         desc->queryProperties().setProp("ECL", recordECL);

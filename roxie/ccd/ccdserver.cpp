@@ -11124,10 +11124,11 @@ class CRoxieServerXmlWriteActivity : public CRoxieServerDiskWriteActivity
 {
     IHThorXmlWriteArg &xmlHelper;
     StringAttr rowTag;
+    ThorActivityKind kind;
 
 public:
-    CRoxieServerXmlWriteActivity(const IRoxieServerActivityFactory *_factory, IProbeManager *_probeManager)
-        : CRoxieServerDiskWriteActivity(_factory, _probeManager), xmlHelper(static_cast<IHThorXmlWriteArg &>(helper))
+    CRoxieServerXmlWriteActivity(const IRoxieServerActivityFactory *_factory, IProbeManager *_probeManager, ThorActivityKind _kind)
+        : CRoxieServerDiskWriteActivity(_factory, _probeManager), xmlHelper(static_cast<IHThorXmlWriteArg &>(helper)), kind(_kind)
     {
     }
 
@@ -11148,11 +11149,27 @@ public:
 
     virtual void onExecute() 
     {
+        StringBuffer header;
         OwnedRoxieString suppliedHeader(xmlHelper.getHeader());
-        const char *header = suppliedHeader;
-        if (!header) header = "<Dataset>\n";
-        diskout->write(strlen(header), header);
-        CommonXmlWriter xmlOutput(xmlHelper.getXmlFlags());
+        if (suppliedHeader)
+            header.set(suppliedHeader);
+        else
+        {
+            if (kind==TAKjsonwrite)
+            {
+                header.set("{");
+                appendJSONName(header, "Dataset").append("{");
+                appendJSONName(header, rowTag).append("[\n");
+            }
+            else
+                header.set("<Dataset>\n");
+        }
+        diskout->write(header.length(), header.str());
+
+        Owned<IXmlWriterExt> writer = createIXmlWriterExt(xmlHelper.getXmlFlags(), 0, NULL, (kind==TAKjsonwrite) ? WTJSON : WTStandard);
+        writer->outputBeginArray(rowTag); //need to set this
+        writer->clear(); //but not output it
+
         loop
         {
             OwnedConstRoxieRow nextrec = input->nextInGroup();
@@ -11163,14 +11180,14 @@ public:
                     break;
             }
             processed++;
-            xmlOutput.clear().outputBeginNested(rowTag, false);
-            xmlHelper.toXML((const byte *)nextrec.get(), xmlOutput);
-            xmlOutput.outputEndNested(rowTag);
-            diskout->write(xmlOutput.length(), xmlOutput.str());
+            writer->clear().outputBeginNested(rowTag, false);
+            xmlHelper.toXML((const byte *)nextrec.get(), *writer);
+            writer->outputEndNested(rowTag);
+            diskout->write(writer->length(), writer->str());
         }
         OwnedRoxieString suppliedFooter(xmlHelper.getFooter());
         const char * footer = suppliedFooter;
-        if (!footer) footer = "</Dataset>\n";
+        if (!footer) footer = (kind==TAKjsonwrite) ? "]}}" : "</Dataset>\n";
         diskout->write(strlen(footer), footer);
     }
 
@@ -11185,7 +11202,7 @@ public:
         CRoxieServerDiskWriteActivity::setFileProperties(desc);
         desc->queryProperties().setProp("@format","utf8n");
         desc->queryProperties().setProp("@rowTag",rowTag.get());
-        desc->queryProperties().setProp("@kind", "xml");
+        desc->queryProperties().setProp("@kind", (kind==TAKjsonwrite) ? "json" : "xml");
     }
 
     virtual bool isOutputTransformed() const { return true; }
@@ -11215,7 +11232,9 @@ public:
             {
             case TAKdiskwrite: return new CRoxieServerDiskWriteActivity(this, _probeManager);
             case TAKcsvwrite: return new CRoxieServerCsvWriteActivity(this, _probeManager);
-            case TAKxmlwrite: return new CRoxieServerXmlWriteActivity(this, _probeManager);
+            case TAKxmlwrite:
+            case TAKjsonwrite:
+                return new CRoxieServerXmlWriteActivity(this, _probeManager, kind);
             };
             throwUnexpected();
         case 1:
@@ -19847,7 +19866,7 @@ public:
                     unsigned int writeFlags = serverContext->getXmlFlags();
                     if (response->mlFmt==MarkupFmt_JSON)
                         writeFlags |= XWFnoindent;
-                    writer.setown(createIXmlWriter(writeFlags, 1, response, (response->mlFmt==MarkupFmt_JSON) ? WTJSON : WTStandard));
+                    writer.setown(createIXmlWriterExt(writeFlags, 1, response, (response->mlFmt==MarkupFmt_JSON) ? WTJSON : WTStandard));
                     writer->outputBeginArray("Row");
                 }
             }
