@@ -166,18 +166,19 @@ ESPresponse [exceptions_inline] ListESDLBindingsResponse
     ESParray<ESPstruct ESDLBinding, Binding> Bindings;
 };
 
-ESPservice [version("1.0"), exceptions_inline("./smc_xslt/exceptions.xslt")] WsESDLConfig
+ESPservice [accessfeatures("ESDLConfigAccess,ClusterTopologyAccess"), version("1.0"), exceptions_inline("./smc_xslt/exceptions.xslt")] WsESDLConfig
 {
-    ESPmethod Echo(EchoRequest, EchoResponse);
-    ESPmethod PublishESDLDefinition(PublishESDLDefinitionRequest, PublishESDLDefinitionResponse);
-    ESPmethod PublishESDLBinding(PublishESDLBindingRequest, PublishESDLBindingResponse);
-    ESPmethod ConfigureESDLBindingMethod(ConfigureESDLBindingMethodRequest, ConfigureESDLBindingMethodResponse);
-    ESPmethod GetESDLBinding(GetESDLBindingRequest, GetESDLBindingResponse);
-    ESPmethod DeleteESDLBinding(DeleteESDLBindingRequest, DeleteESDLRegistryEntryResponse);
-    ESPmethod DeleteESDLDefinition(DeleteESDLDefinitionRequest, DeleteESDLRegistryEntryResponse);
-    ESPmethod GetESDLDefinition(GetESDLDefinitionRequest, GetESDLDefinitionResponse);
-    ESPmethod ListESDLDefinitions(ListESDLDefinitionsRequest, ListESDLDefinitionsResponse);
-    ESPmethod ListESDLBindings(ListESDLBindingsRequest, ListESDLBindingsResponse);
+    //ESPmethod [featureauth("NONE", "Failed to Echo your request. Permission denied", 20)]   Echo(EchoRequest, EchoResponse);
+    ESPmethod [requiredaccess(":NONE")]   Echo(EchoRequest, EchoResponse);
+    ESPmethod [requiredaccess("ESDLConfigAccess:READ,ClusterTopologyAccess:WRITE")]   PublishESDLDefinition(PublishESDLDefinitionRequest, PublishESDLDefinitionResponse);
+    ESPmethod [requiredaccess(":WRITE")] PublishESDLBinding(PublishESDLBindingRequest, PublishESDLBindingResponse);
+    ESPmethod [requiredaccess(":READ")]   ConfigureESDLBindingMethod(ConfigureESDLBindingMethodRequest, ConfigureESDLBindingMethodResponse);
+    ESPmethod [requiredaccess(":WRITE")]  GetESDLBinding(GetESDLBindingRequest, GetESDLBindingResponse);
+    ESPmethod [requiredaccess(":NONE")]   DeleteESDLBinding(DeleteESDLBindingRequest, DeleteESDLRegistryEntryResponse);
+    ESPmethod [] DeleteESDLDefinition(DeleteESDLDefinitionRequest, DeleteESDLRegistryEntryResponse);
+    ESPmethod [] GetESDLDefinition(GetESDLDefinitionRequest, GetESDLDefinitionResponse);
+    ESPmethod [] ListESDLDefinitions(ListESDLDefinitionsRequest, ListESDLDefinitionsResponse);
+    ESPmethod [] ListESDLBindings(ListESDLBindingsRequest, ListESDLBindingsResponse);
 };
 
 SCMexportdef(WsESDLConfig);

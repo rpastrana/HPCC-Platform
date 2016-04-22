@@ -83,6 +83,9 @@ interface IEspHttpBinding
     virtual int onGetForm(IEspContext &context, CHttpRequest* request,   CHttpResponse* response, const char *servName, const char *methodName)=0;
     virtual int onGetXForm(IEspContext &context, CHttpRequest* request,   CHttpResponse* response, const char *servName, const char *methodName)=0;
     virtual int onGetInstantQuery(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serviceName, const char *methodName)=0;
+    virtual int onFeatureAuthorize(IEspContext &context, const char * featureName, SecAccessFlags accessLevel, const char *serviceName, const char *methodName)=0;
+    virtual int onFeaturesAuthorize(IEspContext &context, MapStringTo<SecAccessFlags> & pmap, const char *serviceName, const char *methodName)=0;
+
     virtual int onGetQuery(IEspContext &context, CHttpRequest* request,  CHttpResponse* response, const char *servName, const char *methodName)=0;
     virtual int onGetResult(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *servName, const char *methodName, const char *resultPath)=0;
     virtual int onGetResultPresentation(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serviceName, const char *methodName, StringBuffer &xmlResult)=0;
@@ -95,7 +98,7 @@ interface IEspHttpBinding
     virtual int onGetRespSampleXml(IEspContext &context, CHttpRequest* request, CHttpResponse* response,    const char *serv, const char *method)=0;
     virtual int onStartUpload(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method)=0;
     virtual int onFinishUpload(IEspContext &context, CHttpRequest* request, CHttpResponse* response,    const char *serv, const char *method,
-        StringArray& fileNames, StringArray& files, IMultiException *me)=0;
+    StringArray& fileNames, StringArray& files, IMultiException *me)=0;
 };
 
 typedef MapStringTo<int> wsdlIncludedTable;
@@ -148,6 +151,7 @@ protected:
     bool                    m_includeSoapTest;
     StringBuffer            m_challenge_realm;
     StringAttr              m_defaultSvcVersion;
+    StringArray             m_accesFeatures;
 
 public:
     EspHttpBinding(IPropertyTree* cfg, const char *bindname=NULL, const char *procname=NULL);
@@ -164,6 +168,39 @@ public:
     const char* getChallengeRealm() {return m_challenge_realm.str();}
     double getWsdlVersion(){return m_wsdlVer;}
     void setWsdlVersion(double ver){m_wsdlVer=ver;}
+    void setAccessFeatures(const char * commadelimtedlist)
+    {
+        //HIDL doesn't import jlib, this method avoids jlib/std cohabitation
+        char delimiter = ',';
+        int len = strlen( commadelimtedlist);
+        StringBuffer currEntry;
+        for (int i = 0; i < len; i++)
+        {
+            char currChar = commadelimtedlist[i];
+            if (currChar != delimiter)
+                currEntry.append(currChar);
+
+            //encountered delimiter or we're at end of list
+            if(currChar == delimiter || i+1 == len)
+            {
+                m_accesFeatures.append(currEntry.str());
+                currEntry.clear();
+            }
+        }
+    }
+
+    const char * getDefaultFeatureAccessName() {return m_accesFeatures.item(0);}
+    const char * getFeatureAccesName(int index)
+    {
+        if(index >= 0 && index < m_accesFeatures.length())
+        {
+            DBGLOG("featureaccess[%d]: %s", index,m_accesFeatures.item(index) );
+            return m_accesFeatures.item(index);
+        }
+        else
+            return NULL;
+    }
+
     const char *getWsdlAddress(){return m_wsdlAddress.str();}
     void setWsdlAddress(const char *wsdladdress){m_wsdlAddress.set(wsdladdress);}
 
@@ -217,6 +254,8 @@ public:
     virtual int onGetForm(IEspContext &context, CHttpRequest* request,   CHttpResponse* response, const char *serv, const char *method);
     virtual int onGetXForm(IEspContext &context, CHttpRequest* request,   CHttpResponse* response, const char *serv, const char *method);
     virtual int onGetInstantQuery(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method);
+    virtual int onFeatureAuthorize(IEspContext &context, const char * featureName, SecAccessFlags accessLevel, const char *serviceName, const char *methodName);
+    virtual int onFeaturesAuthorize(IEspContext &context, MapStringTo<SecAccessFlags> & pmap, const char *serviceName, const char *methodName);
     virtual int onGetResult(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method, const char *pathex);
     virtual int onGetResultPresentation(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method, StringBuffer &xmlResult);
     virtual int onGetFile(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *path);

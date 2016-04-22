@@ -44,7 +44,9 @@ set (    SRCS
 
 include_directories ( 
          ${CMAKE_CURRENT_BINARY_DIR}   # for generated .h file
-         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/include
+         //${HPCC_SOURCE_DIR}/system/security/shared # only for sec level enum in seclibdefines.h
+         //${HPCC_SOURCE_DIR}/system/jlib            # selib.hpp includes jlib
          ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
