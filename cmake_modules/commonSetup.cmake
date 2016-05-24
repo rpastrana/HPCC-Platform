@@ -109,6 +109,7 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
   option(JAVAEMBED "Create a package with ONLY the javaembed plugin" OFF)
   option(SQLITE3EMBED "Create a package with ONLY the sqlite3embed plugin" OFF)
   option(KAFKA "Create a package with ONLY the kafkaembed plugin" OFF)
+  option(COUCHBASEEMBED "Create a package with ONLY the couchbaseembed plugin" OFF)
 
   if (APPLE OR WIN32)
       option(USE_TBB "Enable Threading Building Block support" OFF)
@@ -121,9 +122,8 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
 
   option(USE_OPTIONAL "Automatically disable requested features with missing dependencies" ON)
 
-
     if(REMBED OR V8EMBED OR MEMCACHED OR PYEMBED OR REDIS OR JAVAEMBED OR MYSQLEMBED
-        OR SQLITE3EMBED OR KAFKA)
+        OR SQLITE3EMBED OR KAFKA OR COUCHBASEEMBED)
         set(PLUGIN ON)
         set(CLIENTTOOLS OFF)
         set(PLATFORM OFF)
@@ -192,6 +192,13 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
 	        message(FATAL_ERROR "Cannot enable kafka, already declared ${pluginname}")
         else()
             set(pluginname "kafka")
+        endif()
+    endif()
+    if(COUCHBASEEMBED)
+        if(DEFINED pluginname)
+            message(FATAL_ERROR "Cannot enable couchbaseembed, already declared ${pluginname}")
+        else()
+            set(pluginname "couchbaseembed")
         endif()
     endif()
 
