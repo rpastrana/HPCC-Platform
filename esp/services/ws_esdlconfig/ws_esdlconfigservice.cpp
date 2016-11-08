@@ -243,6 +243,25 @@ void fetchESDLDefinitionFromDaliById(const char *id, StringBuffer & def)
         throw MakeStringException(-1, "Unable to fetch ESDL Service definition from dali: '%s'", id);
 }
 
+
+typedef IEspCacheClient * (*newLoggingAgent_t_)();
+
+IEspCacheClient* CWsESDLConfigEx::loadCacheClient(const char* name, const char* dll, const char* service)
+{
+    StringBuffer plugin;
+    plugin.append(SharedObjectPrefix).append(dll).append(SharedObjectExtension);
+    HINSTANCE loggingAgentLib = LoadSharedObject("/opt/HPCCSystems/lib/libcassandraespcache.so", true, false);
+    if(!loggingAgentLib)
+        throw MakeStringException(-1, "can't load library %s", plugin.str());
+
+    newLoggingAgent_t_ xproc = (newLoggingAgent_t_)GetSharedProcedure(loggingAgentLib, "createEspCache");
+    if (!xproc)
+        //throw MakeStringException(EspLoggingErrors::LoadLoggingLibraryError, "procedure createEspCache of %s can't be loaded", plugin.str());
+        throw MakeStringException(-1, "procedure createEspCache of %s can't be loaded", plugin.str());
+
+    return (IEspCacheClient*) xproc();
+}
+
 void CWsESDLConfigEx::init(IPropertyTree *cfg, const char *process, const char *service)
 {
     if(cfg == NULL)
@@ -255,7 +274,7 @@ void CWsESDLConfigEx::init(IPropertyTree *cfg, const char *process, const char *
 #endif
 
     StringBuffer xpath;
-    xpath.appendf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]", process, service);
+    xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]", process, service);
     IPropertyTree* servicecfg = cfg->getPropTree(xpath.str());
 
     if(servicecfg == NULL)
@@ -263,6 +282,43 @@ void CWsESDLConfigEx::init(IPropertyTree *cfg, const char *process, const char *
 
     if(!ensureSDSPath("ESDL"))
         throw MakeStringException(-1, "Could not ensure '/ESDL' entry in dali configuration");
+
+    xpath.set("EspCache");
+    IPropertyTree * cacheCfg = servicecfg->getPropTree(xpath.str());
+
+    //StringBuffer myconfig;
+    //myconfig.set("<root><cassandra></cassandra></root>");
+    //IPropertyTree * cass = createPTreeFromXMLString(myconfig.str());
+/*
+    IEspLogAgent* loggingAgent = loadLoggingAgent(agentName, agentPlugin, service, cfg);
+            if (!loggingAgent)
+            {
+                ERRLOG(-1, "Failed to create logging agent for %s", agentName);
+                continue;
+            }
+            loggingAgent->init(agentName, agentType, &loggingAgentTree, service);
+            IUpdateLogThread* logThread = createUpdateLogThread(&loggingAgentTree, service, agentName, loggingAgent);
+            if(!logThread)
+                throw MakeStringException(-1, "Failed to create update log thread for %s", agentName);
+            loggingAgentThreads.push_back(logThread);
+            */
+    if (cacheCfg)
+    {
+        StringBuffer xml;
+        toXML(cacheCfg, xml);
+        DBGLOG("#########%s", xml.str());
+
+        const char * name = cacheCfg->queryProp("@name");
+        const char * libName = cacheCfg->queryProp("@libName");
+        const char * methodName = cacheCfg->queryProp("@instanceFactoryName");
+
+        IEspCacheClient * cacheClient = loadCacheClient(name, libName, methodName);
+        if (!cacheClient)
+        {
+            throw MakeStringException(-1, "Could not ensure '/ESDL' entry in dali configuration");
+		}
+		cacheClient->init("name", "type", cacheCfg, "proc");
+    }
 }
 
 IPropertyTree * CWsESDLConfigEx::getESDLDefinitionRegistry(const char * wsEclId, bool readonly)

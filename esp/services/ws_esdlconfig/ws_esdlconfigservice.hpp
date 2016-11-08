@@ -22,6 +22,8 @@
 #include "ws_topology_esp.ipp"
 #include "esdlconfig_errors.h"
 
+#include "espcacheclient.hpp"
+
 static const char* FEATURE_URL="ESDLConfigAccess";
 
 class CWsESDLConfigSoapBindingEx : public CWsESDLConfigSoapBinding
@@ -60,6 +62,8 @@ public:
     bool onListESDLDefinitions(IEspContext &context, IEspListESDLDefinitionsRequest&req, IEspListESDLDefinitionsResponse &resp);
     bool onListESDLBindings(IEspContext &context, IEspListESDLBindingsRequest&req, IEspListESDLBindingsResponse &resp);
     bool onListDESDLEspBindings(IEspContext &context, IEspListDESDLEspBindingsReq&req, IEspListDESDLEspBindingsResp &resp);
+
+    IEspCacheClient * loadCacheClient(const char* name, const char* dll, const char* service);
 };
 
 #endif //_ESPWIZ_WsESDLConfig_HPP__

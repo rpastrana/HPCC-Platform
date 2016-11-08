@@ -14,13 +14,12 @@
 #    limitations under the License.
 ################################################################################
 
-# Component: cassandralogagent
+# Component: cassandraespcache
 
-if(USE_CASSANDRA)
-  project( cassandralogagent )
+IF(USE_CASSANDRA)
+  project( cassandraespcache )
 
   include_directories (
-     ${HPCC_SOURCE_DIR}/esp/platform #for token serialize/deserialize
      ${HPCC_SOURCE_DIR}/system/include
      ${HPCC_SOURCE_DIR}/system/jlib
      ${HPCC_SOURCE_DIR}/system/security/shared
@@ -36,26 +35,26 @@ if(USE_CASSANDRA)
      ${HPCC_SOURCE_DIR}/plugins/cassandra/cpp-driver/include
      ${HPCC_SOURCE_DIR}/plugins/cassandra
      ${HPCC_SOURCE_DIR}/esp/platform
+     ${HPCC_SOURCE_DIR}/esp/cache
      ${HPCC_SOURCE_DIR}/esp/bindings
      ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
-     ${HPCC_SOURCE_DIR}/esp/logging/logginglib
   )
 
-  ADD_DEFINITIONS( -D_USRDLL -DCASSANDRALOGAGENT_EXPORTS )
+  ADD_DEFINITIONS( -D_USRDLL -DCASSANDRAESPCACHE_EXPORTS )
 
   set ( SRCS
-    cassandralogagent.cpp
+    cassandraespcache.cpp
   )
+message("##################################################3")
+  HPCC_ADD_LIBRARY( cassandraespcache SHARED ${SRCS} )
 
-  HPCC_ADD_LIBRARY( cassandralogagent SHARED ${SRCS} )
-
-  install ( TARGETS cassandralogagent RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
-  add_dependencies (cassandralogagent espscm)
-  target_link_libraries ( cassandralogagent
+  install ( TARGETS cassandraespcache RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
+  add_dependencies (cassandraespcache espscm)
+  target_link_libraries ( cassandraespcache
     cassandraembed
     eclrtl
     esphttp
     jlib
-    logginglib
   )
-endif(USE_CASSANDRA)
+
+ENDIF(USE_CASSANDRA)
