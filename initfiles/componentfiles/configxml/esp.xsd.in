@@ -270,6 +270,14 @@
                                 </xs:appinfo>
                             </xs:annotation>
                         </xs:attribute>
+                        <xs:attribute name="cache" type="espcachetype" use="optional">
+                            <xs:annotation>
+                                <xs:appinfo>
+                                    <tooltip>The cache to be used by the Esp Service</tooltip>
+                                    <title>Cache</title>
+                                </xs:appinfo>
+                            </xs:annotation>
+                        </xs:attribute>
                     </xs:complexType>
                 </xs:element>
                 <xs:element name="Authentication">

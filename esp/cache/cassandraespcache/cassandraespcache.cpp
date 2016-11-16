@@ -19,10 +19,13 @@
 
 #include "esp.hpp"
 #include "espcontext.hpp"
+#include "eclhelper.hpp"
+#include "deftype.hpp"
+#include "eclhelper.hpp"
+#include "eclrtl.hpp"
+#include "eclrtl_imp.hpp"
 
-static const int defaultMaxTriesGTS = -1;
-
-static void setCassandraLogAgentOption(StringArray& opts, const char* opt, const char* val)
+static void setOption(StringArray& opts, const char* opt, const char* val)
 {
     if (opt && *opt && val)
     {
@@ -46,279 +49,295 @@ static void ensureInputString(const char* input, bool lowerCase, StringBuffer& o
         outputStr.toLowerCase();
 }
 
-void CCassandraEspCacheClient::readDBCfg(IPropertyTree* cfg, StringBuffer& server, StringBuffer& dbUser, StringBuffer& dbPassword)
+void CCassandraEspCacheClient::readConnectionCfg(IPropertyTree* cfg)
 {
+	if(cfg)
+	{
+		m_cassandraHost.set(cfg->queryProp("server"));
+		if (m_cassandraHost.length() == 0)
+		{
+			m_cassandraHost.set("localhost");
+			ESPLOG(LogNormal, "ESP Cache: Target Cassandra server not specified, defaulting to  LOCALHOST!");
+		}
 
-    ensureInputString(cfg->queryProp("@server"), true, server, -1, "Database server required");
-    ensureInputString(cfg->queryProp("@dbName"), true, cacheName, -1, "Database name required");
+		int cassandraServerPort = cfg->getPropInt("port", 9042);
 
-    transactionTable.set(cfg->hasProp("@dbTableName") ? cfg->queryProp("@dbTableName") : defaultTransactionTable.str());
-    dbUser.set(cfg->queryProp("@dbUser"));
-    const char* encodedPassword = cfg->queryProp("@dbPassWord");
-    if(encodedPassword && *encodedPassword)
-        decrypt(dbPassword, encodedPassword);
+		m_cassandraUserID.set(cfg->queryProp("@user"));
+		if (m_cassandraUserID.length() == 0)
+		{
+			ESPLOG(LogNormal, "ESP Cache: Target Cassandra USER not specified!");
+		}
+
+		m_cassandraUserPass.set(cfg->queryProp("@password"));
+		if (m_cassandraUserPass.length() == 0)
+		{
+			ESPLOG(LogNormal, "ESP Cache: Target Cassandra PASSWORD not specified!");
+		}
+	}
+	else
+		throw MakeStringException(-1, "Unable to find configuration for Cassandra based ESP Cache client");
+
+
 }
 
-bool CCassandraEspCacheClient::init(const char* name, const char* type, IPropertyTree* cfg, const char* process)
+/*void CCassandraEspCacheClient::readCacheLayoutCfg(IPropertyTree* cfg)
+{
+}*/
+
+bool CCassandraEspCacheClient::init(const char* name, const char* type, IPropertyTree* cfg)
 {
     if (!name || !*name || !type || !*type)
-        throw MakeStringException(-1, "Name or type not specified for CassandraLogAgent");
+        throw MakeStringException(-1, "Name or type not specified for Cassandra based ESP Cache client");
 
-    if (!cfg)
-        throw MakeStringException(-1, "Unable to find configuration for log agent %s:%s", name, type);
+    readConnectionCfg(cfg);
 
-
-    //IPropertyTree* cassandraCacheCfg = cfg->queryBranch("EspCache");
-    //if(!cassandraCacheCfg)
-    //    throw MakeStringException(-1, "Unable to find Cassandra settings for log agent %s:%s", name, type);
-
-    const char * cassandraServer = cfg->queryProp("server");
-    int cassandraServerPort = cfg->getPropInt("port", 9042);
-
+    //readCacheLayoutCfg(cfg->queryBranch("cache"));
     IPropertyTree* cachecfg = cfg->queryBranch("cache");
+    m_cacheName.set(cachecfg->queryProp("@name"));
 
-    cacheName.set(cachecfg->queryProp("@name"));
 
-    DBGLOG("\n#######################################\n%s-%d-%s", cassandraServer, cassandraServerPort, cacheName.str());
-    //readDBCfg(cassandra, dbServer, dbUserID, queryProp);
-
-    //Read information about data mapping for every log groups
-    //readLogGroupCfg(cfg, defaultLogGroup, logGroups);
-    //if (defaultLogGroup.isEmpty())
-    //    throw MakeStringException(-1,"LogGroup not defined");
-
-    //Read mapping between log sources and log groups
-    //readLogSourceCfg(cfg, logSourceCount, logSourcePath, logSources);
-
-    //Read transactions settings
-    //readTransactionCfg(cfg);
-
-    maxTriesGTS = cfg->getPropInt("MaxTriesGTS", defaultMaxTriesGTS);
-
-    //Setup Cassandra
-    initKeySpace();
-    return true;
-}
-
-bool CCassandraEspCacheClient::contains(const char * key)
-{
-    return false;
-}
-
-void CCassandraEspCacheClient::add(const char * key,  IEspCacheEntry * entry)
-{
-    return;
-}
-
-void CCassandraEspCacheClient::remove(const char * key)
-{
-    return;
-}
-
-IEspCacheEntry * CCassandraEspCacheClient::fetch (const char * key)
-{
-    return nullptr;
-}
-
-void CCassandraEspCacheClient::initKeySpace()
-{
-    //Initialize Cassandra Cluster Session
-    session.setown(new CassandraClusterSession(cass_cluster_new()));
-    if (!session)
-        throw MakeStringException(-1,"Unable to create cassandra cassSession session");
-
-    setSessionOptions(cacheName.str());
+    //IPropertyTree* tablecfg = cachecfg->queryBranch("table"); //RODRIGO could we support multiple tables??? nah
+    //Init Cassandra session and connect
+    initSession();
 
     //ensure defaultDB
     ensureDefaultKeySpace();
 
-    //ensure transSeed tables
-    //ensureTransSeedTable();
+    //cachecfg->queryBranch("table")
+    initCachTable(cachecfg->queryBranch("table"));
+    return true;
+}
 
-    //Read logging transaction seed
-    //queryTransactionSeed(loggingTransactionApp.get(), loggingTransactionSeed);
+void CCassandraEspCacheClient::initCachTable(IPropertyTree * tablecfg)
+{
+	StringBuffer queryCacheTableKeys;
+	StringArray queryCacheTableColumnNames, queryCacheTableColumnTypes;
+
+	queryCacheTableColumnNames.append("wuid");
+	queryCacheTableColumnTypes.append("varchar");
+	queryCacheTableColumnNames.append("sqlquery");
+	queryCacheTableColumnTypes.append("varchar");
+	queryCacheTableKeys.set("sqlquery"); //primary keys
+
+	m_tableName.set(tablecfg->queryProp("@name"));
+	m_cacheWideTimeToLive = tablecfg->getPropInt("@ttl", 0);
+
+	createTable(m_cacheName.str(), m_tableName.str(), queryCacheTableColumnNames, queryCacheTableColumnTypes, queryCacheTableKeys.str(), m_cacheWideTimeToLive);
+
+
+	VStringBuffer st("SELECT %s FROM %s.%s LIMIT 1;", queryCacheTableKeys.str(), m_cacheName.str(), m_tableName.str());
+	if (! executeSimpleSelectStatement(st.str()))
+	{
+		st.setf("INSERT INTO %s (sqlquery, wuid) values ( 'select * from myhpcctable', 'W20160101-010101');", m_tableName.str());
+		executeSimpleStatement(st.str());
+	}
+	//m_cassandraSession->disconnect();
+}
+
+
+bool CCassandraEspCacheClient::contains(IEspCacheSerializable & key)
+{
+	//m_cassandraSession->connect();
+	VStringBuffer st("SELECT sqlquery FROM %s.%s where sqlquery = '%s' LIMIT 1;", m_cacheName.str(), m_tableName.str(), key.str());
+	bool success = executeSimpleSelectStatement(st.str());
+	//m_cassandraSession->disconnect();
+    return success;
+}
+
+void CCassandraEspCacheClient::add(IEspCacheSerializable & key, IEspCacheSerializable & entry, unsigned int ttl)
+{
+	bool success = false;
+	const char * entryvalue = entry.str();
+	if (entryvalue && *entryvalue)
+	{
+		StringBuffer usingoption;
+		if (ttl > 0)
+			usingoption.setf("USING TTL %d", ttl);
+
+		VStringBuffer statement("INSERT INTO %s.%s (sqlquery, wuid) values ('%s', '%s') %s;", m_cacheName.str(), m_tableName.str(), key.str(), entryvalue, usingoption.str());
+		//m_cassandraSession->connect();
+		success = executeSimpleSelectStatement(statement.str());
+		//m_cassandraSession->disconnect();
+	}
+}
+
+void CCassandraEspCacheClient::add(IEspCacheSerializable & key, IArrayOf<IEspCacheSerializable> & entries, unsigned int ttl)
+{
+	bool success = false;
+	if (entries.length())
+	{
+		StringBuffer usingoption;
+		if (ttl > 0)
+			usingoption.setf("USING TTL %d", ttl);
+
+		const char * entryvalue = entries.item(0).str();
+		VStringBuffer statement("INSERT INTO %s.%s (sqlquery, wuid) values (%s, %s)) %s ;", m_cacheName.str(), m_tableName.str(), key.str(), entryvalue, usingoption.str());
+		//m_cassandraSession->connect();
+		success = executeSimpleSelectStatement(statement.str());
+		//m_cassandraSession->disconnect();
+	}
+    //return success;
+}
+
+void CCassandraEspCacheClient::remove(IEspCacheSerializable & key)
+{
+	bool success = false;
+	VStringBuffer statement("DELETE from %s.%s where sqlquery = '%s';", m_cacheName.str(), m_tableName.str(), key.str());
+	//m_cassandraSession->connect();
+	success = executeSimpleSelectStatement(statement.str());
+	//m_cassandraSession->disconnect();
+    return;
+}
+
+IEspCacheSerializable * CCassandraEspCacheClient::fetch (IEspCacheSerializable & key)
+{
+	bool success = false;
+	VStringBuffer statement("SELECT wuid FROM %s.%s where sqlquery = '%s' LIMIT 1;", m_cacheName.str(), m_tableName.str(), key.str());
+	StringBuffer response;
+	//m_cassandraSession->connect();
+	success = executeSimpleSelectStatement(statement.str(), response);
+	//m_cassandraSession->disconnect();
+
+	if (success)
+	{
+		Owned<CEspCacheValue> resp = new CEspCacheValue(response.str());
+		return resp.getLink();
+	}
+
+	return nullptr;
+}
+
+void CCassandraEspCacheClient::ensureCacheTable()
+{
+	CassandraSession s(cass_session_new());
+	CassandraFuture future1(cass_session_connect(s, m_cassandraSession->queryCluster()));
+	future1.wait("connect without keyspace");
+
+	VStringBuffer st("CREATE KEYSPACE IF NOT EXISTS %s WITH replication "
+					 "= { 'class': 'SimpleStrategy', 'replication_factor': '1' };",
+					 m_cacheName.str());
+
+	CassandraStatement statement(cass_statement_new(st.str(), 0));
+	CassandraFuture future2(cass_session_execute(s, statement));
+	future2.wait("execute");
+
+	s.set(NULL);
+}
+
+void CCassandraEspCacheClient::initSession()
+{
+    //Initialize Cassandra Cluster Session
+    m_cassandraSession.setown(new CassandraClusterSession(cass_cluster_new()));
+    if (!m_cassandraSession)
+        throw MakeStringException(-1,"Unable to create cassandra cassSession session");
+
+    setSessionOptions();
+    m_cassandraSession->connect();
 }
 
 void CCassandraEspCacheClient::ensureDefaultKeySpace()
 {
-    CassandraSession s(cass_session_new());
-    CassandraFuture future1(cass_session_connect(s, session->queryCluster()));
-    future1.wait("connect without keyspace");
+	CassandraSession s(cass_session_new());
+	CassandraFuture future1(cass_session_connect(s, m_cassandraSession->queryCluster()));
+	future1.wait("connect without keyspace");
 
-    VStringBuffer st("CREATE KEYSPACE IF NOT EXISTS %s WITH replication "
-                     "= { 'class': 'SimpleStrategy', 'replication_factor': '1' };",
-                     cacheName.str());
+	VStringBuffer st("CREATE KEYSPACE IF NOT EXISTS %s WITH replication "
+					 "= { 'class': 'SimpleStrategy', 'replication_factor': '1' };",
+					 m_cacheName.str());
 
-    CassandraStatement statement(cass_statement_new(st.str(), 0));
-    CassandraFuture future2(cass_session_execute(s, statement));
-    future2.wait("execute");
+	CassandraStatement statement(cass_statement_new(st.str(), 0));
+	CassandraFuture future2(cass_session_execute(s, statement));
+	future2.wait("execute");
 
-    s.set(NULL);
+	s.set(NULL);
 }
 
-void CCassandraEspCacheClient::setSessionOptions(const char *keyspace)
+void CCassandraEspCacheClient::setSessionOptions()
 {
     StringArray opts;
-    setCassandraLogAgentOption(opts, "contact_points", server.str());
-    if (!userID.isEmpty())
+    setOption(opts, "contact_points", m_cassandraHost.str());
+    if (!m_cassandraUserID.isEmpty())
     {
-        setCassandraLogAgentOption(opts, "user", userID.str());
-        if (!password.isEmpty())
-            setCassandraLogAgentOption(opts, "password", password.str());
+        setOption(opts, "user", m_cassandraUserID.str());
+        if (!m_cassandraUserPass.isEmpty())
+            setOption(opts, "password", m_cassandraUserPass.str());
     }
-    if (keyspace && *keyspace)
-        setCassandraLogAgentOption(opts, "keyspace", keyspace);
-    session->setOptions(opts);
+    if (m_cacheName.length())
+        setOption(opts, "keyspace", m_cacheName.str());
+    m_cassandraSession->setOptions(opts);
 }
 
-void CCassandraEspCacheClient::createTable(const char *dbName, const char *tableName, StringArray& columnNames, StringArray& columnTypes, const char* keys)
+void CCassandraEspCacheClient::createTable(const char *dbName, const char *tableName, StringArray& columnNames, StringArray& columnTypes, const char* keys, unsigned timeToLive)
 {
     StringBuffer fields;
     ForEachItemIn(i, columnNames)
         fields.appendf("%s %s,", columnNames.item(i), columnTypes.item(i));
 
-    VStringBuffer createTableSt("CREATE TABLE IF NOT EXISTS %s.%s (%s PRIMARY KEY (%s));", dbName, tableName, fields.str(), keys);
+    VStringBuffer createTableSt("CREATE TABLE IF NOT EXISTS %s.%s (%s PRIMARY KEY (%s)) WITH default_time_to_live = %d;", dbName, tableName, fields.str(), keys, timeToLive);
     executeSimpleStatement(createTableSt.str());
 }
 
 void CCassandraEspCacheClient::executeSimpleStatement(const char* st)
 {
-    CassandraStatement statement(session->prepareStatement(st, getEspLogLevel()>LogNormal));
-    CassandraFuture future(cass_session_execute(session->querySession(), statement));
+    CassandraStatement statement(m_cassandraSession->prepareStatement(st, getEspLogLevel()>LogNormal));
+    CassandraFuture future(cass_session_execute(m_cassandraSession->querySession(), statement));
     future.wait("execute");
 }
 
-
-/*void CCassandraLogAgent::addField(CLogField& logField, const char* name, StringBuffer& value, StringBuffer& fields, StringBuffer& values)
+bool CCassandraEspCacheClient::executeSimpleSelectStatement(const char* st)
 {
-    const char* fieldType = logField.getType();
-    if(strieq(fieldType, "int"))
-    {
-        appendFieldInfo(logField.getMapTo(), value, fields, values, false);
-        return;
-    }
+	//m_cassandraSession->connect();
 
-    if(strieq(fieldType, "raw"))
-    {
-        appendFieldInfo(logField.getMapTo(), value, fields, values, true);;
-        return;
-    }
-
-    if(strieq(fieldType, "varchar") || strieq(fieldType, "text"))
-    {
-        if(fields.length() != 0)
-            fields.append(',');
-        fields.append(logField.getMapTo());
-
-        if(values.length() != 0)
-            values.append(',');
-        values.append('\'');
-
-        const char* str = value.str();
-        int length = value.length();
-        for(int i = 0; i < length; i++)
-        {
-            unsigned char c = str[i];
-            if(c == '\t' || c == '\n' || c== '\r')
-                values.append(' ');
-            else if(c == '\'')
-                values.append('"');
-            else if(c < 32 || c > 126)
-                values.append('?');
-            else
-                values.append(c);
-        }
-        values.append('\'');
-        return;
-    }
-
-    DBGLOG("Unknown format %s", fieldType);
-}*/
-
-/*
-void CCassandraLogAgent::setUpdateLogStatement(const char* dbName, const char* tableName,
-        const char* fields, const char* values, StringBuffer& statement)
-{
-    statement.setf("INSERT INTO %s.%s (%s, date_added) values (%s, toUnixTimestamp(now()));", dbName, tableName, fields, values);
-}
-
-
-void CCassandraLogAgent::executeUpdateLogStatement(StringBuffer& st)
-{
-    cassSession->connect();
-    CassandraFuture futurePrep(cass_session_prepare_n(cassSession->querySession(), st.str(), st.length()));
-    futurePrep.wait("prepare statement");
-
-    Owned<CassandraPrepared> prepared = new CassandraPrepared(cass_future_get_prepared(futurePrep), NULL);
-    CassandraStatement statement(prepared.getClear());
-    CassandraFuture future(cass_session_execute(cassSession->querySession(), statement));
-    future.wait("execute");
-    cassSession->disconnect();
-}
-
-bool CCassandraLogAgent::executeSimpleSelectStatement(const char* st, unsigned& resultValue)
-{
-    CassandraStatement statement(cassSession->prepareStatement(st, getEspLogLevel()>LogNormal));
-    CassandraFuture future(cass_session_execute(cassSession->querySession(), statement));
+    CassandraStatement statement(m_cassandraSession->prepareStatement(st, getEspLogLevel()>LogNormal));
+    CassandraFuture future(cass_session_execute(m_cassandraSession->querySession(), statement));
     future.wait("execute");
     CassandraResult result(cass_future_get_result(future));
+
+	//m_cassandraSession->disconnect();
+
+    if (cass_result_row_count(result) == 0)
+        return false;
+
+    return true;
+}
+
+bool CCassandraEspCacheClient::executeSimpleSelectStatement(const char* st, StringBuffer & resultValue)
+{
+	//m_cassandraSession->connect();
+
+    CassandraStatement statement(m_cassandraSession->prepareStatement(st, getEspLogLevel()>LogNormal));
+    CassandraFuture future(cass_session_execute(m_cassandraSession->querySession(), statement));
+    future.wait("execute");
+    CassandraResult result(cass_future_get_result(future));
+    if (cass_result_row_count(result) == 0)
+        return false;
+
+    size32_t chars;
+    rtlDataAttr tempStr;
+        //cassandraembed::getStringResult(NULL, getSingleResult(result), chars, tempStr.refstr());
+        //resultValue.setString(chars, tempStr.getstr());
+
+    getStringResult(NULL, getSingleResult(result), chars, tempStr.refstr());
+    resultValue.set(tempStr.getstr());
+    //resultValue = getUnsignedResult(NULL, getSingleResult(result));
+    //m_cassandraSession->disconnect();
+    return true;
+}
+
+bool CCassandraEspCacheClient::executeSimpleSelectStatement(const char* st, unsigned& resultValue)
+{
+
+	//m_cassandraSession->connect();
+
+    CassandraStatement statement(m_cassandraSession->prepareStatement(st, getEspLogLevel()>LogNormal));
+    CassandraFuture future(cass_session_execute(m_cassandraSession->querySession(), statement));
+    future.wait("execute");
+    CassandraResult result(cass_future_get_result(future));
+    //m_cassandraSession->disconnect();
+
     if (cass_result_row_count(result) == 0)
         return false;
 
     resultValue = getUnsignedResult(NULL, getSingleResult(result));
     return true;
 }
-*/
-#ifdef SET_LOGTABLE
-//Keep this for now just in case. We may remove after a few releases.
-void CCassandraEspCacheClient::ensureKeySpace()
-{
-    CassandraSession s(cass_session_new());
-    CassandraFuture future(cass_session_connect(s, cassSession->queryCluster()));
-    future.wait("connect without keyspace");
-
-    VStringBuffer createKeySpace("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' };",
-        cassSession->queryKeySpace());
-    executeSimpleStatement(createKeySpace.str());
-    s.set(NULL);
-
-    //prepare transSeedTable
-    StringBuffer transSeedTableKeys;
-    StringArray transSeedTableColumnNames, transSeedTableColumnTypes;
-    transSeedTableColumnNames.append("id");
-    transSeedTableColumnTypes.append("int");
-    transSeedTableColumnNames.append("application");
-    transSeedTableColumnTypes.append("varchar");
-    transSeedTableColumnNames.append("update_time");
-    transSeedTableColumnTypes.append("timestamp");
-    transSeedTableKeys.set("application");
-
-    cassSession->connect();
-    createTable("transactions", transSeedTableColumnNames, transSeedTableColumnTypes, transSeedTableKeys.str());
-
-    //prepare log tables
-    ForEachItemIn(i, logDBTables)
-    {
-        CDBTable& table = logDBTables.item(i);
-
-        StringBuffer logTableKeys;
-        StringArray logTableColumnNames, logTableColumnTypes;
-
-        DBFieldMap* fieldMap = table.getFieldMap();
-        StringArray& logTableColumnNameArray = fieldMap->getMapToNames();
-        logTableColumnNames.append("log_id");
-        logTableColumnTypes.append("varchar");
-        ForEachItemIn(ii, logTableColumnNameArray)
-        {
-            logTableColumnNames.append(logTableColumnNameArray.item(ii));
-            logTableColumnTypes.append(fieldMap->getMapToTypes().item(ii));
-        }
-        logTableColumnNames.append("date_added");
-        logTableColumnTypes.append("timestamp");
-        logTableKeys.set("log_id");
-        createTable(table.getTableName(), logTableColumnNames, logTableColumnTypes, logTableKeys.str());
-    }
-    initTransSeedTable();
-    cassSession->disconnect();
-}
-#endif

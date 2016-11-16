@@ -25,7 +25,6 @@
 #include "cassandraembed.hpp"
 #include "espcacheclient.hpp"
 
-
 using namespace cassandraembed;
 
 #ifdef WIN32
@@ -40,37 +39,42 @@ using namespace cassandraembed;
 
 class CCassandraEspCacheClient : public CEspCacheClientBase
 {
-    StringBuffer server, userID, password;
-    Owned<CassandraClusterSession> session;
-    CriticalSection transactionSeedCrit;
+    StringBuffer m_cassandraHost;
+    StringBuffer m_cassandraUserID;
+    StringBuffer m_cassandraUserPass;
 
-    void initKeySpace();
+    Owned<CassandraClusterSession> m_cassandraSession;
+    //CriticalSection transactionSeedCrit;
+
+    void initCassandraSession();
+    void initCachTable(IPropertyTree * tableCfg);
+    void initSession();
     void ensureDefaultKeySpace();
-    void setSessionOptions(const char *keyspace);
-    //void ensureTransSeedTable();
-    void createTable(const char *dbName, const char *tableName, StringArray& columnNames, StringArray& columnTypes, const char* keys);
+    void setSessionOptions();
+    void ensureCacheTable();
+    void createTable(const char *dbName, const char *tableName, StringArray& columnNames, StringArray& columnTypes, const char* keys, unsigned timeToLive);
     void executeSimpleStatement(const char *st);
-    //void executeSimpleStatement(StringBuffer& st);
-    //bool executeSimpleSelectStatement(const char* st, unsigned& resultValue);
-    void readDBCfg(IPropertyTree* cfg, StringBuffer& server, StringBuffer& dbUser, StringBuffer& dbPassword);
+    bool executeSimpleSelectStatement(const char* st);
+    bool executeSimpleSelectStatement(const char* st, StringBuffer & resultValue);
+    bool executeSimpleSelectStatement(const char* st, unsigned& resultValue);
+    void readConnectionCfg(IPropertyTree* cfg);
 
 public:
     IMPLEMENT_IINTERFACE;
 
-    virtual bool init(const char* name, const char* type, IPropertyTree* cfg, const char* process);
-    virtual bool contains(const char * key);
-    virtual void add(const char * key,  IEspCacheEntry * entry);
-    virtual void remove(const char * key);
-    virtual IEspCacheEntry * fetch (const char * key);
+    virtual bool init(const char* name, const char* type, IPropertyTree* cfg) override;
+    virtual bool contains(IEspCacheSerializable & key) override;
+    virtual void add(IEspCacheSerializable & key, IEspCacheSerializable & entry, unsigned int ttl=0) override;
+    virtual void add(IEspCacheSerializable & key, IArrayOf<IEspCacheSerializable> & entries, unsigned int ttl=0);
+    virtual void remove(IEspCacheSerializable & key) override;
+    virtual IEspCacheSerializable * fetch (IEspCacheSerializable & key) override;
+    //virtual unsigned getCacheTimeToLive() { return 0;}
+    //virtual unsigned getEntryTimeToLive(IEspCacheSerializable & key) {return 0;}
+    //virtual bool setEntryTileToLive(IEspCacheSerializable & key, unsigned ttl) {return false;}
 
     CCassandraEspCacheClient() {};
-    virtual ~CCassandraEspCacheClient()
-    {
-    //    logGroups.kill(); logSources.kill();
-    };
-
+    virtual ~CCassandraEspCacheClient(){};
 };
-
 
 extern "C"
 {
