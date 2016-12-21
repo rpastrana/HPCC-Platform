@@ -57,6 +57,7 @@ void CEsdlSvcEngine::generateTransactionId(IEspContext & context, StringBuffer &
 {
     //creationtime_threadid_RANDOMNUM for now.
     trxid.appendf("%u_%u_%u",context.queryCreationTime(), ((unsigned) (memsize_t) GetCurrentThreadId()), getRandom());
+    context.addTraceSummaryTimeStamp("localtrxidgenerated");
 }
 
 void CEsdlSvcEngine::esdl_log(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, IPropertyTree *tgtcfg, IPropertyTree *tgtctx, IPropertyTree *req_pt, const char *rawresp, const char *logdata, unsigned int timetaken)
