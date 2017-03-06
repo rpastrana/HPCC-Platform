@@ -103,27 +103,7 @@
       <xsl:element name="SDS">
         <xsl:attribute name="store">dalisds.xml</xsl:attribute>
         <xsl:attribute name="caseInsensitive">0</xsl:attribute>
-        <xsl:attribute name="enableSysLog">
-          <xsl:call-template name="outputBool">
-            <xsl:with-param name="val" select="@enableSysLog"/>
-          </xsl:call-template>
-        </xsl:attribute>
-        <xsl:attribute name="enableSNMP">
-          <xsl:call-template name="outputBool">
-            <xsl:with-param name="val" select="@enableSNMP"/>
-          </xsl:call-template>
-        </xsl:attribute>
-        <xsl:attribute name="snmpSendWarnings">
-          <xsl:call-template name="outputBool">
-            <xsl:with-param name="val" select="@snmpSendWarnings"/>
-          </xsl:call-template>
-        </xsl:attribute>
-        <xsl:attribute name="recoverFromIncErrors">
-          <xsl:call-template name="outputBool">
-            <xsl:with-param name="val" select="@recoverFromIncErrors"/>
-          </xsl:call-template>
-        </xsl:attribute>
-        <xsl:copy-of select="@snmpErrorMsgLevel | @msgLevel | @lightweightCoalesce | @keepStores | @backupLargeWarningThreshold | @backupSoftQueueLimit | @backupSoftQueueLimitDelay"/>
+        <xsl:copy-of select="@enableSysLog | @enableSNMP | @snmpSendWarnings | @recoverFromIncErrors | @snmpErrorMsgLevel | @msgLevel | @lightweightCoalesce | @keepStores | @backupLargeWarningThreshold | @backupSoftQueueLimit | @backupSoftQueueLimitDelay"/>
         <xsl:attribute name="lCIdlePeriod">
           <xsl:value-of select="@IdlePeriod"/>
         </xsl:attribute>
@@ -303,19 +283,6 @@
         </xsl:if>
       </xsl:element>
     </DALI>
-  </xsl:template>
-
-
-  <xsl:template name="outputBool">
-    <xsl:param name="val"/>
-    <xsl:param name="default" select="0"/>
-    <xsl:choose>
-      <xsl:when test="$val='true'">1</xsl:when>
-      <xsl:when test="$val='false'">0</xsl:when>
-      <xsl:otherwise>
-        <xsl:value-of select='$default'/>
-      </xsl:otherwise>
-    </xsl:choose>
   </xsl:template>
 
   <xsl:template name="makeAbsolutePath">
