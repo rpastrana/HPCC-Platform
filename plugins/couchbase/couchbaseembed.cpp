@@ -71,7 +71,7 @@ namespace couchbaseembed
             else if (status.isTemporary())
                 failx("TempErr: %s", status.description());
             else
-                failx("Couchbase err: %s", status.description());
+                failx("Couchbase err: %s (%d)", status.description(), status.errcode());
         }
 
         //consider parsing json result
@@ -907,9 +907,8 @@ namespace couchbaseembed
          * dataset(childRec) child2;               <-- keeps nested structure, this funciton would receive a field of name child2
          *END;
         */
-
         if (getNumFields(field->type->queryChildType()) > 0)
-            m_oNestedField.set(m_oResultRow->queryBranch(field->name->queryStr()));
+            m_nestedPath.setf("%s%s", m_nestedPath.length() ? "/" : "", field->name->queryStr());
     }
 
     void CouchbaseRowBuilder::processBeginRow(const RtlFieldInfo * field)
@@ -925,14 +924,12 @@ namespace couchbaseembed
 
     void CouchbaseRowBuilder::processEndDataset(const RtlFieldInfo * field)
     {
-        if(m_oNestedField)
-            m_oNestedField.clear();
+        m_nestedPath.clear();
     }
 
     void CouchbaseRowBuilder::processEndRow(const RtlFieldInfo * field)
     {
-        if(m_oNestedField)
-            m_oNestedField.clear();
+        m_nestedPath.clear();
     }
 
     const char * CouchbaseRowBuilder::nextField(const RtlFieldInfo * field)
@@ -941,26 +938,32 @@ namespace couchbaseembed
         if (!m_oResultRow)
             failx("Missing result row data");
 
-        const char * fieldname = field->name->queryStr();
-        if (!fieldname || !*fieldname)
+        const char * searchPath = field->name->queryStr();
+        if (!searchPath || !*searchPath)
             failx("Missing result column metadata (name)");
 
-        if (!m_oResultRow->hasProp(fieldname))
-        {
-            VStringBuffer nxpath("locationData/%s", fieldname);
-            if (m_oNestedField)
-            {
-                if (!m_oNestedField->hasProp(fieldname))
-                {
-                    StringBuffer xml;
-                    toXML(m_oResultRow, xml);
-                    failx("Result row does not contain field: %s: %s", fieldname, xml.str());
-                }
+        if (field->xpath  && *(field->xpath))
+            searchPath = field->xpath;
 
-                return m_oNestedField->queryProp(fieldname);
+StringBuffer xml;
+toXML(m_oResultRow, xml);
+
+        if (!m_oResultRow->hasProp(searchPath))
+        {
+            if (m_nestedPath.str())
+            {
+                StringBuffer nestedSearchPath;
+                nestedSearchPath.setf("%s/%s", m_nestedPath.str(), field->name->queryStr());
+                if(m_oResultRow->hasProp(nestedSearchPath.str()));
+                    return m_oResultRow->queryProp(nestedSearchPath.str());
             }
+
+            StringBuffer xml;
+            toXML(m_oResultRow, xml);
+            failx("Result row does not contain field: %s: %s", searchPath, xml.str());
+
         }
-        return m_oResultRow->queryProp(fieldname);
+        return m_oResultRow->queryProp(searchPath);
     }
 
     class CouchbaseEmbedContext : public CInterfaceOf<IEmbedContext>

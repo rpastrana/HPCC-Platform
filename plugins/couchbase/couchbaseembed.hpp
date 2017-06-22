@@ -256,7 +256,7 @@ namespace couchbaseembed
     private:
         TokenDeserializer m_tokenDeserializer;
         Owned<IPropertyTree> m_oResultRow;
-        Owned<IPropertyTree> m_oNestedField;
+        StringBuffer m_nestedPath;
         int m_fieldsProcessedCount;
         int m_rowFieldCount;
     };
