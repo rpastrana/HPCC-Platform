@@ -115,7 +115,11 @@ IPropertyTree * fetchESDLBindingFromDali(const char *process, const char *bindin
 
         ESPLOG(LogNormal, "ESDL Binding: Fetching ESDL Binding from Dali %s[@EspProcess='%s'][@EspBinding='%s'][1]", ESDL_BINDING_ENTRY, process, bindingName);
 
-        return createPTreeFromIPT(conn->queryRoot()->queryPropTree(xpath));
+        if (conn->queryRoot()->hasProp(xpath))
+            return createPTreeFromIPT(conn->queryRoot()->queryPropTree(xpath));
+        else
+            return nullptr;
+
     }
     catch (IException *E)
     {
