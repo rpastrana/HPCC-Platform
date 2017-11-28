@@ -5139,6 +5139,14 @@ IHqlExpression * removeOperand(IHqlExpression * expr, IHqlExpression * operand)
     return expr->clone(args);
 }
 
+extern HQL_API IHqlExpression * removeChild(IHqlExpression * expr, unsigned child)
+{
+    HqlExprArray args;
+    unwindChildren(args, expr);
+    args.remove(child);
+    return expr->clone(args);
+}
+
 IHqlExpression * removeChildOp(IHqlExpression * expr, node_operator op)
 {
     HqlExprArray args;
@@ -6474,7 +6482,7 @@ IHqlExpression *notePayloadFields(IHqlExpression *record, unsigned payloadCount)
             break;
         case no_field:
         case no_ifblock:
-            fields.replace(*appendOwnedOperand(cur, createAttribute(_payload_Atom)), idx);
+            fields.replace(*appendOwnedOperand(cur, createAttribute(_payload_Atom)), idx); // MORE - should we mark contained fields too?
             payloadCount--;
             break;
         }
@@ -7706,6 +7714,8 @@ IHqlExpression * createDefaultAssertMessage(IHqlExpression * cond)
     IHqlExpression * lhs = cond->queryChild(0);
     IHqlExpression * rhs = cond->queryChild(1);
     if (!lhs->queryType()->isScalar() || !rhs->queryType()->isScalar())
+        return createConstant(temp.append("Assert failed: ").append(suffix));
+    if (lhs->queryType()->getTypeCode() == type_data || rhs->queryType()->getTypeCode() == type_data)
         return createConstant(temp.append("Assert failed: ").append(suffix));
 
     StringBuffer prefix;
@@ -9669,6 +9679,20 @@ void getFieldTypeInfo(FieldTypeInfoStruct &out, ITypeInfo *type)
         if (!type->isSigned())
             out.fieldType |= RFTMunsigned;
         break;
+    case type_keyedint:
+        out.className = "RtlKeyedIntTypeInfo";
+        if (!type->isSigned())
+            out.fieldType |= RFTMunsigned;
+        break;
+    case type_filepos:
+        out.className = "RtlSwapIntTypeInfo";
+        out.length = sizeof(offset_t);
+        if (!type->isSigned())
+            out.fieldType |= RFTMunsigned;
+        break;
+    case type_blob:
+        out.className = "RtlBlobTypeInfo";
+        break;
     case type_swapint:
         out.className = "RtlSwapIntTypeInfo";
         if (!type->isSigned())
@@ -9750,7 +9774,6 @@ void getFieldTypeInfo(FieldTypeInfoStruct &out, ITypeInfo *type)
     case type_dictionary:
         {
             out.className = "RtlDictionaryTypeInfo";
-            out.fieldType |= RFTMnoserialize;
             if (hasLinkCountedModifier(type))
             {
                 out.fieldType |= RFTMlinkcounted;
@@ -9776,7 +9799,6 @@ void getFieldTypeInfo(FieldTypeInfoStruct &out, ITypeInfo *type)
         out.locale = str(type->queryLocale());
         out.length = type->getStringLen();
         break;
-    case type_blob:
     case type_pointer:
     case type_class:
     case type_array:
@@ -9940,7 +9962,9 @@ const RtlTypeInfo *buildRtlType(IRtlFieldTypeDeserializer &deserializer, ITypeIn
         }
     case type_dictionary:
         return nullptr;  // MORE - does this leak?
+    case type_blob:
     case type_set:
+    case type_keyedint:
         info.childType = buildRtlType(deserializer, type->queryChildType());
         break;
     }

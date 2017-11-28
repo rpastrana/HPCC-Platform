@@ -12014,10 +12014,10 @@ class CRoxieServerIndexWriteActivity : public CRoxieServerInternalSinkActivity, 
             metadata.setown(createPTree("metadata", ipt_fast));
         metadata->setProp("_record_ECL", helper.queryRecordECL());
 
-        if (helper.queryOutputMeta() && helper.queryOutputMeta()->queryTypeInfo())
+        if (helper.queryDiskRecordSize()->queryTypeInfo())
         {
             MemoryBuffer out;
-            dumpTypeInfo(out, helper.queryOutputMeta()->queryTypeInfo(), true);
+            dumpTypeInfo(out, helper.queryDiskRecordSize()->queryTypeInfo());
             metadata->setPropBin("_rtlType", out.length(), out.toByteArray());
         }
     }
@@ -12044,6 +12044,7 @@ public:
     virtual void onExecute()
     {
         bool isVariable = helper.queryDiskRecordSize()->isVariableSize();
+        size32_t fileposSize = hasTrailingFileposition(helper.queryDiskRecordSize()->queryTypeInfo()) ? sizeof(offset_t) : 0;
         size32_t maxDiskRecordSize;
         if (isVariable)
         {
@@ -12053,7 +12054,7 @@ public:
                 maxDiskRecordSize = KEYBUILD_MAXLENGTH; // Current default behaviour, could be improved in the future
         }
         else
-            maxDiskRecordSize = helper.queryDiskRecordSize()->getFixedSize();
+            maxDiskRecordSize = helper.queryDiskRecordSize()->getFixedSize()-fileposSize;
 
         if (maxDiskRecordSize > KEYBUILD_MAXLENGTH)
             throw MakeStringException(99, "Index maximum record length (%d) exceeds 32k internal limit", maxDiskRecordSize);
@@ -12223,10 +12224,10 @@ public:
             rtlFree(layoutMetaBuff);
         }
         // New record layout info
-        if (helper.queryOutputMeta() && helper.queryOutputMeta()->queryTypeInfo())
+        if (helper.queryDiskRecordSize()->queryTypeInfo())
         {
             MemoryBuffer out;
-            dumpTypeInfo(out, helper.queryOutputMeta()->queryTypeInfo(), true);
+            dumpTypeInfo(out, helper.queryDiskRecordSize()->queryTypeInfo());
             properties.setPropBin("_rtlType", out.length(), out.toByteArray());
         }
     }
@@ -21563,9 +21564,14 @@ public:
         if (!segment->isWild())
         {
             if (!cursor)
-                cursor.setown(manager->createCursor(diskSize.queryOriginal()->queryRecordAccessor(true)));
+                cursor.setown(manager->createCursor(diskSize.queryRecordAccessor(true)));
             cursor->append(segment);
         }
+    }
+
+    virtual void append(FFoption option, IFieldFilter * filter)
+    {
+        UNIMPLEMENTED;
     }
 
     virtual unsigned ordinality() const
@@ -21576,11 +21582,6 @@ public:
     virtual IKeySegmentMonitor *item(unsigned idx) const
     {
         return cursor ? cursor->item(idx) : 0;
-    }
-
-    virtual void setMergeBarrier(unsigned barrierOffset)
-    {
-        // no merging so no issue...
     }
 
     virtual void stop()
@@ -22791,7 +22792,7 @@ public:
                                     if ((indexHelper.getFlags() & TIRcountkeyedlimit) != 0)
                                     {
                                         Owned<IKeyManager> countKey;
-                                        countKey.setown(createLocalKeyManager(thisKey, 0, this));
+                                        countKey.setown(createLocalKeyManager(indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), thisKey, this));
                                         countKey->setLayoutTranslator(translators->item(fileNo));
                                         createSegmentMonitors(countKey);
                                         unsigned __int64 count = countKey->checkCount(keyedLimit);
@@ -22806,12 +22807,15 @@ public:
                             }
                             if (seekGEOffset && !thisKey->isTopLevelKey())
                             {
-                                tlk.setown(createSingleKeyMerger(thisKey, 0, seekGEOffset, this));
+                                tlk.setown(createSingleKeyMerger(indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), thisKey, seekGEOffset, this));
                             }
                             else
                             {
-                                tlk.setown(createLocalKeyManager(thisKey, 0, this));
-                                tlk->setLayoutTranslator(translators->item(fileNo));
+                                tlk.setown(createLocalKeyManager(indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), thisKey, this));
+                                if (!thisKey->isTopLevelKey())
+                                    tlk->setLayoutTranslator(translators->item(fileNo));
+                                else
+                                    tlk->setLayoutTranslator(nullptr);
                             }
                             createSegmentMonitors(tlk);
                             if (queryTraceLevel() > 3 || ctx->queryProbeManager())
@@ -22834,7 +22838,7 @@ public:
                                         {
                                             while (tlk->lookup(false))
                                             {
-                                                unsigned slavePart = (unsigned) tlk->queryFpos();
+                                                unsigned slavePart = (unsigned)extractFpos(tlk);
                                                 if (slavePart)
                                                 {
                                                     accepted++;
@@ -22861,7 +22865,10 @@ public:
                                 {
                                     thisKey = thisBase->queryPart(fileNo);
                                     tlk->setKey(thisKey);
-                                    tlk->setLayoutTranslator(translators->item(fileNo));
+                                    if (!thisKey->isTopLevelKey())
+                                        tlk->setLayoutTranslator(translators->item(fileNo));
+                                    else
+                                        tlk->setLayoutTranslator(nullptr);
                                     tlk->reset();
                                 }
                                 else
@@ -23070,10 +23077,11 @@ public:
             keySet.setown(createKeyIndexSet());
             keySet->addIndex(LINK(key));
             if (owner.seekGEOffset)
-                tlk.setown(createKeyMerger(keySet, 0, owner.seekGEOffset, &owner));
+                tlk.setown(createKeyMerger(owner.indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), keySet, owner.seekGEOffset, &owner));
             else
-                tlk.setown(createLocalKeyManager(keySet->queryPart(0), 0, &owner));
-            tlk->setLayoutTranslator(trans);
+                tlk.setown(createLocalKeyManager(owner.indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), keySet->queryPart(0), &owner));
+            if (!key->isTopLevelKey())
+                tlk->setLayoutTranslator(trans);
             owner.indexHelper.createSegmentMonitors(tlk);
             tlk->finishSegmentMonitors();
             tlk->reset();
@@ -23091,7 +23099,7 @@ public:
                 }
                 size32_t transformedSize;
                 RtlDynamicRowBuilder rowBuilder(owner.rowAllocator);
-                byte const * keyRow = tlk->queryKeyBuffer(owner.callback.getFPosRef());
+                byte const * keyRow = tlk->queryKeyBuffer();
                 try
                 {
                     transformedSize = owner.readHelper.transform(rowBuilder, keyRow);
@@ -23482,7 +23490,7 @@ public:
         unsigned __int64 result = 0;
         for (unsigned i = 0; i < numParts; i++)
         {
-            Owned<IKeyManager> countTlk = createLocalKeyManager(keyIndexSet->queryPart(i), 0, this);
+            Owned<IKeyManager> countTlk = createLocalKeyManager(indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), keyIndexSet->queryPart(i), this);
             countTlk->setLayoutTranslator(translators->item(i));
             indexHelper.createSegmentMonitors(countTlk);
             countTlk->finishSegmentMonitors();
@@ -23514,12 +23522,12 @@ public:
             }
             if (numParts > 1 || seekGEOffset)
             {
-                tlk.setown(createKeyMerger(keyIndexSet, 0, seekGEOffset, this));
+                tlk.setown(createKeyMerger(indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), keyIndexSet, seekGEOffset, this));
                 // note that we don't set up translator because we don't support it. If that ever changes...
             }
             else
             {
-                tlk.setown(createLocalKeyManager(keyIndexSet->queryPart(0), 0, this));
+                tlk.setown(createLocalKeyManager(indexHelper.queryDiskRecordSize()->queryRecordAccessor(true), keyIndexSet->queryPart(0), this));
                 tlk->setLayoutTranslator(translators->item(0));
             }
             indexHelper.createSegmentMonitors(tlk);
@@ -23598,7 +23606,7 @@ public:
                 break;
             }
 
-            byte const * keyRow = tlk->queryKeyBuffer(callback.getFPosRef());
+            byte const * keyRow = tlk->queryKeyBuffer();
 #ifdef _DEBUG
 //          StringBuffer recstr;
 //          unsigned size = (tlk->queryRecordSize()<80)  ? tlk->queryRecordSize() : 80;
@@ -23908,7 +23916,7 @@ public:
             {
                 try
                 {
-                    count += countHelper.numValid(tlk->queryKeyBuffer(callback.getFPosRef()));
+                    count += countHelper.numValid(tlk->queryKeyBuffer());
                     callback.finishedRow();
                 }
                 catch (IException *E)
@@ -24150,7 +24158,7 @@ public:
             }
             try
             {
-                aggregateHelper.processRow(rowBuilder, tlk->queryKeyBuffer(callback.getFPosRef()));
+                aggregateHelper.processRow(rowBuilder, tlk->queryKeyBuffer());
                 callback.finishedRow();
             }
             catch (IException *E)
@@ -24302,7 +24310,6 @@ public:
             groupSegSize = 0;
         if (groupSegSize)
         {
-            key->setMergeBarrier(groupSegSize);
             CRoxieServerIndexActivity::createSegmentMonitors(key);
             unsigned numSegs = tlk->ordinality();
             for (unsigned segNo = 0; segNo < numSegs; segNo++)
@@ -24331,7 +24338,7 @@ public:
             {
                 if (groupSegCount && !trans)
                 {
-                    AggregateRowBuilder &rowBuilder = singleAggregator.addRow(tlk->queryKeyBuffer(callback.getFPosRef()));
+                    AggregateRowBuilder &rowBuilder = singleAggregator.addRow(tlk->queryKeyBuffer());
                     callback.finishedRow();
                     if (kind==TAKindexgroupcount)                   
                     {
@@ -24343,7 +24350,7 @@ public:
                 }
                 else
                 {
-                    aggregateHelper.processRow(tlk->queryKeyBuffer(callback.getFPosRef()), this);
+                    aggregateHelper.processRow(tlk->queryKeyBuffer(), this);
                     callback.finishedRow();
                 }
             }
@@ -24479,7 +24486,7 @@ public:
             }
             size32_t transformedSize;
     
-            if (readHelper.first(tlk->queryKeyBuffer(callback.getFPosRef())))
+            if (readHelper.first(tlk->queryKeyBuffer()))
             {
                 Owned<CRowArrayMessageResult> result = new CRowArrayMessageResult(ctx->queryRowManager(), meta.isVariableSize());
                 do
@@ -25284,7 +25291,7 @@ public:
     CRoxieServerFullKeyedJoinHead(IRoxieSlaveContext *_ctx, const IRoxieServerActivityFactory *_factory, IProbeManager *_probeManager, const RemoteActivityId &_remoteId, IKeyArray * _keySet, TranslatorArray *_translators, IOutputMetaData *_indexReadMeta, IJoinProcessor *_joinHandler, bool _isLocal)
         : CRoxieServerActivity(_ctx, _factory, _probeManager),
           helper((IHThorKeyedJoinArg &)basehelper), 
-          tlk(createLocalKeyManager(NULL, 0, this)),
+          tlk(createLocalKeyManager(helper.queryIndexRecordSize()->queryRecordAccessor(true), NULL, this)),
           translators(_translators),
           keySet(_keySet),
           remote(_ctx, this, _remoteId, 0, helper, *this, true, true),
@@ -25444,7 +25451,10 @@ public:
                     try
                     {
                         tlk->setKey(thisKey);
-                        tlk->setLayoutTranslator(translators->item(fileNo));
+                        if (!thisKey->isTopLevelKey())
+                            tlk->setLayoutTranslator(translators->item(fileNo));
+                        else
+                            tlk->setLayoutTranslator(nullptr);
                         helper.createSegmentMonitors(tlk, extracted);
                         if (rootIndex)
                             rootIndex->mergeSegmentMonitors(tlk);
@@ -25458,7 +25468,7 @@ public:
                                 bool locallySorted = !thisKey->isFullySorted();
                                 while (locallySorted || tlk->lookup(false)) 
                                 {
-                                    unsigned slavePart = locallySorted ? 0 : (unsigned) tlk->queryFpos();
+                                    unsigned slavePart = locallySorted ? 0 : (unsigned)extractFpos(tlk);
                                     if (locallySorted || slavePart)
                                     {
                                         cvp *outputBuffer = (cvp *) remote.getMem(slavePart, fileNo, indexReadSize + sizeof(cvp) + (indexReadInputRecordVariable ? sizeof(unsigned) : 0));
@@ -25492,12 +25502,13 @@ public:
                                     candidateCount++;
                                     atomic_inc(&indexRecordsRead);
                                     KLBlobProviderAdapter adapter(tlk);
-                                    offset_t recptr;
-                                    const byte *indexRow = tlk->queryKeyBuffer(recptr);
-                                    if (helper.indexReadMatch(extracted, indexRow, recptr, &adapter))
+                                    const byte *indexRow = tlk->queryKeyBuffer();
+                                    size_t fposOffset = tlk->queryRowSize() - sizeof(offset_t);
+                                    offset_t fpos = rtlReadBigUInt8(indexRow + fposOffset);
+                                    if (helper.indexReadMatch(extracted, indexRow, &adapter))
                                     {
                                         KeyedJoinHeader *rhs = (KeyedJoinHeader *) ctx->queryRowManager().allocate(KEYEDJOIN_RECORD_SIZE(0), activityId);
-                                        rhs->fpos = recptr; 
+                                        rhs->fpos = fpos;
                                         rhs->thisGroup = jg; 
                                         rhs->partNo = partNo; 
                                         result->append(rhs);
@@ -25525,7 +25536,10 @@ public:
                             {
                                 thisKey = thisBase->queryPart(fileNo);
                                 tlk->setKey(thisKey);
-                                tlk->setLayoutTranslator(translators->item(fileNo));
+                                if (!thisKey->isTopLevelKey())
+                                    tlk->setLayoutTranslator(translators->item(fileNo));
+                                else
+                                    tlk->setLayoutTranslator(nullptr);
                                 tlk->reset();
                             }
                             else
@@ -25865,8 +25879,8 @@ public:
         unsigned outSize;
         try
         {   
-            outSize = except ? helper.onFailTransform(rowBuilder, left, right, fpos_or_count, except) : 
-                      (activityKind == TAKkeyeddenormalizegroup) ? helper.transform(rowBuilder, left, right, (unsigned) fpos_or_count, group) : 
+            outSize = except ? helper.onFailTransform(rowBuilder, left, right, fpos_or_count, except) :
+                      (activityKind == TAKkeyeddenormalizegroup) ? helper.transform(rowBuilder, left, right, (unsigned)fpos_or_count, group) :
                       helper.transform(rowBuilder, left, right, fpos_or_count, counter);
         }
         catch (IException *E)
@@ -25941,7 +25955,7 @@ public:
                 while (idx < matched)
                 {
                     const KeyedJoinHeader *rhs = jg->queryRow(idx);
-                    added += doTransform(left, &rhs->rhsdata, rhs->fpos, NULL, NULL, idx+1);
+                    added += doTransform(left, &rhs->rhsdata, 0, NULL, NULL, idx+1);
                     if (added==keepLimit)
                         break;
                     idx++;
@@ -26179,7 +26193,7 @@ public:
         IOutputMetaData *_indexReadMeta, unsigned _joinFlags, bool _isSimple, bool _isLocal)
         : CRoxieServerKeyedJoinBase(_ctx, _factory, _probeManager, _remoteId, _joinFlags, false, _isSimple, _isLocal),
           indexReadMeta(_indexReadMeta),
-          tlk(createLocalKeyManager(NULL, 0, this)),
+          tlk(createLocalKeyManager(helper.queryIndexRecordSize()->queryRecordAccessor(true), NULL, this)),
           keySet(_keySet),
           translators(_translators)
     {
@@ -26276,7 +26290,10 @@ public:
                     unsigned fileNo = 0;
                     IKeyIndex *thisKey = thisBase->queryPart(fileNo);
                     tlk->setKey(thisKey);
-                    tlk->setLayoutTranslator(translators->item(fileNo));
+                    if (thisKey && !thisKey->isTopLevelKey())
+                        tlk->setLayoutTranslator(translators->item(fileNo));
+                    else
+                        tlk->setLayoutTranslator(nullptr);
                     helper.createSegmentMonitors(tlk, extracted);
                     if (rootIndex)
                         rootIndex->mergeSegmentMonitors(tlk);
@@ -26292,7 +26309,7 @@ public:
                                 bool locallySorted = (!thisKey->isFullySorted());
                                 while (locallySorted || tlk->lookup(false))
                                 {
-                                    unsigned slavePart = locallySorted ? 0 : (unsigned) tlk->queryFpos();
+                                    unsigned slavePart = locallySorted ? 0 : (unsigned)extractFpos(tlk);
                                     if (locallySorted || slavePart)
                                     {
                                         cvp *outputBuffer = (cvp *) remote.getMem(slavePart, fileNo, indexReadRecordSize + sizeof(cvp) + (indexReadInputRecordVariable ? sizeof(unsigned) : 0));
@@ -26328,17 +26345,18 @@ public:
                                     candidateCount++;
                                     atomic_inc(&indexRecordsRead);
                                     KLBlobProviderAdapter adapter(tlk);
-                                    offset_t recptr;
-                                    const byte *indexRow = tlk->queryKeyBuffer(recptr);
-                                    if (helper.indexReadMatch(extracted, indexRow, recptr, &adapter))
+                                    const byte *indexRow = tlk->queryKeyBuffer();
+                                    size_t fposOffset = tlk->queryRowSize() - sizeof(offset_t);
+                                    offset_t fpos = rtlReadBigUInt8(indexRow + fposOffset);
+                                    if (helper.indexReadMatch(extracted, indexRow, &adapter))
                                     {
                                         RtlDynamicRowBuilder rb(joinFieldsAllocator, true); 
                                         CPrefixedRowBuilder pb(KEYEDJOIN_RECORD_SIZE(0), rb);
                                         accepted++;
                                         KLBlobProviderAdapter adapter(tlk);
-                                        size32_t joinFieldsSize = helper.extractJoinFields(pb, indexRow, recptr, &adapter);
+                                        size32_t joinFieldsSize = helper.extractJoinFields(pb, indexRow, &adapter);
                                         KeyedJoinHeader *rec = (KeyedJoinHeader *) rb.getUnfinalizedClear(); // lack of finalize ok as unserialized data here.
-                                        rec->fpos = recptr;
+                                        rec->fpos = fpos;
                                         rec->thisGroup = jg;
                                         rec->partNo = partNo;
                                         if (isSimple)
@@ -26373,7 +26391,10 @@ public:
                             {
                                 thisKey = thisBase->queryPart(fileNo);
                                 tlk->setKey(thisKey);
-                                tlk->setLayoutTranslator(translators->item(fileNo));
+                                if (thisKey && !thisKey->isTopLevelKey())
+                                    tlk->setLayoutTranslator(translators->item(fileNo));
+                                else
+                                    tlk->setLayoutTranslator(nullptr);
                                 tlk->reset();
                             }
                             else
@@ -26448,7 +26469,7 @@ public:
         isLocal = _graphNode.getPropBool("att[@name='local']/@value") && queryFactory.queryChannel()!=0;
         isSimple = isLocal;
         rtlDataAttr indexLayoutMeta;
-        size32_t indexLayoutSize;
+        size32_t indexLayoutSize = 0;
         if(!helper->getIndexLayout(indexLayoutSize, indexLayoutMeta.refdata()))
             assertex(indexLayoutSize== 0);
         MemoryBuffer m;

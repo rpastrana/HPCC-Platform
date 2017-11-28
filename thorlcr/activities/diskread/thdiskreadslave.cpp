@@ -74,10 +74,8 @@ protected:
 
 public:
     CDiskReadSlaveActivityRecord(CGraphElementBase *_container, IHThorArg *_helper=NULL) 
-        : CDiskReadSlaveActivityBase(_container)
+        : CDiskReadSlaveActivityBase(_container, _helper)
     {
-        if (_helper)
-            baseHelper.set(_helper);
         helper = (IHThorDiskReadArg *)queryHelper();
         IOutputMetaData *diskRowMeta = queryDiskRowInterfaces()->queryRowMetaData()->querySerializedDiskMeta();
         isFixedDiskWidth = diskRowMeta->isFixedSize();
@@ -89,7 +87,7 @@ public:
     }
 
 // IIndexReadContext impl.
-    void append(IKeySegmentMonitor *segment)
+    virtual void append(IKeySegmentMonitor *segment)
     {
         if (segment->isWild())
             segment->Release();
@@ -101,12 +99,17 @@ public:
         }
     }
 
-    unsigned ordinality() const
+    virtual void append(FFoption option, IFieldFilter * filter)
+    {
+        UNIMPLEMENTED;
+    }
+
+    virtual unsigned ordinality() const
     {
         return segMonitors.length();
     }
 
-    IKeySegmentMonitor *item(unsigned idx) const
+    virtual IKeySegmentMonitor *item(unsigned idx) const
     {
         if (segMonitors.isItem(idx))
             return &segMonitors.item(idx);
@@ -114,11 +117,6 @@ public:
             return NULL;
     }
     
-    virtual void setMergeBarrier(unsigned barrierOffset)
-    {
-        // We don't merge them so no issue... afaik
-    }
-
 friend class CDiskRecordPartHandler;
 };
 

@@ -957,9 +957,14 @@ public:
         if (!segment->isWild())
         {
             if (!cursor)
-                cursor.setown(manager->createCursor(diskSize.queryOriginal()->queryRecordAccessor(true)));
+                cursor.setown(manager->createCursor(diskSize.queryRecordAccessor(true)));
             cursor->append(segment);
         }
+    }
+
+    virtual void append(FFoption option, IFieldFilter * filter)
+    {
+        UNIMPLEMENTED;
     }
 
     virtual unsigned ordinality() const
@@ -970,11 +975,6 @@ public:
     virtual IKeySegmentMonitor *item(unsigned idx) const
     {
         return cursor ? cursor->item(idx) : 0;
-    }
-
-    virtual void setMergeBarrier(unsigned barrierOffset)
-    {
-        // no merging so no issue...
     }
 
     virtual void abort() 
@@ -3109,7 +3109,7 @@ public:
     void init(IHThorIndexReadBaseArg * helper, IPropertyTree &graphNode)
     {
         rtlDataAttr indexLayoutMeta;
-        size32_t indexLayoutSize;
+        size32_t indexLayoutSize = 0;
         if(!helper->getIndexLayout(indexLayoutSize, indexLayoutMeta.refdata()))
             assertex(indexLayoutSize== 0);
         MemoryBuffer m;
@@ -3135,6 +3135,7 @@ protected:
     Owned<IKeyManager> tlk;
     Linked<TranslatorArray> layoutTranslators;
     Linked<IKeyArray> keyArray;
+    const RtlRecord *keyRecInfo = nullptr;
     IDefRecordMeta *activityMeta;
     bool createSegmentMonitorsPending;
 
@@ -3160,7 +3161,7 @@ protected:
             }
             if (allKeys->numParts())
             {
-                tlk.setown(createKeyMerger(allKeys, 0, 0, &logctx));
+                tlk.setown(createKeyMerger(*keyRecInfo, allKeys, 0, &logctx));
                 createSegmentMonitorsPending = true;
             }
             else
@@ -3173,7 +3174,7 @@ protected:
             IKeyIndex *k = kib->queryPart(lastPartNo.fileNo);
             if (filechanged)
             {
-                tlk.setown(createLocalKeyManager(k, 0, &logctx));
+                tlk.setown(createLocalKeyManager(*keyRecInfo, k, &logctx));
                 createSegmentMonitorsPending = true;
             }
             else
@@ -3264,12 +3265,13 @@ protected:
 
 public:
     CRoxieIndexActivity(SlaveContextLogger &_logctx, IRoxieQueryPacket *_packet, HelperFactory *_hFactory, const CRoxieIndexActivityFactory *_aFactory, unsigned _steppingOffset)
-        : CRoxieKeyedActivity(_logctx, _packet, _hFactory, _aFactory), 
+        : CRoxieKeyedActivity(_logctx, _packet, _hFactory, _aFactory),
         factory(_aFactory),
         steppingOffset(_steppingOffset),
         stepExtra(SSEFreadAhead, NULL)
     {
         indexHelper = (IHThorIndexReadBaseArg *) basehelper;
+        keyRecInfo = &indexHelper->queryDiskRecordSize()->queryRecordAccessor(true);
         variableFileName = allFilesDynamic || basefactory->queryQueryFactory().isDynamic() || ((indexHelper->getFlags() & (TIRvarfilename|TIRdynamicfilename)) != 0);
         isOpt = (indexHelper->getFlags() & TDRoptional) != 0;
         inputData = NULL;
@@ -3422,7 +3424,7 @@ public:
                 i++;
             }
             if (allKeys->numParts())
-                tlk.setown(::createKeyMerger(allKeys, 0, steppingOffset, &logctx));
+                tlk.setown(::createKeyMerger(*keyRecInfo, allKeys, steppingOffset, &logctx));
             else
                 tlk.clear();
             createSegmentMonitorsPending = true;
@@ -3541,7 +3543,7 @@ public:
 
                         atomic_inc(&indexRecordsRead);
                         size32_t transformedSize;
-                        const byte * keyRow = tlk->queryKeyBuffer(callback.getFPosRef());
+                        const byte * keyRow = tlk->queryKeyBuffer();
                         int diff = 0;
                         if (steppingRow)
                         {
@@ -3801,7 +3803,7 @@ public:
                     }
 
                     atomic_inc(&indexRecordsRead);
-                    if (normalizeHelper->first(tlk->queryKeyBuffer(callback.getFPosRef())))
+                    if (normalizeHelper->first(tlk->queryKeyBuffer()))
                     {
                         do
                         {
@@ -3932,7 +3934,7 @@ public:
                     {
                         keyprocessed++;
                         atomic_inc(&indexRecordsRead);
-                        count += countHelper->numValid(tlk->queryKeyBuffer(callback.getFPosRef()));
+                        count += countHelper->numValid(tlk->queryKeyBuffer());
                         if (count > rowLimit)
                             limitExceeded(false);
                         else if (count > keyedLimit)
@@ -4052,7 +4054,7 @@ public:
                 {
                     keyprocessed++;
                     atomic_inc(&indexRecordsRead);
-                    aggregateHelper->processRow(rowBuilder, tlk->queryKeyBuffer(callback.getFPosRef()));
+                    aggregateHelper->processRow(rowBuilder, tlk->queryKeyBuffer());
                     callback.finishedRow();
                 }
                 callback.setManager(NULL);
@@ -4150,7 +4152,6 @@ public:
                 groupSegSize = aggregateHelper->getGroupSegmentMonitorsSize();
             else
                 groupSegSize = 0;
-            tlk->setMergeBarrier(groupSegSize);
             CRoxieIndexActivity::createSegmentMonitors();
             if (groupSegSize)
             {
@@ -4193,7 +4194,7 @@ public:
                     {
                         if (groupSegCount && !layoutTranslators->item(lastPartNo.fileNo))
                         {
-                            AggregateRowBuilder &rowBuilder = results.addRow(tlk->queryKeyBuffer(callback.getFPosRef()));
+                            AggregateRowBuilder &rowBuilder = results.addRow(tlk->queryKeyBuffer());
                             callback.finishedRow();
                             if (kind == TAKindexgroupcount)
                             {
@@ -4207,7 +4208,7 @@ public:
                         {
                             keyprocessed++;
                             atomic_inc(&indexRecordsRead);
-                            aggregateHelper->processRow(tlk->queryKeyBuffer(callback.getFPosRef()), this);
+                            aggregateHelper->processRow(tlk->queryKeyBuffer(), this);
                             callback.finishedRow();
                         }
                     }
@@ -4634,7 +4635,7 @@ public:
     {
         Owned<IHThorKeyedJoinArg> helper = (IHThorKeyedJoinArg *) helperFactory();
         rtlDataAttr indexLayoutMeta;
-        size32_t indexLayoutSize;
+        size32_t indexLayoutSize = 0;
         if(!helper->getIndexLayout(indexLayoutSize, indexLayoutMeta.refdata()))
             assertex(indexLayoutSize== 0);
         MemoryBuffer m;
@@ -4682,6 +4683,7 @@ public:
         : factory(_aFactory), CRoxieKeyedActivity(_logctx, _packet, _hFactory, _aFactory)
     {
         helper = (IHThorKeyedJoinArg *) basehelper;
+        keyRecInfo = &helper->queryIndexRecordSize()->queryRecordAccessor(true);
         variableFileName = allFilesDynamic || basefactory->queryQueryFactory().isDynamic() || ((helper->getJoinFlags() & (JFvarindexfilename|JFdynamicindexfilename|JFindexfromactivity)) != 0);
         inputDone = 0;
         processed = 0;
@@ -4858,9 +4860,10 @@ IMessagePacker *CRoxieKeyedJoinIndexActivity::process()
                     candidateCount++;
                     atomic_inc(&indexRecordsRead);
                     KLBlobProviderAdapter adapter(tlk);
-                    offset_t recptr;
-                    const byte *indexRow = tlk->queryKeyBuffer(recptr);
-                    if (helper->indexReadMatch(inputRow, indexRow, recptr, &adapter))
+                    const byte *indexRow = tlk->queryKeyBuffer();
+                    size_t fposOffset = tlk->queryRowSize() - sizeof(offset_t);
+                    offset_t fpos = rtlReadBigUInt8(indexRow + fposOffset);
+                    if (helper->indexReadMatch(inputRow, indexRow, &adapter))
                     {
                         processed++;
                         if (keepLimit)
@@ -4885,7 +4888,7 @@ IMessagePacker *CRoxieKeyedJoinIndexActivity::process()
                         {
                             const void *self = output->getBuffer(KEYEDJOIN_RECORD_SIZE(0), true);
                             KeyedJoinHeader *rec = (KeyedJoinHeader *) self;
-                            rec->fpos = recptr;
+                            rec->fpos = fpos;
                             rec->thisGroup = jg;
                             rec->partNo = lastPartNo.partNo;
                             output->putBuffer(self, KEYEDJOIN_RECORD_SIZE(0), true);
@@ -4893,8 +4896,8 @@ IMessagePacker *CRoxieKeyedJoinIndexActivity::process()
                         else
                         {
                             KLBlobProviderAdapter adapter(tlk);
-                            totalSize = helper->extractJoinFields(rowBuilder, indexRow, recptr, &adapter);
-                            rowBuilder.writeToOutput(totalSize, recptr, jg, lastPartNo.partNo);
+                            totalSize = helper->extractJoinFields(rowBuilder, indexRow, &adapter);
+                            rowBuilder.writeToOutput(totalSize, fpos, jg, lastPartNo.partNo);
                         }
                         totalSizeSent += KEYEDJOIN_RECORD_SIZE(totalSize);
                         if (totalSizeSent > indexReadChunkSize && !continuationFailed)
@@ -5099,7 +5102,7 @@ IMessagePacker *CRoxieKeyedJoinFetchActivity::process()
         }
         if (helper->fetchMatch(inputData, rawBuffer))
         {
-            unsigned thisSize = helper->extractJoinFields(jfRowBuilder, rawBuffer, rp, (IBlobProvider*)NULL);
+            unsigned thisSize = helper->extractJoinFields(jfRowBuilder, rawBuffer, (IBlobProvider*)NULL);
             jfRowBuilder.writeToOutput(thisSize, headerPtr->fpos, headerPtr->thisGroup, headerPtr->partNo);
             totalSizeSent += KEYEDJOIN_RECORD_SIZE(thisSize);
             processed++;

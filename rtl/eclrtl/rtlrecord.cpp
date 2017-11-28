@@ -162,7 +162,7 @@ static unsigned expandNestedRows(unsigned idx, const char *prefix, const RtlFiel
             if (isIfBlock)
             {
                 nestIfBlock = new IfBlockInfo(*cur, inIfBlock, ifblocks.ordinality());
-                ifblocks.append(inIfBlock);
+                ifblocks.append(nestIfBlock);
             }
             const RtlFieldInfo * const * nested = type->queryFields();
             if (nested)
@@ -348,6 +348,18 @@ RtlRecord::~RtlRecord()
     delete nameMap;
 }
 
+unsigned RtlRecord::getNumKeyedFields() const
+{
+    unsigned ret = 0;
+    for (const RtlFieldInfo * const * finger = originalFields; *finger; finger++)
+    {
+        if ((*finger)->flags & RFTMispayloadfield)
+            break;
+        ret++;
+    }
+    return ret;
+}
+
 void RtlRecord::calcRowOffsets(size_t * variableOffsets, const void * _row, unsigned numFieldsUsed) const
 {
     const byte * row = static_cast<const byte *>(_row);
@@ -501,6 +513,12 @@ bool RtlRecord::excluded(const RtlFieldInfo *field, const byte *row, byte *condi
     return (field->omitable() && static_cast<const RtlCondFieldStrInfo *>(field)->ifblock.excluded(row, conditionValues));
 }
 
+size_t RtlRecord::getFixedOffset(unsigned field) const
+{
+    assert(whichVariableOffset[field]==0);
+    return fixedOffsets[field];
+}
+
 size32_t RtlRecord::getRecordSize(const void *_row) const
 {
     size32_t size = getFixedSize();
@@ -551,7 +569,7 @@ double RtlRow::getReal(unsigned field) const
     if (!fieldInfo->omitable() || getSize(field))
         return type->getReal(self + getOffset(field));
     else if (fieldInfo->initializer)
-        return type->getInt(fieldInfo->initializer);
+        return type->getReal(fieldInfo->initializer);
     else
         return 0;
 }

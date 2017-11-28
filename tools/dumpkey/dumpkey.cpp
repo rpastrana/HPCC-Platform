@@ -164,7 +164,7 @@ int main(int argc, const char **argv)
             }
             else
             {
-                Owned<IKeyManager> manager = createLocalKeyManager(index, key_size, NULL);
+                Owned<IKeyManager> manager;
                 Owned<IPropertyTree> metadata = index->getMetadata();
                 Owned<IOutputMetaData> diskmeta;
                 Owned<IOutputMetaData> translatedmeta;
@@ -176,17 +176,12 @@ int main(int argc, const char **argv)
                 class MyIndexCallback : public CInterfaceOf<IThorIndexCallback>
                 {
                 public:
-                    MyIndexCallback(IKeyManager *_manager) : manager(_manager) {}
-                    virtual unsigned __int64 getFilePosition(const void * row)
-                    {
-                        return manager->queryFpos();
-                    }
-                    virtual byte * lookupBlob(unsigned __int64 id)
+                    MyIndexCallback() {}
+                    virtual byte * lookupBlob(unsigned __int64 id) override
                     {
                         UNIMPLEMENTED;
                     }
-                    Linked<IKeyManager> manager;
-                } callback(manager);
+                } callback;
                 unsigned __int64 count = globals->getPropInt("recs", 1);
                 const RtlRecordTypeInfo *outRecType = nullptr;
                 if (metadata && metadata->hasProp("_rtlType"))
@@ -194,8 +189,12 @@ int main(int argc, const char **argv)
                     MemoryBuffer layoutBin;
                     metadata->getPropBin("_rtlType", layoutBin);
                     diskmeta.setown(createTypeInfoOutputMetaData(layoutBin, &callback));
+                }
+                if (diskmeta)
+                {
                     writer.setown(new SimpleOutputWriter);
                     const RtlRecord &inrec = diskmeta->queryRecordAccessor(true);
+                    manager.setown(createLocalKeyManager(inrec, index, nullptr));
                     size32_t minRecSize = 0;
                     if (globals->hasProp("fields"))
                     {
@@ -207,10 +206,11 @@ int main(int argc, const char **argv)
                             if (fieldNum == (unsigned) -1)
                                 throw MakeStringException(0, "Requested output field '%s' not found", fieldNames.item(idx));
                             const RtlFieldInfo *field = inrec.queryOriginalField(fieldNum);
-                            if (field->type->getType() == type_filepos)
+                            if (field->type->getType() == type_blob)
                             {
-                                // We can't just use the original source field in this case (as output record does not have a special filepos)
+                                // We can't just use the original source field in this case (as blobs are only supported in the input)
                                 // So instead, create a field in the target with the original type.
+                                //MORE: I'm not sure what this should do for a blob..., revisit when blobs are implemented
                                 field = new RtlFieldStrInfo(field->name, field->xpath, field->type->queryChildType());
                                 deleteFields.append(field);
                             }
@@ -225,9 +225,9 @@ int main(int argc, const char **argv)
                         for (unsigned idx = 0; idx < numFields;idx++)
                         {
                             const RtlFieldInfo *field = inrec.queryOriginalField(idx);
-                            if (field->type->getType() == type_filepos)
+                            if (field->type->getType() == type_blob)
                             {
-                                // See above - filepos field in source needs special treatment
+                                // See above - blob field in source needs special treatment
                                 field = new RtlFieldStrInfo(field->name, field->xpath, field->type->queryChildType());
                                 deleteFields.append(field);
                             }
@@ -253,12 +253,17 @@ int main(int argc, const char **argv)
                     helper->createSegmentMonitors(manager);
                     count = helper->getChooseNLimit(); // Just because this is testing out the createIndexReadArg functionality
                 }
+                else
+                {
+                    // We don't have record info - fake it? We could pretend it's a single field...
+                    UNIMPLEMENTED;
+                    // manager.setown(createLocalKeyManager(fake, index, nullptr));
+                }
                 manager->finishSegmentMonitors();
                 manager->reset();
                 while (manager->lookup(true) && count--)
                 {
-                    offset_t pos;
-                    byte const * buffer = manager->queryKeyBuffer(pos);
+                    byte const * buffer = manager->queryKeyBuffer();
                     size32_t size = manager->queryRowSize();
                     unsigned __int64 seq = manager->querySequence();
                     if (optRaw)
@@ -269,7 +274,7 @@ int main(int argc, const char **argv)
                     {
                         for (unsigned i = 0; i < size; i++)
                             printf("%02x", ((unsigned char) buffer[i]) & 0xff);
-                        printf("  :%" I64F "u:%012" I64F "x\n", seq, pos);
+                        printf("  :%" I64F "u\n", seq);
                     }
                     else if (helper)
                     {
@@ -285,7 +290,7 @@ int main(int argc, const char **argv)
                             count++;  // Don't count this row as it was postfiltered
                     }
                     else
-                        printf("%.*s  :%" I64F "u:%012" I64F "x\n", size, buffer, seq, pos);
+                        printf("%.*s  :%" I64F "u\n", size, buffer, seq);
                 }
                 if (outRecType)
                     outRecType->doDelete();

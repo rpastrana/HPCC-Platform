@@ -322,6 +322,9 @@ public:
 const char xpathCompoundSeparatorChar = (char)1;
 
 //fieldType is a compound field....
+
+// NOTE - do not change these values - they are stored in serialized type structures e.g. in index metadata
+
 enum RtlFieldTypeMask
 {
     RFTMkind                = 0x000000ff,                   // values are defined in deftype.hpp
@@ -338,6 +341,7 @@ enum RtlFieldTypeMask
 
     RFTMinifblock           = 0x00004000,                   // on fields only, field is inside an ifblock (not presently generated)
     RFTMdynamic             = 0x00008000,                   // Reserved for use by RtlRecord to indicate structure needs to be deleted
+    RFTMispayloadfield      = 0x00010000,                   // on fields only, field is in payload portion of index or dictionary
 
     // These flags are used in the serialized info only
     RFTMserializerFlags     = 0x01f00000,                   // Mask to remove from saved values
@@ -351,7 +355,7 @@ enum RtlFieldTypeMask
     RFTMcontainsunknown     = 0x10000000,                   // contains a field of unknown type that we can't process properly
     RFTMinvalidxml          = 0x20000000,                   // cannot be called to generate xml
     RFTMhasxmlattr          = 0x40000000,                   // if specified, then xml output includes an attribute (recursive)
-    RFTMnoserialize         = 0x80000000,                   // cannot serialize this typeinfo structure (contains dictionaries or other nasties)
+    RFTMnoserialize         = 0x80000000,                   // cannot serialize this typeinfo structure (contains aliens or other nasties)
 
     RFTMinherited           = (RFTMnoprefetch|RFTMcontainsunknown|RFTMinvalidxml|RFTMhasxmlattr|RFTMnoserialize)    // These flags are recursively set on any parent records too
 };
@@ -386,6 +390,7 @@ interface RtlITypeInfo
     virtual size32_t deserialize(ARowBuilder & rowBuilder, IRowDeserializerSource & in, size32_t offset) const = 0;
     virtual void readAhead(IRowDeserializerSource & in) const = 0;
     virtual int compare(const byte * left, const byte * right) const = 0;
+    virtual unsigned hash(const byte * left, unsigned inHash) const = 0;
 protected:
     ~RtlITypeInfo() = default;  // we can't use a virtual destructor as we want constexpr constructors.
 };
@@ -414,6 +419,7 @@ struct RtlTypeInfo : public RtlITypeInfo
     virtual bool isNumeric() const = 0;
     virtual bool canTruncate() const = 0;
     virtual bool canExtend(char &) const = 0;
+    virtual bool canMemCmp() const = 0;
 
     virtual void doDelete() const = 0;  // Used in place of virtual destructor to allow constexpr constructors.
 public:
@@ -1674,7 +1680,8 @@ struct IHThorFetchContext
 {
     virtual unsigned __int64 extractPosition(const void * _right) = 0;  // Gets file position value from rhs row
     virtual const char * getFileName() = 0;                 // Returns filename of raw file fpos'es refer into
-    virtual IOutputMetaData * queryDiskRecordSize() = 0;        // Returns record size of raw file fpos'es refer into
+    virtual IOutputMetaData * queryDiskRecordSize() = 0;            // Expected layout
+    virtual IOutputMetaData * queryProjectedDiskRecordSize() = 0;   // Projected layout
     virtual unsigned getFetchFlags() { return 0; }              
     virtual unsigned getDiskFormatCrc() { return 0; }
     virtual void getFileEncryptKey(size32_t & keyLen, void * & key) { keyLen = 0; key = 0; }
@@ -1689,9 +1696,10 @@ struct IHThorKeyedJoinBaseArg : public IHThorArg
 
     // Inside the indexRead remote activity:
     virtual const char * getIndexFileName() = 0;
-    virtual IOutputMetaData * queryIndexRecordSize() = 0; //Excluding fpos and sequence
+    virtual IOutputMetaData * queryIndexRecordSize() = 0;            // Expected layout
+    virtual IOutputMetaData * queryProjectedIndexRecordSize() = 0;   // Projected layout
     virtual void createSegmentMonitors(IIndexReadContext *ctx, const void *lhs) = 0;
-    virtual bool indexReadMatch(const void * indexRow, const void * inputRow, unsigned __int64 keyedFpos, IBlobProvider * blobs) = 0;
+    virtual bool indexReadMatch(const void * indexRow, const void * inputRow, IBlobProvider * blobs) = 0;
     virtual unsigned getJoinLimit() = 0;                                        // if a key joins more than this limit no records are output (0 = no limit)
     virtual unsigned getKeepLimit() = 0;                                        // limit to number of matches that are kept (0 = no limit)
     virtual unsigned getIndexFormatCrc() = 0;
@@ -1703,7 +1711,7 @@ struct IHThorKeyedJoinBaseArg : public IHThorArg
 
     // Inside the fetch remote activity
     virtual bool fetchMatch(const void * diskRow, const void * inputRow) = 0;
-    virtual size32_t extractJoinFields(ARowBuilder & rowBuilder, const void * diskRowOr, unsigned __int64 keyedFpos, IBlobProvider * blobs) = 0;
+    virtual size32_t extractJoinFields(ARowBuilder & rowBuilder, const void * diskRowOr, IBlobProvider * blobs) = 0;
     virtual IOutputMetaData * queryJoinFieldsRecordSize() = 0;
 
     // Back at the server
@@ -1716,9 +1724,11 @@ struct IHThorKeyedJoinBaseArg : public IHThorArg
     virtual unsigned getMatchAbortLimit() = 0;
     virtual void onMatchAbortLimitExceeded()                { }
 
+    //keyedFpos is always 0
     virtual size32_t onFailTransform(ARowBuilder & rowBuilder, const void * _dummyRight, const void * _origRow, unsigned __int64 keyedFpos, IException * e) { return 0; }
 //Join:
 //Denormalize:
+    //The _filepos field is used for full keyed join to pass in the fileposition.  It should really use the disk IThorDiskCallback interface.
     virtual size32_t transform(ARowBuilder & rowBuilder, const void * _joinFields, const void * _origRow, unsigned __int64 keyedFpos, unsigned counter) { return 0; }
 //Denormalize group:
     virtual size32_t transform(ARowBuilder & rowBuilder, const void * _joinFields, const void * _origRow, unsigned _numRows, const void * * _rows) { return 0; }
@@ -2238,7 +2248,6 @@ interface IThorDiskCallback : extends IFilePositionProvider
 
 interface IThorIndexCallback : extends IInterface
 {
-    virtual unsigned __int64 getFilePosition(const void * row) = 0;
     virtual byte * lookupBlob(unsigned __int64 id) = 0;         // return reference, not freed by code generator, can dispose once transform() has returned.
 };
 
@@ -2271,7 +2280,8 @@ struct IHThorCompoundBaseArg : public IHThorArg
 struct IHThorIndexReadBaseArg : extends IHThorCompoundBaseArg
 {
     virtual const char * getFileName() = 0;
-    virtual IOutputMetaData * queryDiskRecordSize() = 0;                // size of records on disk may differ if records are transformed on read
+    virtual IOutputMetaData * queryDiskRecordSize() = 0;            // Expected layout
+    virtual IOutputMetaData * queryProjectedDiskRecordSize() = 0;   // Projected layout
     virtual unsigned getFlags() = 0;
     virtual unsigned getFormatCrc() = 0;
     virtual void setCallback(IThorIndexCallback * callback) = 0;
@@ -2284,7 +2294,8 @@ struct IHThorIndexReadBaseArg : extends IHThorCompoundBaseArg
 struct IHThorDiskReadBaseArg : extends IHThorCompoundBaseArg
 {
     virtual const char * getFileName() = 0;
-    virtual IOutputMetaData * queryDiskRecordSize() = 0;                // size of records on disk may differ if records are transformed on read
+    virtual IOutputMetaData * queryDiskRecordSize() = 0;            // Expected layout
+    virtual IOutputMetaData * queryProjectedDiskRecordSize() = 0;   // Projected layout
     virtual unsigned getFlags() = 0;
     virtual unsigned getFormatCrc() = 0;
     virtual void getEncryptKey(size32_t & keyLen, void * & key) { keyLen = 0; key = 0; }

@@ -441,11 +441,12 @@ class ECLRTL_API CThorKeyedJoinArg : public CThorArgOf<IHThorKeyedJoinArg>
     virtual bool diskAccessRequired() override;
     virtual const char * getFileName() override;
     virtual IOutputMetaData * queryDiskRecordSize() override;
+    virtual IOutputMetaData * queryProjectedDiskRecordSize() override;
     virtual unsigned __int64 extractPosition(const void * _right) override;
     
     // For the data going to the indexRead remote activity:
     virtual bool leftCanMatch(const void * inputRow) override;
-    virtual bool indexReadMatch(const void * indexRow, const void * inputRow, unsigned __int64 keyedFpos, IBlobProvider * blobs) override;
+    virtual bool indexReadMatch(const void * indexRow, const void * inputRow, IBlobProvider * blobs) override;
 
     virtual unsigned __int64 getRowLimit() override;
     virtual void onLimitExceeded() override;
@@ -1228,7 +1229,8 @@ public:
 
     virtual unsigned getFlags()                             { return TDXtemporary|TDXcompress; }
     virtual unsigned getFormatCrc()                         { rtlFailUnexpected(); return 0; }
-    virtual IOutputMetaData * queryDiskRecordSize()             { return meta; }
+    virtual IOutputMetaData * queryDiskRecordSize()         { return meta; }
+    virtual IOutputMetaData * queryProjectedDiskRecordSize() { return meta; }
     virtual IOutputMetaData * queryOutputMeta()             { return meta; }
     virtual const char * getFileName()                      { return filename; }
     virtual size32_t transform(ARowBuilder & rowBuilder, const void * _left) { rtlFailUnexpected(); return 0; }

@@ -305,7 +305,7 @@ private:
     virtual void getTempFilename(StringAttr & out) const
     {
         StringBuffer buff;
-        agent.getTempfileBase(buff).appendf(".cluster_write_%p.%" I64F "d_%u", this, (__int64)GetCurrentThreadId(), GetCurrentProcessId());
+        agent.getTempfileBase(buff).append(PATHSEPCHAR).appendf("cluster_write_%p.%" I64F "d_%u", this, (__int64)GetCurrentThreadId(), GetCurrentProcessId());
         out.set(buff.str());
     }
 };
@@ -1084,6 +1084,9 @@ void CHThorIndexWriteActivity::execute()
         buildLayoutMetadata(metadata);
         unsigned nodeSize = metadata ? metadata->getPropInt("_nodeSize", NODESIZE) : NODESIZE;
         size32_t keyMaxSize = helper.queryDiskRecordSize()->getRecordSize(NULL);
+        if (hasTrailingFileposition(helper.queryDiskRecordSize()->queryTypeInfo()))
+            keyMaxSize -= sizeof(offset_t);
+
         Owned<IKeyBuilder> builder = createKeyBuilder(out, flags, keyMaxSize, nodeSize, helper.getKeyedSize(), 0);
         class BcWrapper : implements IBlobCreator
         {
@@ -1211,10 +1214,10 @@ void CHThorIndexWriteActivity::execute()
         rtlFree(layoutMetaBuff);
     }
     // New record layout info
-    if (helper.queryOutputMeta() && helper.queryOutputMeta()->queryTypeInfo())
+    if (helper.queryDiskRecordSize()->queryTypeInfo())
     {
         MemoryBuffer out;
-        dumpTypeInfo(out, helper.queryOutputMeta()->queryTypeInfo(), true);
+        dumpTypeInfo(out, helper.queryDiskRecordSize()->queryTypeInfo());
         properties.setPropBin("_rtlType", out.length(), out.toByteArray());
     }
 
@@ -1281,10 +1284,10 @@ void CHThorIndexWriteActivity::buildLayoutMetadata(Owned<IPropertyTree> & metada
     if(!metadata) metadata.setown(createPTree("metadata"));
     metadata->setProp("_record_ECL", helper.queryRecordECL());
 
-    if (helper.queryOutputMeta() && helper.queryOutputMeta()->queryTypeInfo())
+    if (helper.queryDiskRecordSize()->queryTypeInfo())
     {
         MemoryBuffer out;
-        dumpTypeInfo(out, helper.queryOutputMeta()->queryTypeInfo(), true);
+        dumpTypeInfo(out, helper.queryDiskRecordSize()->queryTypeInfo());
         metadata->setPropBin("_rtlType", out.length(), out.toByteArray());
     }
 }
@@ -3979,7 +3982,7 @@ bool CHThorGroupSortActivity::sortAndSpillRows()
     if(!diskMerger)
     {
         StringBuffer fbase;
-        agent.getTempfileBase(fbase).appendf(".spill_sort_%p", this);
+        agent.getTempfileBase(fbase).append(PATHSEPCHAR).appendf("spill_sort_%p", this);
         PROGLOG("SORT: spilling to disk, filename base %s", fbase.str());
         class CHThorRowLinkCounter : implements IRowLinkCounter, public CSimpleInterface
         {
@@ -8364,7 +8367,10 @@ void CHThorDiskReadBaseActivity::open()
 //=====================================================================================================
 
 CHThorBinaryDiskReadBase::CHThorBinaryDiskReadBase(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorDiskReadBaseArg &_arg, IHThorCompoundBaseArg & _segHelper, ThorActivityKind _kind)
-: CHThorDiskReadBaseActivity(_agent, _activityId, _subgraphId, _arg, _kind), segHelper(_segHelper), prefetchBuffer(NULL), recInfo(outputMeta.queryOriginal()->queryRecordAccessor(true)),rowInfo(recInfo)
+: CHThorDiskReadBaseActivity(_agent, _activityId, _subgraphId, _arg, _kind),
+  segHelper(_segHelper), prefetchBuffer(NULL),
+  recInfo(outputMeta.queryRecordAccessor(true)),  // MORE - is this right - should it be diskMeta->queryRecordAccessor() ?
+  rowInfo(recInfo)
 {
 }
 
@@ -8385,9 +8391,9 @@ void CHThorBinaryDiskReadBase::append(IKeySegmentMonitor *segment)
     }
 }
 
-void CHThorBinaryDiskReadBase::setMergeBarrier(unsigned barrierOffset)
+void CHThorBinaryDiskReadBase::append(FFoption option, IFieldFilter * filter)
 {
-    // nothing to do - we don't merge...
+    UNIMPLEMENTED;
 }
 
 unsigned CHThorBinaryDiskReadBase::ordinality() const
