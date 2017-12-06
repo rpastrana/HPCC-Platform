@@ -552,7 +552,7 @@ void SQLBinaryExpression::toECLStringTranslateSource(
         }
 
     }
-    else if (translation1.length()<0 && translation2.length()<0)
+    else if (translation1.length() == 0 && translation2.length() == 0)
     {
         return;
     }
@@ -560,13 +560,13 @@ void SQLBinaryExpression::toECLStringTranslateSource(
     {
         /*
         * If operand1 or operand2 could not be translated using the translation map,
-        * and ignoreMisTranslations = true, we're going to attempt to return an valid
+        * and ignoreMisTranslations == true, we're going to attempt to return an valid
         * ECL translation of this binary expression. IF the binary expression is of type
-        * OR | AND, we can substitute the mistranslated operand with the appropriate boolean value
+        * OR | AND, we can substitute the mis-translated operand with the appropriate boolean value
         * to complete the expression with out changing the gist of the expression.
         *
         * This is typically done when converting an SQL 'WHERE' clause or 'ON' clause to ECL to
-        * be used in an ECL JOIN function. In any one particular ECL Join funtion only two datasets
+        * be used in an ECL JOIN function. In any one particular ECL Join function only two datasets
         * are joined, therefore not all portions of the SQL logic clause might be relevant.
         *
         */
