@@ -63,7 +63,7 @@ private:
     Mutex abortMutex;
     bool m_SEHMappingEnabled;
     CEspConfig* m_config;
-    
+
 public:
     IMPLEMENT_IINTERFACE;
 
@@ -104,10 +104,13 @@ public:
                 bool daliOk;
                 {
                     synchronized sync(abortMutex);
-                    daliOk=config.checkDali();
+                    if (!config.isDetachedFromDali())
+                        daliOk=config.checkDali();
+                    //else
+                    //    daliOk=true;
                 }
-                if (daliOk)
-                    m_waitForExit.wait(1000);
+                if (config.isDetachedFromDali() || daliOk)
+                    m_waitForExit.wait(1000); //if detached, should we wait longer?
                 else
                 {
                     DBGLOG("Exiting ESP -- Lost DALI connection!");
@@ -257,16 +260,26 @@ public:
     }
     virtual void sendSnmpMessage(const char* msg) { throwUnexpected(); }
 
-    virtual void attachBindingsToDali()
+    virtual bool reSubscribeESPToDali()
     {
-        m_config->attachBindingsToDali();
+        return m_config->reSubscribeESPToDali();
     }
-    virtual void detachBindingsFromDali()
+
+    virtual bool unsubscribeESPFromDali()
     {
-        m_config->detachBindingsFromDali();
+        return m_config->unsubscribeESPFromDali();
+    }
+
+    virtual bool detachESPFromDali(bool force)
+    {
+        return m_config->detachESPFromDali(force);
+    }
+
+    virtual bool attachESPToDali()
+    {
+        return m_config->attachESPToDali();
     }
 };
-
 
 class CEspAbortHandler : public CInterface,
    implements IAbortHandler

@@ -220,6 +220,31 @@ public:
     IEspContainer* queryContainer() { return m_container; }
     virtual int HandleSoapRequest(CHttpRequest* request, CHttpResponse* response);
 
+    virtual bool subscribeBindingToDali()
+    {
+        //can a binding have more than 1 service? if so, why is there a getService()?
+        return this->getService()->subscribeServiceToDali();
+    }
+
+    virtual bool unsubscribeBindingFromDali()
+    {
+        //can a binding have more than 1 service? if so, why is there a getService()?
+        return this->getService()->unsubscribeServiceFromDali();
+    }
+
+    virtual bool detachBindingFromDali()
+    {
+        //can a binding have more than 1 service? if so, why is there a getService()?
+        return this->getService()->detachServiceFromDali();
+    }
+
+    virtual bool attachBindingToDali()
+    {
+        //can a binding have more than 1 service? if so, why is there a getService()?
+        return this->getService()->attachServiceToDali();
+    }
+
+    virtual bool canDetachFromDali() {return true;}
 };
 
 void SetHTTPErrorStatus(int ErrorCode,CHttpResponse* response);

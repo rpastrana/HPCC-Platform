@@ -103,11 +103,12 @@ struct esp_option
 
 class CSessionCleaner : public Thread
 {
-    bool       stopping = false;;
+    bool       stopping = false;
     Semaphore  sem;
 
     StringAttr espSessionSDSPath;
     int        checkSessionTimeoutSeconds; //the duration to clean timed out sesssions
+    bool       m_isDetached = false;
 
 public:
     CSessionCleaner(const char* _espSessionSDSPath, int _checkSessionTimeoutSeconds) : Thread("CSessionCleaner"),
@@ -119,6 +120,8 @@ public:
         sem.signal();
         join();
     }
+
+    void setIsDetached(bool isDetached) {m_isDetached = isDetached;}
 
     virtual int run();
 };
@@ -145,6 +148,7 @@ private:
     HINSTANCE hsami_;
     CSDSServerStatus *serverstatus;
     bool useDali;
+    bool m_detachedFromDali;
 
 private:
     CEspConfig(CEspConfig &);
@@ -153,7 +157,17 @@ public:
     IMPLEMENT_IINTERFACE;
 
     esp_option m_options;
-    
+    void setDetachedFromDali(bool isDetached)
+    {
+        m_detachedFromDali = isDetached;
+        m_sessionCleaner->setIsDetached(m_detachedFromDali);
+    }
+
+    bool isDetachedFromDali() const
+    {
+        return m_detachedFromDali;
+    }
+
     bool usesDali(){return useDali;}
     bool checkDali()
     {
@@ -210,8 +224,10 @@ public:
             throw MakeStringException(-1, "Failed in checking ESP cache service using %s", m_cfg->queryProp("@espCacheInitString"));
     }
 
-    void attachBindingsToDali();
-    void detachBindingsFromDali();
+    bool reSubscribeESPToDali();
+    bool unsubscribeESPFromDali();
+    bool detachESPFromDali(bool force);
+    bool attachESPToDali();
     bool canAllBindingsDetachFromDali();
     bool checkESPCache();
     IEspPlugin* getPlugin(const char* name);

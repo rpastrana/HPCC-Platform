@@ -366,10 +366,6 @@ public:
 
     static void escapeSingleQuote(StringBuffer& src, StringBuffer& escaped);
 
-    virtual bool canDetachFromDali() const {return false;}
-    virtual void attachBindingToDali() {}
-    virtual void detachBindingFromDali() {}
-
 protected:
     virtual bool basicAuth(IEspContext* ctx);
     int getWsdlOrXsd(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *service, const char *method, bool isWsdl);

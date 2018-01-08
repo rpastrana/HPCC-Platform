@@ -121,28 +121,32 @@ int CSessionCleaner::run()
         int checkSessionTimeoutMillSeconds = checkSessionTimeoutSeconds * 60;
         while(!stopping)
         {
-            Owned<IRemoteConnection> conn = querySDS().connect(espSessionSDSPath.get(), myProcessSession(), RTM_LOCK_WRITE, SESSION_SDS_LOCK_TIMEOUT);
-            if (!conn)
-                throw MakeStringException(-1, "Failed to connect to %s.", PathSessionRoot);
-
-            CDateTime now;
-            now.setNow();
-            time_t timeNow = now.getSimple();
-
-            Owned<IPropertyTreeIterator> iter1 = conn->queryRoot()->getElements(PathSessionApplication);
-            ForEach(*iter1)
+            if (!m_isDetached)
             {
-                ICopyArrayOf<IPropertyTree> toRemove;
-                Owned<IPropertyTreeIterator> iter2 = iter1->query().getElements(xpath.str());
-                ForEach(*iter2)
+                Owned<IRemoteConnection> conn = querySDS().connect(espSessionSDSPath.get(), myProcessSession(), RTM_LOCK_WRITE, SESSION_SDS_LOCK_TIMEOUT);
+                if (!conn)
+                    throw MakeStringException(-1, "Failed to connect to %s.", PathSessionRoot);
+
+                CDateTime now;
+                now.setNow();
+                time_t timeNow = now.getSimple();
+
+                Owned<IPropertyTreeIterator> iter1 = conn->queryRoot()->getElements(PathSessionApplication);
+                ForEach(*iter1)
                 {
-                    IPropertyTree& item = iter2->query();
-                    if (timeNow >= item.getPropInt64(PropSessionTimeoutAt, 0))
-                        toRemove.append(item);
-                }
-                ForEachItemIn(i, toRemove)
-                {
-                    iter1->query().removeTree(&toRemove.item(i));
+                    ICopyArrayOf<IPropertyTree> toRemove;
+                    Owned<IPropertyTreeIterator> iter2 = iter1->query().getElements(xpath.str());
+                    ForEach(*iter2)
+                    {
+                        IPropertyTree& item = iter2->query();
+                        if (timeNow >= item.getPropInt64(PropSessionTimeoutAt, 0))
+                            toRemove.append(item);
+                    }
+
+                    ForEachItemIn(i, toRemove)
+                    {
+                        iter1->query().removeTree(&toRemove.item(i));
+                    }
                 }
             }
             sem.wait(checkSessionTimeoutMillSeconds);
@@ -242,6 +246,7 @@ CEspConfig::CEspConfig(IProperties* inputs, IPropertyTree* envpt, IPropertyTree*
     hsami_=0;
     serverstatus=NULL;
     useDali=false;
+    m_detachedFromDali=false;
     
     if(inputs)
         m_inputs.setown(inputs);
@@ -436,6 +441,7 @@ void CEspConfig::initDali(const char *servers)
         DBGLOG("Initializing DALI client [servers = %s]", servers);
 
         useDali=true;
+        m_detachedFromDali=false;
 
         // Create server group
         Owned<IGroup> serverGroup = createIGroup(servers, DALI_SERVER_PORT);
@@ -894,26 +900,96 @@ bool CEspConfig::checkESPCache()
     return espCacheAvailable;
 }
 
-void CEspConfig::attachBindingsToDali()
+bool CEspConfig::reSubscribeESPToDali()
 {
     list<binding_cfg*>::iterator iter = m_bindings.begin();
     while (iter!=m_bindings.end())
     {
-        binding_cfg& xcfg = **iter;
-        xcfg.bind->attachBindingToDali();
+        binding_cfg& bindingConfig = **iter;
+        if (bindingConfig.bind)
+        {
+            ESPLOG(LogMin, "Requesting binding '%s' to subscribe to DALI notifications", bindingConfig.name.str());
+            bindingConfig.bind->subscribeBindingToDali();
+        }
         iter++;
     }
+    return true;
 }
 
-void CEspConfig::detachBindingsFromDali()
+bool CEspConfig::unsubscribeESPFromDali()
 {
     list<binding_cfg*>::iterator iter = m_bindings.begin();
     while (iter!=m_bindings.end())
     {
-        binding_cfg& xcfg = **iter;
-        xcfg.bind->detachBindingFromDali();
+        binding_cfg& bindingConfig = **iter;
+        if (bindingConfig.bind)
+        {
+            ESPLOG(LogMin, "Requesting binding '%s' to un-subscribe from DALI notifications", bindingConfig.name.str());
+            bindingConfig.bind->unsubscribeBindingFromDali();
+        }
         iter++;
     }
+    return true;
+}
+
+bool CEspConfig::detachESPFromDali(bool force)
+{
+    if(!force)
+    {
+        if (!canAllBindingsDetachFromDali())
+            return false;
+    }
+
+    if (!unsubscribeESPFromDali())
+        return false;
+
+    list<binding_cfg*>::iterator iter = m_bindings.begin();
+    while (iter!=m_bindings.end())
+    {
+        binding_cfg& xcfg = **iter;
+        ESPLOG(LogMin, "Detach ESP From DALI: requesting binding: '%s' to detach...", xcfg.name.str());
+        if (xcfg.bind)
+        {
+            xcfg.bind->detachBindingFromDali();
+        }
+
+        iter++;
+    }
+    setDetachedFromDali(true);
+
+    closedownClientProcess();
+    return true;
+}
+
+bool CEspConfig::attachESPToDali()
+{
+    bool success = true;
+
+    StringBuffer daliservers;
+    if (m_cfg->getProp("@daliServers", daliservers))
+        initDali(daliservers.str());
+
+    list<binding_cfg*>::iterator iter = m_bindings.begin();
+    while (iter!=m_bindings.end())
+    {
+        binding_cfg& xcfg = **iter;
+        ESPLOG(LogMin, "Attach ESP to DALI: requesting binding: '%s' to attach...", xcfg.name.str());
+        if (xcfg.bind)
+        {
+            map<string, srv_cfg*>::iterator sit = m_services.find(xcfg.service_name.str());
+            if(sit == m_services.end())
+                ESPLOG(LogMin, "Warning: Service %s not found for the binding", xcfg.service_name.str());
+            else
+                ((*sit).second->srv)->attachServiceToDali();
+        }
+
+        iter++;
+    }
+
+    setDetachedFromDali(false);
+    reSubscribeESPToDali();
+
+    return success;
 }
 
 bool CEspConfig::canAllBindingsDetachFromDali()
@@ -922,8 +998,7 @@ bool CEspConfig::canAllBindingsDetachFromDali()
     while (iter!=m_bindings.end())
     {
         binding_cfg& xcfg = **iter;
-        //if (!xcfg.bind->canAllBindingsDetachFromDali())
-        //if (!xcfg.bind->)
+        if (!xcfg.bind->canDetachFromDali())
             return false;
         iter++;
     }

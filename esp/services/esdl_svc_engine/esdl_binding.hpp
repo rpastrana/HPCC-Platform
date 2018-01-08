@@ -171,6 +171,11 @@ public:
     virtual void handleFinalRequest(IEspContext &context, Owned<IPropertyTree> &tgtcfg, Owned<IPropertyTree> &tgtctx, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, const char *ns, StringBuffer& req, StringBuffer &out, bool isroxie, bool isproxy);
     void getSoapBody(StringBuffer& out,StringBuffer& soapresp);
     void getSoapError(StringBuffer& out,StringBuffer& soapresp,const char *,const char *);
+
+    virtual bool unsubscribeServiceFromDali() override {return true;}
+    virtual bool subscribeServiceToDali() override {return false;}
+    virtual bool attachServiceToDali() override {return false;}
+    virtual bool detachServiceFromDali() override {return false;}
 };
 
 #define DEFAULT_ESDLBINDING_URN_BASE "urn:hpccsystems:ws"
@@ -178,6 +183,7 @@ public:
 class EsdlBindingImpl : public CHttpSoapBinding
 {
 private:
+
     //==========================================================================================
     // the following class implements notification handler for subscription to dali for environment
     // updates by other clients.
@@ -231,7 +237,7 @@ private:
             }
             catch (IException *E)
             {
-                DBGLOG("ESDL Binding %s.%s failed to subscribe to DALI (%s)", thisBinding->m_processName.get(),thisBinding->m_bindingName.get(), fullBindingPath.str());
+                ESPLOG(LogMin, "ESDL Binding %s.%s failed to subscribe to DALI (%s)", thisBinding->m_processName.get(),thisBinding->m_bindingName.get(), fullBindingPath.str());
                 E->Release();
             }
         }
@@ -272,7 +278,7 @@ private:
             {
                 if (sub_id)
                 {
-                    DBGLOG("ESDL Binding %s is UN subscribing from /ESDL/Bindings/Binding dali changes", thisBinding->m_bindingName.get());
+                    ESPLOG(LogNormal,"ESDL Binding %s is UN subscribing from /ESDL/Bindings/Binding dali changes", thisBinding->m_bindingName.get());
                     querySDS().unsubscribe(sub_id);
                     sub_id = 0;
                 }
@@ -325,7 +331,7 @@ private:
     CriticalSection                         configurationLoadCritSec;
     CriticalSection                         detachCritSec;
     StringBuffer                            m_esdlStateFilesLocation;
-    MapStringTo<SecAccessFlags>             m_accessmap;
+    //MapStringTo<SecAccessFlags>             m_accessmap;
     StringBuffer                            m_staticNamespace;
     bool                                    m_isAttached;
 
@@ -338,7 +344,7 @@ private:
         if (m_pESDLService)
             m_pESDLService->clearDESDLState();
         //prob need to un-initesdlservinfo as well.
-        DBGLOG("Warning binding %s.%s is being un-loaded!", m_processName.get(), m_bindingName.get());
+        ESPLOG(LogNormal, "Warning binding %s.%s is being un-loaded!", m_processName.get(), m_bindingName.get());
     }
 
 public:
@@ -402,7 +408,8 @@ public:
     bool usesESDLDefinition(const char * id);
     virtual bool isDynamicBinding() const override { return true; }
     virtual unsigned getCacheMethodCount(){return 0;}
-    virtual void attachBindingToDali()
+
+    virtual bool subscribeBindingToDali() override
     {
         CriticalBlock b(detachCritSec);
         ESPLOG(LogNormal, "Binding %s.%s is subscribing to Dali for ESDL changes...", m_processName.get(), m_bindingName.get() );
@@ -422,20 +429,33 @@ public:
         reloadBindingFromDali(m_bindingName.get(), m_processName.get());
 
         m_isAttached = true;
-	}
+        return true;
+    }
 
-    virtual void detachBindingFromDali()
+    virtual bool unsubscribeBindingFromDali() override
     {
          CriticalBlock b(detachCritSec);
+
          if (m_pBindingSubscription)
              m_pBindingSubscription->unsubscribe();
          if(m_pDefinitionSubscription)
              m_pDefinitionSubscription->unsubscribe();
 
-            m_isAttached = false;
-        }
+         m_isAttached = false;
+         return true;
+    }
 
-    virtual bool canDetachFromDali() {return true;}
+    bool detachBindingFromDali() override
+    {
+        return false;
+    }
+
+    virtual bool canDetachFromDali() override
+    {
+        return true;
+    }
+
+/*
     virtual bool attach()
     {
         CriticalBlock b(detachCritSec);
@@ -471,7 +491,7 @@ public:
 
         return true;
     }
-
+*/
     virtual bool isAttached()
     {
         CriticalBlock b(detachCritSec);

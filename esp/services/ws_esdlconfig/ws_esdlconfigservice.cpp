@@ -440,6 +440,9 @@ bool CWsESDLConfigEx::onPublishESDLDefinition(IEspContext &context, IEspPublishE
 {
     try
     {
+        if (isDetachedFromDali)
+          throw MakeStringException(-1, "Cannot publish ESDL Service definition. ESP is currently detached from DALI.");
+
         if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Write, false))
             throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to Publish ESDL Service definition. Permission denied.");
 
@@ -738,6 +741,9 @@ bool CWsESDLConfigEx::onPublishESDLBinding(IEspContext &context, IEspPublishESDL
 {
     try
     {
+        if (isDetachedFromDali)
+            throw MakeStringException(-1, "Cannot publish ESDL Binding. ESP is currently detached from DALI.");
+
         if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Write, false))
             throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to Configure ESDL Service. Permission denied.");
 
@@ -1090,6 +1096,9 @@ bool CWsESDLConfigEx::onConfigureESDLBindingMethod(IEspContext &context, IEspCon
     int success = 0;
     try
     {
+        if (isDetachedFromDali)
+            throw MakeStringException(-1, "Cannot Configure ESDL Binding Method. ESP is currently detached from DALI.");
+
         if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Write, false))
             throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to Configure ESDL Method. Permission denied.");
 
@@ -1398,6 +1407,9 @@ bool CWsESDLConfigEx::onGetESDLBinding(IEspContext &context, IEspGetESDLBindingR
 {
     try
     {
+        if (isDetachedFromDali)
+            throw MakeStringException(-1, "Cannot fetch ESDL Binding. ESP is currently detached from DALI.");
+
         if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Read, false))
             throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to fetch ESDL Service Configuration. Permission denied.");
 
@@ -1610,6 +1622,9 @@ bool CWsESDLConfigEx::onEcho(IEspContext &context, IEspEchoRequest &req, IEspEch
 bool CWsESDLConfigEx::onDeleteESDLDefinition(IEspContext &context, IEspDeleteESDLDefinitionRequest &req, IEspDeleteESDLRegistryEntryResponse &resp)
 {
     resp.updateStatus().setCode(-1);
+    if (isDetachedFromDali)
+        throw MakeStringException(-1, "Cannot delete ESDL Definition. ESP is currently detached from DALI.");
+
     if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Full, false))
         throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to DELETE ESDL entry. Permission denied.");
 
@@ -1670,6 +1685,9 @@ bool CWsESDLConfigEx::onDeleteESDLBinding(IEspContext &context, IEspDeleteESDLBi
 {
     resp.updateStatus().setCode(-1);
 
+    if (isDetachedFromDali)
+        throw MakeStringException(-1, "Cannot fetch ESDL Binding. ESP is currently detached from DALI.");
+
     if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Full, false))
         throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to DELETE ESDL entry. Permission denied.");
 
@@ -1720,6 +1738,9 @@ bool CWsESDLConfigEx::onDeleteESDLBinding(IEspContext &context, IEspDeleteESDLBi
 
 bool CWsESDLConfigEx::onGetESDLDefinition(IEspContext &context, IEspGetESDLDefinitionRequest&req, IEspGetESDLDefinitionResponse &resp)
 {
+     if (isDetachedFromDali)
+         throw MakeStringException(-1, "Cannot fetch ESDL Definition. ESP is currently detached from DALI.");
+
     if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Read, false))
         throw MakeStringException(ECLWATCH_ROXIE_QUERY_ACCESS_DENIED, "Failed to fetch ESDL definition. Permission denied.");
 
@@ -1840,6 +1861,9 @@ bool CWsESDLConfigEx::onGetESDLDefinition(IEspContext &context, IEspGetESDLDefin
 
 bool CWsESDLConfigEx::onListESDLDefinitions(IEspContext &context, IEspListESDLDefinitionsRequest&req, IEspListESDLDefinitionsResponse &resp)
 {
+    if (isDetachedFromDali)
+        throw MakeStringException(-1, "Cannot list ESDL Definitions. ESP is currently detached from DALI.");
+
     Owned<IRemoteConnection> conn = querySDS().connect(ESDL_DEFS_ROOT_PATH, myProcessSession(), RTM_LOCK_READ, SDS_LOCK_TIMEOUT_DESDL);
     if (!conn)
        throw MakeStringException(-1, "Unable to connect to ESDL Service definition information in dali '%s'", ESDL_DEFS_ROOT_PATH);
@@ -1869,6 +1893,9 @@ bool CWsESDLConfigEx::onListESDLDefinitions(IEspContext &context, IEspListESDLDe
 
 bool CWsESDLConfigEx::onListDESDLEspBindings(IEspContext &context, IEspListDESDLEspBindingsReq&req, IEspListDESDLEspBindingsResp &resp)
 {
+    if (isDetachedFromDali)
+        throw MakeStringException(-1, "Cannot list ESDL ESP Bindings. ESP is currently detached from DALI.");
+
     bool includeESDLBindings = req.getIncludeESDLBindingInfo();
     IArrayOf<IEspESPServerEx> allESPServers;
     IArrayOf<IEspESPServerEx> desdlESPServers;
@@ -2004,6 +2031,9 @@ bool CWsESDLConfigEx::onListDESDLEspBindings(IEspContext &context, IEspListDESDL
 
 bool CWsESDLConfigEx::onListESDLBindings(IEspContext &context, IEspListESDLBindingsRequest&req, IEspListESDLBindingsResponse &resp)
 {
+    if (isDetachedFromDali)
+        throw MakeStringException(-1, "Cannot list ESDL Bindings. ESP is currently detached from DALI.");
+
     Owned<IRemoteConnection> conn = querySDS().connect(ESDL_BINDINGS_ROOT_PATH, myProcessSession(), RTM_LOCK_READ, SDS_LOCK_TIMEOUT_DESDL);
     if (!conn)
        throw MakeStringException(-1, "Unable to connect to ESDL Service definition information in dali '%s'", ESDL_DEFS_ROOT_PATH);

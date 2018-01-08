@@ -42,7 +42,7 @@ extern "C"
     ESP_FACTORY IEspRpcBinding * esp_binding_factory(const char *name, const char* type, IPropertyTree *cfg, const char *process)
     {
         if (streq(type, "loggingservice_binding"))
-            return new CWsLoggingServiceSoapBinding(cfg, name, process, hsl_none);
+            return new CWsLoggingServiceSoapBindingEx(cfg, name, process, hsl_none);
 
         return NULL;
     }

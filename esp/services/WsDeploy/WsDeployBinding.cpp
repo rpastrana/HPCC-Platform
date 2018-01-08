@@ -61,12 +61,7 @@ public:
     {
         return "configmgr.html";
     }
-
-
-private:
 };
-
-
 
 CWsDeploySoapBinding* createWsDeploySoapBinding(IPropertyTree *cfg, const char *name, const char *process)
 {

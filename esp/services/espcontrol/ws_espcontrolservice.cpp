@@ -75,15 +75,48 @@ void CWSESPControlEx::init(IPropertyTree *cfg, const char *process, const char *
     }
 }
 
-bool CWSESPControlEx::onDetachBindingsFromDali(IEspContext& context, IEspDetachBindingsFromDaliRequest& req, IEspDetachBindingsFromDaliResponse& resp)
+bool CWSESPControlEx::onDetachFromDali(IEspContext& context, IEspDetachFromDaliRequest& req, IEspDetachFromDaliResponse& resp)
 {
     int status = 0;
-    VStringBuffer message("Request to detach all bindings on ESP Process '%s' ", this->espProcess.get());
-    CEspServer * thisESPServer = dynamic_cast<CEspServer *>(m_container);
+    bool force = req.getForce_isNull() ? false : req.getForce();
+    VStringBuffer message("Request to DETACH ESP Process '%s' from Dali ", this->espProcess.get());
+    CEspServer * thisESPServer = static_cast<CEspServer *>(m_container);
     if (thisESPServer)
     {
-        thisESPServer->detachBindingsFromDali();
-        message.append("has been issued.");
+	message.append("has been issued - ");
+	if (thisESPServer->detachESPFromDali(force))
+            message.append("and success reported.");
+        else
+        {
+            message.append("but failure reported.");
+            status = -1;
+        }
+    }
+    else
+    {
+	message.append("COULD NOT BE ISSUED due to internal error");
+	status = -1;
+    }
+    resp.setMessage(message.str());
+    resp.setStatus(status);
+    return status;
+}
+
+bool CWSESPControlEx::onAttachToDali(IEspContext& context, IEspAttachToDaliRequest& req, IEspAttachToDaliResponse& resp)
+{
+    int status = 0;
+    VStringBuffer message("Request to ATTACH ESP Process '%s' to Dali ", this->espProcess.get());
+    CEspServer * thisESPServer = static_cast<CEspServer *>(m_container);
+    if (thisESPServer)
+    {
+	message.append("has been issued - ");
+        if (thisESPServer->attachESPToDali())
+            message.append("and success reported.");
+        else
+        {
+            message.append("but failure reported.");
+            status = -1;
+        }
     }
     else
     {
@@ -95,14 +128,40 @@ bool CWSESPControlEx::onDetachBindingsFromDali(IEspContext& context, IEspDetachB
     return status;
 }
 
-bool CWSESPControlEx::onAttachBindingsToDali(IEspContext& context, IEspAttachBindingsToDaliRequest& req, IEspAttachBindingsToDaliResponse& resp)
+bool CWSESPControlEx::onUnsubscribeFromDali(IEspContext& context, IEspUnsubscribeFromDaliRequest& req, IEspUnsubscribeFromDaliResponse& resp)
+{
+    int status = 0;
+    VStringBuffer message("Request to cancel all DALI subscriptions on ESP Process '%s' ", this->espProcess.get());
+    CEspServer * thisESPServer = static_cast<CEspServer *>(m_container);
+    if (thisESPServer)
+    {
+	message.append("has been issued - ");
+        if (thisESPServer->unsubscribeESPFromDali())
+            message.append("and success reported.");
+        else
+        {
+            message.append("but failure reported.");
+            status = -1;
+        }
+    }
+    else
+    {
+        message.append("COULD NOT BE ISSUED due to internal error");
+        status = -1;
+    }
+    resp.setMessage(message.str());
+    resp.setStatus(status);
+    return status;
+}
+
+bool CWSESPControlEx::onReSubscribeToDali(IEspContext& context, IEspReSubscribeToDaliRequest& req, IEspReSubscribeToDaliResponse& resp)
 {
     int status = 0;
     VStringBuffer message("Request to attach all bindings on ESP Process '%s' ", this->espProcess.get());
-    CEspServer * thisESPServer = dynamic_cast<CEspServer *>(m_container);
+    CEspServer * thisESPServer = static_cast<CEspServer *>(m_container);
     if (thisESPServer)
     {
-        thisESPServer->attachBindingsToDali();
+        thisESPServer->reSubscribeESPToDali();
         message.append("has been issued.");
     }
     else

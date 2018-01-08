@@ -213,8 +213,10 @@ interface IEspContainer : extends IInterface
     virtual void setFrameTitle(const char* title) = 0;
     virtual const char* getFrameTitle() = 0;
     virtual void sendSnmpMessage(const char* msg) = 0;
-    virtual void attachBindingsToDali() = 0;
-    virtual void detachBindingsFromDali() = 0;
+    virtual bool reSubscribeESPToDali() = 0;
+    virtual bool unsubscribeESPFromDali() = 0;
+    virtual bool detachESPFromDali(bool force) = 0;
+    virtual bool attachESPToDali() = 0;
 };
 
 interface IEspRpcBinding;
@@ -279,6 +281,10 @@ SCMinterface IEspService(IInterface)
     const char * getServiceType();
     bool init(const char *name, const char *type, IPropertyTree *cfg, const char *process);
     void setContainer(IEspContainer *container);
+    bool subscribeServiceToDali();
+    bool unsubscribeServiceFromDali();
+    bool detachServiceFromDali();
+    bool attachServiceToDali();
 };
 
 
@@ -318,8 +324,10 @@ SCMinterface IEspRpcBinding(IInterface)
     void setXslProcessor(IInterface *xslp);
     IEspContainer* queryContainer();
     unsigned getCacheMethodCount();
-    void attachBindingToDali();
-    void detachBindingFromDali();
+    bool subscribeBindingToDali();
+    bool unsubscribeBindingFromDali();
+    bool detachBindingFromDali();
+    bool attachBindingToDali();
     bool canDetachFromDali();
 };
 

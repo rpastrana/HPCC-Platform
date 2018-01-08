@@ -112,15 +112,26 @@ public:
 public:
     IMPLEMENT_IINTERFACE;
 
-    CWsEclService()
-    {
-    }
+    CWsEclService() {}
     ~CWsEclService();
 
     virtual const char * getServiceType(){return "ws_ecl";}
     virtual bool init(const char * name, const char * type, IPropertyTree * cfg, const char * process);
     virtual void setContainer(IEspContainer * container){}
 
+    bool unsubscribeServiceFromDali() override {return true;}
+    bool subscribeServiceToDali() override {return false;}
+    bool detachServiceFromDali() override
+    {
+        setIsDetached(true);
+        return true;
+    }
+    bool attachServiceToDali() override {return false;}
+
+    void setIsDetached(bool isDetached) { m_isDetached = isDetached;}
+    bool isDetached() { return m_isDetached;}
+private:
+    bool m_isDetached;
 };
 
 class CWsEclBinding : public CHttpSoapBinding
@@ -150,9 +161,21 @@ public:
 
     virtual int getQualifiedNames(IEspContext& ctx, MethodInfoArray & methods){return 0;}
     virtual unsigned getCacheMethodCount(){return 0;}
-    virtual void attachBindingToDali(){}
-    virtual void detachBindingFromDali(){}
-    virtual bool canDetachFromDali() {return false;}
+
+    virtual bool canDetachFromDali() override
+    {
+        return false;
+    }
+
+    virtual bool subscribeBindingToDali() override
+    {
+        return true;
+    }
+
+    virtual bool unsubscribeBindingFromDali() override
+    {
+        return false;
+    }
 
     void getNavigationData(IEspContext &context, IPropertyTree & data);
     void getRootNavigationFolders(IEspContext &context, IPropertyTree & data);

@@ -68,6 +68,20 @@ public:
         ensureNavLink(*folder, "Cluster Processes", "/WsTopology/TpClusterQuery?Type=ROOT", "View details about clusters and optionally run preflight activities", NULL, NULL, 2);
         ensureNavLink(*folder, "System Servers", "/WsTopology/TpServiceQuery?Type=ALLSERVICES", "View details about System Support Servers clusters and optionally run preflight activities", NULL, NULL, 3);
     }
+
+   /* virtual bool canDetachFromDali() override
+    {
+        return false;
+    }
+    virtual bool attachBindingToDali() override
+    {
+        return true;
+    }
+    virtual bool detachBindingFromDali()override
+    {
+        return false;
+    }
+    */
 };
 
 

@@ -22,6 +22,20 @@
 #include "espp.hpp"
 #include "environment.hpp"
 
+
+class CWSESPControlSoapBindingEx : public CWSESPControlSoapBinding
+{
+public:
+
+    CWSESPControlSoapBindingEx(http_soap_log_level level=hsl_none) : CWSESPControlSoapBinding(level)
+    {
+    }
+
+    CWSESPControlSoapBindingEx(IPropertyTree* cfg, const char *bindname, const char *procname, http_soap_log_level level=hsl_none) : CWSESPControlSoapBinding(cfg, bindname, procname, level)
+    {
+    }
+};
+
 class CWSESPControlEx : public CWSESPControl
 {
     StringAttr espProcess;
@@ -51,8 +65,10 @@ public:
     virtual bool onSessionInfo(IEspContext& context, IEspSessionInfoRequest& req, IEspSessionInfoResponse& resp);
     virtual bool onCleanSession(IEspContext& context, IEspCleanSessionRequest& req, IEspCleanSessionResponse& resp);
     virtual bool onSetSessionTimeout(IEspContext& context, IEspSetSessionTimeoutRequest& req, IEspSetSessionTimeoutResponse& resp);
-    virtual bool onDetachBindingsFromDali(IEspContext& context, IEspDetachBindingsFromDaliRequest& req, IEspDetachBindingsFromDaliResponse& resp);
-    virtual bool onAttachBindingsToDali(IEspContext& context, IEspAttachBindingsToDaliRequest& req, IEspAttachBindingsToDaliResponse& resp);
+    virtual bool onUnsubscribeFromDali(IEspContext& context, IEspUnsubscribeFromDaliRequest& req, IEspUnsubscribeFromDaliResponse& resp);
+    virtual bool onReSubscribeToDali(IEspContext& context, IEspReSubscribeToDaliRequest& req, IEspReSubscribeToDaliResponse& resp);
+    virtual bool onDetachFromDali(IEspContext& context, IEspDetachFromDaliRequest& req, IEspDetachFromDaliResponse& resp);
+    virtual bool onAttachToDali(IEspContext& context, IEspAttachToDaliRequest& req, IEspAttachToDaliResponse& resp);
 };
 
 #endif //_ESPWIZ_ws_espcontrol_HPP__

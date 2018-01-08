@@ -93,21 +93,43 @@ ESPresponse [exceptions_inline, nil_remove, http_encode(0)] SetSessionTimeoutRes
     string Message;
 };
 
-ESPrequest [nil_remove] DetachBindingsFromDaliRequest
+ESPrequest [nil_remove] UnsubscribeFromDaliRequest
 {
 };
 
-ESPresponse [exceptions_inline, nil_remove, http_encode(0)] DetachBindingsFromDaliResponse
+ESPresponse [exceptions_inline, nil_remove, http_encode(0)] UnsubscribeFromDaliResponse
 {
     int Status;
     string Message;
 };
 
-ESPrequest [nil_remove] AttachBindingsToDaliRequest
+ESPrequest [nil_remove] ReSubscribeToDaliRequest
 {
 };
 
-ESPresponse [exceptions_inline, nil_remove, http_encode(0)] AttachBindingsToDaliResponse
+ESPresponse [exceptions_inline, nil_remove, http_encode(0)] ReSubscribeToDaliResponse
+{
+    int Status;
+    string Message;
+};
+
+ESPrequest [nil_remove] DetachFromDaliRequest
+{
+    bool Force(false);
+};
+
+ESPresponse [exceptions_inline, nil_remove, http_encode(0)] DetachFromDaliResponse
+{
+    int Status;
+    string Message;
+    bool Forced;
+};
+
+ESPrequest [nil_remove] AttachToDaliRequest
+{
+};
+
+ESPresponse [exceptions_inline, nil_remove, http_encode(0)] AttachToDaliResponse
 {
     int Status;
     string Message;
@@ -120,8 +142,10 @@ ESPservice [auth_feature("NONE"), version("1.02"), default_client_version("1.01"
     ESPmethod [min_ver("1.01")] SessionInfo(SessionInfoRequest, SessionInfoResponse);
     ESPmethod [min_ver("1.01")] CleanSession(CleanSessionRequest, CleanSessionResponse);
     ESPmethod [min_ver("1.01")] SetSessionTimeout(SetSessionTimeoutRequest, SetSessionTimeoutResponse);
-    ESPmethod [min_ver("1.02")] DetachBindingsFromDali(DetachBindingsFromDaliRequest, DetachBindingsFromDaliResponse);
-    ESPmethod [min_ver("1.02")] AttachBindingsToDali(AttachBindingsToDaliRequest, AttachBindingsToDaliResponse);
+    ESPmethod [min_ver("1.02")] UnsubscribeFromDali(UnsubscribeFromDaliRequest, UnsubscribeFromDaliResponse);
+    ESPmethod [min_ver("1.02")] ReSubscribeToDali(ReSubscribeToDaliRequest, ReSubscribeToDaliResponse);
+    ESPmethod [min_ver("1.02")] DetachFromDali(DetachFromDaliRequest, DetachFromDaliResponse);
+    ESPmethod [min_ver("1.02")] AttachToDali(AttachToDaliRequest, AttachToDaliResponse);
 };
 
 SCMexportdef(WSESPControl);

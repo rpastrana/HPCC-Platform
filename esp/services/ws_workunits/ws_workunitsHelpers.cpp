@@ -2951,32 +2951,35 @@ int WUSchedule::run()
         PROGLOG("ECLWorkunit WUSchedule Thread started.");
         while(!stopping)
         {
-            Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-            Owned<IConstWorkUnitIterator> itr = factory->getScheduledWorkUnits();
-            if (itr)
+            if (!detached)
             {
-                ForEach(*itr)
+                Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
+                Owned<IConstWorkUnitIterator> itr = factory->getScheduledWorkUnits();
+                if (itr)
                 {
-                    try
+                    ForEach(*itr)
                     {
-                        IConstWorkUnitInfo & cw = itr->query();
-                        if (factory->isAborting(cw.queryWuid()))
+                        try
                         {
-                            WorkunitUpdate wu(factory->updateWorkUnit(cw.queryWuid()));
-                            wu->setState(WUStateAborted);
-                            continue;
+                            IConstWorkUnitInfo & cw = itr->query();
+                            if (factory->isAborting(cw.queryWuid()))
+                            {
+                                WorkunitUpdate wu(factory->updateWorkUnit(cw.queryWuid()));
+                                wu->setState(WUStateAborted);
+                                continue;
+                            }
+                            WsWuDateTime dt, now;
+                            now.setNow();
+                            cw.getTimeScheduled(dt);
+                            if (now.compare(dt)>=0)
+                                runWorkUnit(cw.queryWuid(), cw.queryClusterName());
                         }
-                        WsWuDateTime dt, now;
-                        now.setNow();
-                        cw.getTimeScheduled(dt);
-                        if (now.compare(dt)>=0)
-                            runWorkUnit(cw.queryWuid(), cw.queryClusterName());
-                    }
-                    catch(IException *e)
-                    {
-                        StringBuffer msg;
-                        ERRLOG("Exception %d:%s in WsWorkunits Schedule::run", e->errorCode(), e->errorMessage(msg).str());
-                        e->Release();
+                        catch(IException *e)
+                        {
+                            StringBuffer msg;
+                            ERRLOG("Exception %d:%s in WsWorkunits Schedule::run", e->errorCode(), e->errorMessage(msg).str());
+                            e->Release();
+                        }
                     }
                 }
             }
@@ -2994,8 +2997,10 @@ int WUSchedule::run()
         ERRLOG("Unknown exception in WsWorkunits Schedule::run");
     }
 
-    if (m_container)
-        m_container->exitESP();
+    //Rodrigo: do we need to do this anyway?? why not attempt to iterate until dali is reachable again??
+    //but anyway do we want to notify this thread that we're attached/detached?
+    //if (m_container)
+    //    m_container->exitESP();
     return 0;
 }
 

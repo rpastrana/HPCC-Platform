@@ -60,6 +60,20 @@ public:
     bool onListESDLDefinitions(IEspContext &context, IEspListESDLDefinitionsRequest&req, IEspListESDLDefinitionsResponse &resp);
     bool onListESDLBindings(IEspContext &context, IEspListESDLBindingsRequest&req, IEspListESDLBindingsResponse &resp);
     bool onListDESDLEspBindings(IEspContext &context, IEspListDESDLEspBindingsReq&req, IEspListDESDLEspBindingsResp &resp);
+
+    bool attachServiceToDali() override
+    {
+        isDetachedFromDali = false;
+        return true;
+    }
+
+    bool detachServiceFromDali() override
+    {
+        isDetachedFromDali = true;
+        return true;
+    }
+private:
+    bool isDetachedFromDali;
 };
 
 #endif //_ESPWIZ_WsESDLConfig_HPP__
