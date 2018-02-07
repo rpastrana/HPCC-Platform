@@ -102,6 +102,8 @@ typedef IEsdlCommand *(*EsdlCommandFactory)(const char *cmdname);
 #define ESDL_OPTION_ROLLUP              "--rollup"
 #define ESDL_OPTION_ECL_INCLUDE_LIST    "--ecl-imports"
 #define ESDL_OPTION_ECL_HEADER_BLOCK    "--ecl-header"
+#define ESDL_OPTION_ECL_ARCHIVE_OUT     "--archive"
+#define ESDL_OPT_ECL_ARCHIVE_OUT        "-E"
 
 #define ESDLOPT_INCLUDE_PATH            "--include-path"
 #define ESDLOPT_INCLUDE_PATH_S          "-I"
@@ -172,6 +174,7 @@ public:
             if (stricmp(extension.str(),LEGACY_FILE_EXTENSION)==0 || stricmp(extension.str(),ESDL_FILE_EXTENSION)==0)
             {
                 StringBuffer esxml;
+                //EsdlCmdHelper::convertECMtoESXDL(sourceFileName, filename.str(), esxml, true, verbose, true, true, includePath);
                 EsdlCmdHelper::convertECMtoESXDL(sourceFileName, filename.str(), esxml, true, verbose, false, true, includePath);
                 esdlDef->addDefinitionFromXML(esxml, sourceFileName);
             }

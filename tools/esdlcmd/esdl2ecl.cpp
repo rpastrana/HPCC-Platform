@@ -240,6 +240,8 @@ public:
                 continue;
             if (iter.matchFlag(optRollUpEclToSingleFile, ESDL_OPTION_ROLLUP))
                 continue;
+            if (iter.matchFlag(optOutputArchive, ESDL_OPTION_ECL_ARCHIVE_OUT) || iter.matchFlag(optOutputArchive, ESDL_OPT_ECL_ARCHIVE_OUT))
+                continue;
             if (iter.matchOption(optECLIncludesList, ESDL_OPTION_ECL_INCLUDE_LIST))
                 continue;
             if (iter.matchOption(optECLHeaderBlock, ESDL_OPTION_ECL_HEADER_BLOCK))
@@ -339,10 +341,34 @@ public:
         idxxml.append("<keyword word=\"isvalid\"/>");
         idxxml.append("</keywords>");
 
-        if (optProcessIncludes)
-        {
-            StringBuffer entireesxdl;
 
+        if (optOutputArchive)
+        {
+            StringBuffer archivexml;
+            archivexml.appendf("<Archive build=\"%s\" eclVersion=\"%s\">", "somebuildnumber", "x.y.z");
+            archivexml.appendf("<Query attributePath=\"%s\"/>", "someattributepath");
+            archivexml.appendf("<Module key=\"%s\" name=\"%s\">", "", "");
+
+           Owned<IPropertyTreeIterator> files = trees.all->getElements("esxdl");
+           ForEach(*files)
+           {
+               IPropertyTree &file = files->query();
+               const char * filename = file.queryProp("@name");
+               StringBuffer xmlfile;
+               toXML(&file, xmlfile, 0,0);
+
+               //outputEcl(srcPath.str(), filename, optOutDirPath.get(), idxxml.str(), xmlfile, optECLIncludesList.str(), optECLHeaderBlock.str());
+               //generateECLAttribute(StringBuffer & archive, const char *srcpath, const char *srcfile, const char *types, const char * xml, const char * eclimports, const char * eclheader)
+               generateECLAttribute(archivexml, srcPath.str(), filename,idxxml,  xmlfile,optECLIncludesList.str(), optECLHeaderBlock.str());
+           }
+           archivexml.append("</Module></Archive>");
+
+
+           outputArchive(srcName.str(), srcPath.str(), archivexml);
+           fprintf(stdout, "===========>\n%s", archivexml.str());
+        }
+        else if (optProcessIncludes)
+        {
             Owned<IPropertyTreeIterator> files = trees.all->getElements("esxdl");
             ForEach(*files)
             {
@@ -393,6 +419,62 @@ public:
                 ,stdout);
     }
 
+    void generateECLAttribute(StringBuffer & archive, const char *srcpath, const char *srcfile, const char *types, const char * xml, const char * eclimports, const char * eclheader)
+    {
+      archive.appendf("<Attribute key=\"%s\" name=\"%s\" sourcePath=\"%s\">", srcfile, srcfile, srcpath);
+      generateFromEXSDL(archive, srcpath, srcfile, types, xml, eclimports, eclheader);
+      archive.append("</Attribute>");
+    }
+
+    void generateFromEXSDL(StringBuffer & ecl, const char *srcpath, const char *srcfile, const char *types, const char * xml, const char * eclimports, const char * eclheader)
+    {
+      StringBuffer expstr;
+      expstr.append("<expesdl>");
+      expstr.append(types);
+      expstr.append(xml);
+      expstr.append("</expesdl>");
+
+      Owned<IProperties> params = createProperties();
+      VStringBuffer sourcefile("%s/%s", srcpath, srcfile);
+      params->setProp("sourceFileName", sourcefile.str());
+      params->setProp("importsList", eclimports);
+      params->setProp("eclHeader", eclheader);
+      StringBuffer esdl2eclxslt (optHPCCCompFilesDir.get());
+      esdl2eclxslt.append("/xslt/esdl2ecl.xslt");
+      esdl2eclxsltTransformToBuffer(expstr.str(), esdl2eclxslt.str(), params, ecl);
+    }
+
+    void outputArchive(const char *file, const char *path, StringBuffer & content)
+    {
+        DBGLOG("Generating ECL file for %s", file);
+        StringBuffer filePath;
+        StringBuffer fileName;
+        StringBuffer fileExt;
+
+        splitFilename(file, NULL, &filePath, &fileName, &fileExt);
+
+        StringBuffer outfile;
+        if (path && *path)
+        {
+            outfile.append(path);
+            if (outfile.length() && !strchr("/\\", outfile.charAt(outfile.length()-1)))
+                outfile.append('/');
+        }
+        outfile.append(fileName).append(".archive");
+
+        Owned<IFile> ifile =  createIFile(outfile.str());
+                    if (ifile)
+                    {
+                        Owned<IFileIO> ifio = ifile->open(IFOcreate);
+                        if (ifio)
+                        {
+                            ifio->write(0, content.length(), content.str());
+                        }
+                    }
+
+
+
+        }
     void outputEcl(const char *srcpath, const char *file, const char *path, const char *types, const char * xml, const char * eclimports, const char * eclheader)
     {
         DBGLOG("Generating ECL file for %s", file);
@@ -465,10 +547,52 @@ public:
         params->setProp("eclHeader", eclheader);
         StringBuffer esdl2eclxslt (optHPCCCompFilesDir.get());
         esdl2eclxslt.append("/xslt/esdl2ecl.xslt");
-        esdl2eclxsltTransform(expstr.str(), esdl2eclxslt.str(), params, outfile.str());
+        esdl2eclxsltTransformToFile(expstr.str(), esdl2eclxslt.str(), params, outfile.str());
     }
 
-    void esdl2eclxsltTransform(const char* xml, const char* sheet, IProperties *params, const char *filename)
+    static void esdl2eclxsltTransformToBuffer(const char* expesdl, const char* xsltfilename, IProperties *params, StringBuffer & target)
+    {
+        StringBuffer xsl;
+        xsl.loadFile(xsltfilename);
+
+        Owned<IXslProcessor> proc  = getXslProcessor();
+        Owned<IXslTransform> trans = proc->createXslTransform();
+
+        trans->setXmlSource(expesdl, strlen(expesdl));
+        trans->setXslSource(xsl, xsl.length(), "esdl2ecl", ".");
+
+        if (params)
+        {
+            Owned<IPropertyIterator> it = params->getIterator();
+            for (it->first(); it->isValid(); it->next())
+            {
+                const char *key = it->getPropKey();
+                //set parameter in the XSL transform skipping over the @ prefix, if any
+                const char* paramName = *key == '@' ? key+1 : key;
+                trans->setParameter(paramName, StringBuffer().append('\'').append(params->queryProp(key)).append('\'').str());
+            }
+        }
+
+        StringBuffer buffer;
+        buffer.setLength(strlen(expesdl) * 10); //hate doing this, but really, how do we accurately project the
+                                                //size of the transform result, let's guess and hope we're right?
+
+        trans->setResultTarget((char *)buffer.str(), buffer.length());
+
+        try
+        {
+            trans->transform();
+            StringBuffer encoded;
+            encodeXML(buffer.str(), encoded);
+            target.append(encoded.str());
+        }
+        catch(...)
+        {
+            fprintf(stdout, "Error transforming Esdl to ECL to buffer");
+        }
+    }
+
+    static void esdl2eclxsltTransformToFile(const char* xml, const char* sheet, IProperties *params, const char *filename)
     {
         StringBuffer xsl;
         xsl.loadFile(sheet);
@@ -510,4 +634,5 @@ public:
     StringAttr optHPCCCompFilesDir;
     StringAttr optECLIncludesList;
     StringAttr optECLHeaderBlock;
+    bool optOutputArchive;
 };

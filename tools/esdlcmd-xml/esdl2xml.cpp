@@ -96,8 +96,14 @@ int main(int argc, char* argv[])
     Owned<Esdl2Esxdl> cmd = new Esdl2Esxdl();
     parseCommandLine(argc, argv, cmd.get());
     extractEsdlCmdOption(includePath, NULL, "ESDL_INCLUDE_PATH", "esdlIncludePath", NULL, NULL);
+    //extractEsdlCmdOption()
     cmd->setIncluePath(includePath.str());
-    cmd->transform(gArgv[1], (char*)gArgv[2]);
+    StringBuffer esxml;
+    esxml.setf( "<esxdl name=\"%s\">", "somename");
+    cmd->transform(gArgv[1], (char*)gArgv[2], &esxml, true, true); //output to buffer
+    esxml.append("</esxdl>");
+    fprintf(stdout,"%s",esxml.str());
+    //cmd->transform(gArgv[1], (char*)gArgv[2]);
 
     delete [] gArgv;
     return 0;
