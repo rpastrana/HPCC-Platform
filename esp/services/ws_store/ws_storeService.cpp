@@ -120,7 +120,7 @@ IEspStore* CwsstoreEx::loadStoreProvider(const char* instanceName, const char* l
 bool CwsstoreEx::onCreateStore(IEspContext &context, IEspCreateStoreRequest &req, IEspCreateStoreResponse &resp)
 {
     const char *user = context.queryUserId();
-    m_storeProvider->createStore(req.getType(), req.getName(), req.getDescription(), new CSecureUser(user, nullptr));
+    resp.setSuccess(m_storeProvider->createStore(req.getType(), req.getName(), req.getDescription(), new CSecureUser(user, nullptr)));
     resp.setName(req.getName());
     resp.setType(req.getType());
     resp.setDescription(req.getDescription());
