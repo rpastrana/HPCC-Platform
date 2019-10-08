@@ -18,6 +18,14 @@ limitations under the License.
 #include "ws_storeService.hpp"
 #include "exception_util.hpp"
 
+#include "seclib.hpp"
+#include "digisign.hpp"
+
+//#include "jencrypt.hpp"
+#include "ske.hpp"
+
+using namespace cryptohelper;
+
 #define SDS_LOCK_TIMEOUT_ESPSTORE (30*1000)
 #define DEFAULT_ESP_STORE_FACTORY_METHOD "newEspStore"
 #define DEFAULT_ESP_STORE_MAX_VAL_SIZE 1024
@@ -270,6 +278,55 @@ bool CwsstoreEx::onSet(IEspContext &context, IEspSetRequest &req, IEspSetRespons
         if (!m_defaultStore.isEmpty())
             storename = m_defaultStore.get();
     }
+
+    const char * pubKeyFileName = nullptr, *privKeyFileName = nullptr, *passPhrase = nullptr;
+    queryHPCCPKIKeyFiles(nullptr, &pubKeyFileName, &privKeyFileName, &passPhrase);
+
+    Owned<CLoadedKey> pubKey, privKey;
+    Owned<IMultiException> exceptions;
+    if (!isEmptyString(pubKeyFileName))
+    {
+        try
+        {
+            pubKey.setown(loadPublicKeyFromFile(pubKeyFileName, passPhrase));
+        }
+        catch (IException * e)
+        {
+            if (!exceptions)
+                exceptions.setown(makeMultiException("createDigitalSignatureManagerInstanceFromFiles"));
+
+            exceptions->append(* makeWrappedExceptionV(e, -1, "createDigitalSignatureManagerInstanceFromFiles:Cannot load public key file"));
+            e->Release();
+        }
+    }
+
+    if (!isEmptyString(privKeyFileName))
+    {
+        try
+        {
+            privKey.setown(loadPrivateKeyFromFile(privKeyFileName, passPhrase));
+        }
+        catch (IException * e)
+        {
+            if (!exceptions)
+                exceptions.setown(makeMultiException("createDigitalSignatureManagerInstanceFromFiles"));
+
+            exceptions->append(* makeWrappedExceptionV(e, -1, "createDigitalSignatureManagerInstanceFromFiles:Cannot load private key file"));
+            e->Release();
+        }
+    }
+
+    MemoryBuffer encrypted;
+    size32_t siz = cryptohelper::aesEncryptWithRSAEncryptedKey(encrypted, strlen(value), value, *pubKey);
+    //StringBuffer out;
+    //out.append(encrypted.toByteArray(), 0, encrypted.length());
+    //fprintf(stdout,"^^^^^^^^^^^^^^^^%s\n", out.str());
+
+    MemoryBuffer decrypted;
+    //cryptohelper::aesDecrypt(decrypted, encrypted.length(), encrypted.toByteArray(), sizeof(randomAesKey), randomAesKey);
+    cryptohelper::aesDecryptWithRSAEncryptedKey(decrypted, encrypted.length(), encrypted.toByteArray(), *privKey);
+    //out.append(decrypted.toByteArray(), 0, decrypted.length());
+    //fprintf(stdout,"^^^^^^^^^^^^^^^^%s\n", out.str());
 
     const char *user = context.queryUserId();
     resp.setSuccess(m_storeProvider->set(storename, ns, key, value, new CSecureUser(user, nullptr), !req.getUserSpecific()));

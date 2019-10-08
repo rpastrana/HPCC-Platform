@@ -54,6 +54,7 @@ HPCC_ADD_SUBDIRECTORY (espstorelib)
         ${HPCC_SOURCE_DIR}/system/security/securesocket
         ${HPCC_SOURCE_DIR}/system/security/zcrypt
         ${HPCC_SOURCE_DIR}/system/security/LdapSecurity
+        ${HPCC_SOURCE_DIR}/system/security/cryptohelper
         ${HPCC_SOURCE_DIR}/system/mp
         ${HPCC_SOURCE_DIR}/dali/base/
         ${HPCC_SOURCE_DIR}/common/remote
