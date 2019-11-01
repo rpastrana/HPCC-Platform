@@ -64,7 +64,7 @@ public:
     bool fetchAllNamespaces(StringArray & namespaces, const char * storename, ISecUser * user, bool global);
     bool createStore(const char * apptype, const char * storename, const char * description, ISecUser * owner, unsigned int maxvalsize);
     bool addNamespace(const char * storename, const char * thenamespace, ISecUser * owner, bool global);
-    bool set(const char * storename, const char * thenamespace, const char * key, const char * value, ISecUser * owner, bool global);
+    bool set(const char * storename, const char * thenamespace, const char * key, const char * value, ISecUser * owner, bool global, IProperties * meta = nullptr);
     bool fetchKeySet(StringArray & keyset, const char * storename, const char * ns, ISecUser * user, bool global);
     bool fetch(const char * storename, const char * ns, const char * key, StringBuffer & value, ISecUser * user, bool global);
     IPropertyTree * getAllPairs(const char * storename, const char * ns, ISecUser * user, bool global);

@@ -26,7 +26,15 @@ limitations under the License.
 #include "dautils.hpp"
 #include "espStoreShare.hpp"
 
+#include "seclib.hpp"
+#include "digisign.hpp"
+
+//#include "jencrypt.hpp"
+#include "ske.hpp"
+
 static StringBuffer g_wsstoreBuildVersion;
+
+using namespace cryptohelper;
 
 class CwsstoreSoapBindingEx : public CwsstoreSoapBinding
 {
@@ -42,6 +50,9 @@ private:
     Owned<IEspStore> m_storeProvider;
     Owned<IPropertyTree> m_serviceConfig;
     StringAttr m_defaultStore;
+
+    Owned<CLoadedKey> pubKey, privKey;
+    const char * pubKeyFileName = nullptr, *privKeyFileName = nullptr, *passPhrase = nullptr;
 
     IEspStore * loadStoreProvider(const char* instanceName, const char* libName, const char * factoryMethodName);
 public:

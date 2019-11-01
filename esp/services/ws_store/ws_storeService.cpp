@@ -106,6 +106,47 @@ void CwsstoreEx::init(IPropertyTree *_cfg, const char *_process, const char *_se
                 m_defaultStore.set(id.str());
             }
         }
+
+        queryHPCCPKIKeyFiles(nullptr, &pubKeyFileName, &privKeyFileName, &passPhrase);
+        if (isEmptyString(pubKeyFileName))
+            ESPLOG(LogMin, "CwsstoreEx: Could not fetch public key file from configuration.");
+        if (isEmptyString(privKeyFileName))
+            ESPLOG(LogMin, "CwsstoreEx: Could not fetch private key file from configuration.");
+        if (isEmptyString(pubKeyFileName))
+            ESPLOG(LogMin, "CwsstoreEx: Could not fetch key passphrase from configuration.");
+
+        Owned<IMultiException> exceptions;
+        if (!isEmptyString(pubKeyFileName))
+        {
+            try
+            {
+                pubKey.setown(loadPublicKeyFromFile(pubKeyFileName, passPhrase));
+            }
+            catch (IException * e)
+            {
+                if (!exceptions)
+                    exceptions.setown(makeMultiException("CwsstoreEx"));
+
+                exceptions->append(* makeWrappedExceptionV(e, -1, "createDigitalSignatureManagerInstanceFromFiles:Cannot load public key file"));
+                e->Release();
+            }
+        }
+
+	if (!isEmptyString(privKeyFileName))
+	{
+	    try
+	    {
+		privKey.setown(loadPrivateKeyFromFile(privKeyFileName, passPhrase));
+	    }
+	    catch (IException * e)
+	    {
+		if (!exceptions)
+		    exceptions.setown(makeMultiException("createDigitalSignatureManagerInstanceFromFiles"));
+
+		exceptions->append(* makeWrappedExceptionV(e, -1, "createDigitalSignatureManagerInstanceFromFiles:Cannot load private key file"));
+		e->Release();
+	    }
+	}
     }
 }
 
@@ -279,57 +320,34 @@ bool CwsstoreEx::onSet(IEspContext &context, IEspSetRequest &req, IEspSetRespons
             storename = m_defaultStore.get();
     }
 
-    const char * pubKeyFileName = nullptr, *privKeyFileName = nullptr, *passPhrase = nullptr;
-    queryHPCCPKIKeyFiles(nullptr, &pubKeyFileName, &privKeyFileName, &passPhrase);
+    MemoryBuffer messageMb, encryptedMessageMb, decryptedMessageMb;
 
-    Owned<CLoadedKey> pubKey, privKey;
-    Owned<IMultiException> exceptions;
-    if (!isEmptyString(pubKeyFileName))
-    {
-        try
-        {
-            pubKey.setown(loadPublicKeyFromFile(pubKeyFileName, passPhrase));
-        }
-        catch (IException * e)
-        {
-            if (!exceptions)
-                exceptions.setown(makeMultiException("createDigitalSignatureManagerInstanceFromFiles"));
+    char aesKey[aesMaxKeySize];
+    //char aesIV[aesBlockSize];
+    fillRandomData(aesMaxKeySize, aesKey);
+    //fillRandomData(aesBlockSize, aesIV);
 
-            exceptions->append(* makeWrappedExceptionV(e, -1, "createDigitalSignatureManagerInstanceFromFiles:Cannot load public key file"));
-            e->Release();
-        }
-    }
+    //fillRandomData(1024*100, messageMb);
+    printf("aesEncryptDecryptTests with %u bytes with 256bit aes key\n", messageMb.length());
+    aesEncrypt(encryptedMessageMb, strlen(value), value, aesMaxKeySize, aesKey, nullptr);
+    aesDecrypt(decryptedMessageMb, encryptedMessageMb.length(), encryptedMessageMb.bytes(), aesMaxKeySize, aesKey, nullptr);
 
-    if (!isEmptyString(privKeyFileName))
-    {
-        try
-        {
-            privKey.setown(loadPrivateKeyFromFile(privKeyFileName, passPhrase));
-        }
-        catch (IException * e)
-        {
-            if (!exceptions)
-                exceptions.setown(makeMultiException("createDigitalSignatureManagerInstanceFromFiles"));
 
-            exceptions->append(* makeWrappedExceptionV(e, -1, "createDigitalSignatureManagerInstanceFromFiles:Cannot load private key file"));
-            e->Release();
-        }
-    }
+    //MemoryBuffer encrypted;
+    //size32_t siz = cryptohelper::aesEncryptWithRSAEncryptedKey(encrypted, strlen(value), value, *pubKey);
 
-    MemoryBuffer encrypted;
-    size32_t siz = cryptohelper::aesEncryptWithRSAEncryptedKey(encrypted, strlen(value), value, *pubKey);
-    //StringBuffer out;
-    //out.append(encrypted.toByteArray(), 0, encrypted.length());
-    //fprintf(stdout,"^^^^^^^^^^^^^^^^%s\n", out.str());
+    StringBuffer base64;
+    JBASE64_Encode(encryptedMessageMb.toByteArray(), encryptedMessageMb.length(), base64, false);
 
-    MemoryBuffer decrypted;
-    //cryptohelper::aesDecrypt(decrypted, encrypted.length(), encrypted.toByteArray(), sizeof(randomAesKey), randomAesKey);
-    cryptohelper::aesDecryptWithRSAEncryptedKey(decrypted, encrypted.length(), encrypted.toByteArray(), *privKey);
-    //out.append(decrypted.toByteArray(), 0, decrypted.length());
-    //fprintf(stdout,"^^^^^^^^^^^^^^^^%s\n", out.str());
+    IProperties * metainfo = createProperties(false);
+    metainfo->setProp("aesKey", aesKey);
+    metainfo->setProp("privkey", privKeyFileName);
+    metainfo->setProp("encode", "base64");
+    EVP_PKEY*  keystruct = pubKey->get();
+    keystruct->pkey;
 
     const char *user = context.queryUserId();
-    resp.setSuccess(m_storeProvider->set(storename, ns, key, value, new CSecureUser(user, nullptr), !req.getUserSpecific()));
+    resp.setSuccess(m_storeProvider->set(storename, ns, key, base64.str(), new CSecureUser(user, nullptr), !req.getUserSpecific(), metainfo));
 
     return true;
 }
@@ -347,7 +365,16 @@ bool CwsstoreEx::onFetch(IEspContext &context, IEspFetchRequest &req, IEspFetchR
     }
 
     m_storeProvider->fetch(storename, req.getNamespace(), req.getKey(), value, new CSecureUser(user, nullptr), !req.getUserSpecific());
-    resp.setValue(value.str());
+
+    StringBuffer decoded;
+    JBASE64_Decode(value, decoded);
+
+    MemoryBuffer decrypted;
+    cryptohelper::aesDecryptWithRSAEncryptedKey(decrypted, decoded.length(), decoded.str(), *privKey);
+    StringBuffer out2(decrypted.length(), decrypted.toByteArray());
+    fprintf(stdout,"^^^^^^^^^^^^^^^^%s\n", out2.str());
+
+    resp.setValue(out2.str());
 
     return true;
 }

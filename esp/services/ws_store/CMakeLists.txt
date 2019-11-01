@@ -23,6 +23,7 @@
 project(ws_store)
 
 HPCC_ADD_SUBDIRECTORY (espstorelib)
+HPCC_ADD_SUBDIRECTORY (dalisecurelib)
 
     include(${HPCC_SOURCE_DIR}/esp/scm/additional.cmake)
     include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)

@@ -15,15 +15,16 @@
     limitations under the License.
 ############################################################################## */
 
-#include "daliKVStore.hpp"
+#include "daliSecureStore.hpp"
 
-bool CDALIKVStore::createStore(const char * apptype, const char * storename, const char * description, ISecUser * owner, unsigned int maxvalsize=DALI_KVSTORE_MAXVALSIZE_DEFAULT)
+
+bool CDALISecureStore::createStore(const char * apptype, const char * storename, const char * description, ISecUser * owner, unsigned int maxvalsize=DALI_KVSTORE_MAXVALSIZE_DEFAULT)
 {
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore createStore(): Store name not provided");
 
     ensureAttachedToDali(); //throws if in offline mode
-
+/*
     Owned<IRemoteConnection> conn = querySDS().connect(DALI_KVSTORE_PATH, myProcessSession(), RTM_LOCK_WRITE, SDS_LOCK_TIMEOUT_KVSTORE);
     if (!conn)
         throw MakeStringException(-1, "Unable to connect to DALI KeyValue store root: '%s'", DALI_KVSTORE_PATH);
@@ -61,109 +62,59 @@ bool CDALIKVStore::createStore(const char * apptype, const char * storename, con
 
     root->addPropTree("Store", LINK(apptree));
 
-    conn->commit();
+    conn->commit();*/
     return true;
 }
 
-bool CDALIKVStore::addNamespace(const char * storename, const char * thenamespace, ISecUser * owner, bool global)
+bool CDALISecureStore::addNamespace(const char * storename, const char * thenamespace, ISecUser * owner, bool global)
 {
-    throw MakeStringException(-1, "CDALIKVStore::addNamespace - NOT IMPLEMENTED - USE setkey()");
+    throw MakeStringException(-1, "CDALISecureStore::addNamespace - NOT IMPLEMENTED - USE setkey()");
     return false;
 }
 
-bool CDALIKVStore::set(const char * storename, const char * thenamespace, const char * key, const char * value, ISecUser * owner, bool global, IProperties * meta)
+bool CDALISecureStore::set(const char * storename, const char * thenamespace, const char * key, const char * value, ISecUser * owner, bool global, IProperties * meta)
 {
-    if (isEmptyString(storename))
-        throw MakeStringException(-1, "DALI Keystore set(): Store name not provided");
+//    if (!storename || !*storename)
+//    {
+//        if (!m_defaultStore.isEmpty())
+//            storename = m_defaultStore.get();
+//    }
 
-    if (!global && (!owner || isEmptyString(owner->getName())))
-        throw MakeStringException(-1, "DALI Keystore set(): Attempting to set non-global entry but owner name not provided");
+    MemoryBuffer messageMb, encryptedMessageMb, decryptedMessageMb;
 
-    if (isEmptyString(thenamespace))
-        throw MakeStringException(-1, "DALI Keystore set(): namespace not provided");
+    char aesKey[aesMaxKeySize];
+    //char aesIV[aesBlockSize];
+    fillRandomData(aesMaxKeySize, aesKey);
+    //fillRandomData(aesBlockSize, aesIV);
 
-    ensureAttachedToDali(); //throws if in offline mode
+    //fillRandomData(1024*100, messageMb);
+    printf("aesEncryptDecryptTests with %u bytes with 256bit aes key\n", messageMb.length());
+    aesEncrypt(encryptedMessageMb, strlen(value), value, aesMaxKeySize, aesKey, nullptr);
+    aesDecrypt(decryptedMessageMb, encryptedMessageMb.length(), encryptedMessageMb.bytes(), aesMaxKeySize, aesKey, nullptr);
 
-    VStringBuffer xpath("%s/Store[%s='%s'][1]", DALI_KVSTORE_PATH, DALI_KVSTORE_NAME_ATT, storename);
-    Owned<IRemoteConnection> conn = querySDS().connect(xpath.str(), myProcessSession(), RTM_LOCK_WRITE, SDS_LOCK_TIMEOUT_KVSTORE);
-    if (!conn)
-        throw MakeStringException(-1, "DALI Keystore set(): Unable to connect to DALI KeyValue store path '%s'", xpath.str()); //rodrigo, not sure if this is too much info
 
-    Owned<IPropertyTree> storetree = conn->getRoot();
-    if (!storetree.get())
-        throw MakeStringException(-1, "DALI KV Store set(): Unable to access store '%s'", storename); //this store doesn't exist
+    //MemoryBuffer encrypted;
+    //size32_t siz = cryptohelper::aesEncryptWithRSAEncryptedKey(encrypted, strlen(value), value, *pubKey);
 
-    int maxval = storetree->getPropInt(DALI_KVSTORE_MAXVALSIZE_ATT, 0);
-    if (maxval > 0 && strlen(value) > maxval)
-        throw MakeStringException(-1, "DALI Keystore set(): Size of the value exceeds maximum size allowed (%i)", maxval);
+    StringBuffer base64;
+    JBASE64_Encode(encryptedMessageMb.toByteArray(), encryptedMessageMb.length(), base64, false);
 
-    if (global)
-        xpath.set(DALI_KVSTORE_GLOBAL);
-    else
-        xpath.set(owner->getName()).toLowerCase();
+    IProperties * metainfo = createProperties(false);
+    metainfo->setProp("aesKey", aesKey);
+    metainfo->setProp("privkey", privKeyFileName);
+    metainfo->setProp("encode", "base64");
+    EVP_PKEY*  keystruct = pubKey->get();
+    keystruct->pkey;
 
-    Owned<IPropertyTree> ownertree = storetree->getPropTree(xpath.str());
-    if (!ownertree)
-        ownertree.setown(createPTree(xpath.str()));
-
-    CDateTime dt;
-    dt.setNow();
-    StringBuffer str;
-
-    Owned<IPropertyTree> nstree = ownertree->getPropTree(thenamespace);
-    if (!nstree)
-    {
-        nstree.setown(createPTree(thenamespace));
-        nstree->setProp(DALI_KVSTORE_CREATEDTIME_ATT,dt.getString(str).str());
-    }
-
-    if(!meta)
-        meta = createProperties(false);
-
-    Owned<IPropertyTree> valuetree = nstree->getPropTree(key);
-    if (!valuetree)
-    {
-        nstree->setProp(key, value);
-        valuetree.setown(nstree->getPropTree(key));
-        //valuetree->setProp(DALI_KVSTORE_CREATEDTIME_ATT,dt.getString(str).str());
-        //valuetree->setProp(DALI_KVSTORE_CREATEDBY_ATT, owner ? owner->getName(): "");
-        meta->setProp(DALI_KVSTORE_CREATEDTIME_ATT,dt.getString(str).str());
-        meta->setProp(DALI_KVSTORE_CREATEDBY_ATT, owner ? owner->getName(): "");
-    }
-    else
-    {
-        //valuetree->setProp(DALI_KVSTORE_EDITEDTIME_ATT,dt.getString(str).str());
-        //valuetree->setProp(DALI_KVSTORE_EDITEDBY_ATT, owner ? owner->getName(): "");
-        meta->setProp(DALI_KVSTORE_EDITEDTIME_ATT,dt.getString(str).str());
-        meta->setProp(DALI_KVSTORE_EDITEDBY_ATT, owner ? owner->getName(): "");
-        valuetree->setProp(".", value);
-    }
-
-    Owned<IPropertyIterator> iter = meta->getIterator();
-    ForEach(*iter.get())
-    {
-        const char *key = iter->getPropKey();
-        if (key && *key)
-        {
-            const char *value = meta->queryProp(key);
-            if (value && *value)
-            {
-                if(value)
-                   valuetree->setProp(key, value);
-            }
-        }
-    }
-
-    ownertree->setPropTree(thenamespace, LINK(nstree));
-    storetree->setPropTree(xpath.str(), LINK(ownertree));
-
-    conn->commit();
+//    const char *user = context.queryUserId();
+//    resp.setSuccess(m_storeProvider->set(storename, ns, key, base64.str(), new CSecureUser(user, nullptr), !req.getUserSpecific(), metainfo));
 
     return true;
 }
 
-IPropertyTree * CDALIKVStore::getAllKeyProperties(const char * storename, const char * ns, const char * key, ISecUser * username, bool global)
+IPropertyTree * CDALISecureStore::getAllKeyProperties(const char * storename, const char * ns, const char * key, ISecUser * username, bool global)
 {
+/*
     if (isEmptyString(storename))
         throw MakeStringException(-1, "DALI Keystore fetchKeyProperties(): Store name not provided");
 
@@ -197,10 +148,12 @@ IPropertyTree * CDALIKVStore::getAllKeyProperties(const char * storename, const 
         throw MakeStringException(-1, "DALI KV Store fetchKeyProperties(): Unable to access key '%s'", key); //this store doesn't exist
 
     return(keytree->getPropTree("."));
+    */
+    return nullptr;
 }
 
-bool CDALIKVStore::fetchKeyProperty(StringBuffer & propval , const char * storename, const char * ns, const char * key, const char * property, ISecUser * username, bool global)
-{
+bool CDALISecureStore::fetchKeyProperty(StringBuffer & propval , const char * storename, const char * ns, const char * key, const char * property, ISecUser * username, bool global)
+{/*
     if (isEmptyString(storename))
         throw MakeStringException(-1, "DALI Keystore fetchKeyProperty(): Store name not provided");
 
@@ -235,10 +188,13 @@ bool CDALIKVStore::fetchKeyProperty(StringBuffer & propval , const char * storen
 
     keytree->getProp(property,propval.clear());
     return true;
+    */
+    return false;
 }
 
-bool CDALIKVStore::deletekey(const char * storename, const char * thenamespace, const char * key, ISecUser * user, bool global)
+bool CDALISecureStore::deletekey(const char * storename, const char * thenamespace, const char * key, ISecUser * user, bool global)
 {
+/*
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore deletekey(): Store name not provided");
 
@@ -274,13 +230,13 @@ bool CDALIKVStore::deletekey(const char * storename, const char * thenamespace, 
 
     storetree->removeProp(xpath.str());
 
-    conn->commit();
+    conn->commit();*/
 
     return true;
 }
 
-bool CDALIKVStore::deleteNamespace(const char * storename, const char * thenamespace, ISecUser * user, bool global)
-{
+bool CDALISecureStore::deleteNamespace(const char * storename, const char * thenamespace, ISecUser * user, bool global)
+{/*
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore deletekey(): Store name not provided");
 
@@ -314,12 +270,12 @@ bool CDALIKVStore::deleteNamespace(const char * storename, const char * thenames
     storetree->removeProp(xpath.str());
 
     conn->commit();
-
+*/
     return true;
 }
 
-bool CDALIKVStore::fetchAllNamespaces(StringArray & namespaces, const char * storename, ISecUser * user, bool global)
-{
+bool CDALISecureStore::fetchAllNamespaces(StringArray & namespaces, const char * storename, ISecUser * user, bool global)
+{/*
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore fetchAllNamespaces(): Store name not provided");
 
@@ -348,13 +304,13 @@ bool CDALIKVStore::fetchAllNamespaces(StringArray & namespaces, const char * sto
     {
         iter->query().getName(name.clear());
         namespaces.append(name.str());
-    }
+    }*/
 
     return true;
 }
 
-bool CDALIKVStore::fetchKeySet(StringArray & keyset, const char * storename, const char * ns, ISecUser * user, bool global)
-{
+bool CDALISecureStore::fetchKeySet(StringArray & keyset, const char * storename, const char * ns, ISecUser * user, bool global)
+{/*
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore fetchKeySet(): Store name not provided");
 
@@ -392,12 +348,12 @@ bool CDALIKVStore::fetchKeySet(StringArray & keyset, const char * storename, con
         iter->query().getName(name.clear());
         keyset.append(name.str());
     }
-
+*/
     return true;
 }
 
-bool CDALIKVStore::fetch(const char * storename, const char * ns, const char * key, StringBuffer & value, ISecUser * user, bool global)
-{
+bool CDALISecureStore::fetch(const char * storename, const char * ns, const char * key, StringBuffer & value, ISecUser * user, bool global)
+{/*
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore fetch(): Store name not provided");
 
@@ -440,12 +396,12 @@ bool CDALIKVStore::fetch(const char * storename, const char * ns, const char * k
     }
     else
         throw MakeStringException(-1, "DALI Keystore fetch: Namespace not provided!");
-
+*/
     return true;
 }
 
-IPropertyTree * CDALIKVStore::getAllPairs(const char * storename, const char * ns, ISecUser * user, bool global)
-{
+IPropertyTree * CDALISecureStore::getAllPairs(const char * storename, const char * ns, ISecUser * user, bool global)
+{/*
     if (!storename || !*storename)
         throw MakeStringException(-1, "DALI Keystore fetchAll(): Store name not provided");
 
@@ -476,6 +432,7 @@ IPropertyTree * CDALIKVStore::getAllPairs(const char * storename, const char * n
         throw MakeStringException(-1, "DALI Keystore fetchAll: invalid namespace '%s' detected!", ns);
 
     return(storetree->getPropTree(xpath.str()));
+    */return nullptr;
 }
 
 static bool wildcardmatch(const char *filter, const char * value, bool casesensitive = false)
@@ -494,10 +451,10 @@ static bool wildcardmatch(const char *filter, const char * value, bool casesensi
     return false;
 }
 
-IPropertyTree * CDALIKVStore::getStores(const char * namefilter, const char * ownerfilter, const char * typefilter, ISecUser * user)
+IPropertyTree * CDALISecureStore::getStores(const char * namefilter, const char * ownerfilter, const char * typefilter, ISecUser * user)
 {
     ensureAttachedToDali(); //throws if in offline mode
-
+/*
     if (isEmptyString(namefilter))
         namefilter="*";
 
@@ -535,12 +492,14 @@ IPropertyTree * CDALIKVStore::getStores(const char * namefilter, const char * ow
           filteredstores->addPropTree("Store", LINK(&iter->query()));
       }
     return(filteredstores.getClear());
+    */
+    return nullptr;
 }
 
 extern "C"
 {
-    DALIKVSTORE_API IEspStore* newEspStore()
+    DALISECURESTORE_API IEspStore* newEspStore()
     {
-        return new CDALIKVStore();
+        return new CDALISecureStore();
     }
 }
