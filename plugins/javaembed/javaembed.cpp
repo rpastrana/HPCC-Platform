@@ -967,7 +967,7 @@ public:
         vm_args.nOptions = optionStrings.length();
         vm_args.options = options;
         vm_args.ignoreUnrecognized = true;
-        vm_args.version = JNI_VERSION_1_8;
+        vm_args.version = JNI_VERSION_1_6;
 
         /* load and initialize a Java VM, return a JNI interface pointer in env */
         JNIEnv *env;       /* receives pointer to native method interface */
