@@ -522,3 +522,43 @@ extern "C"
         return new CDALIKVStore();
     }
 }
+
+#ifdef _USE_CPPUNIT
+
+#include "unittests.hpp"
+
+class daliKVStoreTest : public CppUnit::TestFixture
+{
+    CPPUNIT_TEST_SUITE( daliKVStoreTest );
+        CPPUNIT_TEST(testCDALIKVStoreInstance);
+    CPPUNIT_TEST_SUITE_END();
+
+    void testCDALIKVStoreInstance()
+    {
+        IEspStore * mystore =  new CDALIKVStore();
+        CPPUNIT_ASSERT_MESSAGE("New ESPSTore is null!", mystore!=nullptr);
+        try
+        {
+            bool success = mystore->init("mynewespstore", "mytype", nullptr);
+            CPPUNIT_ASSERT_MESSAGE("New ESPSTore could not initialize!", success==true);
+        }
+        catch(IException *e)
+        {
+            int code = e->errorCode();
+            StringBuffer buff;
+            e->errorMessage(buff);
+            e->Release();
+
+            CPPUNIT_FAIL(buff.str());
+
+        }
+
+
+    }
+};
+
+CPPUNIT_TEST_SUITE_REGISTRATION( daliKVStoreTest );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( daliKVStoreTest, "daliKVStoreTest" );
+
+#endif // _USE_CPPUNIT
+

@@ -25,6 +25,7 @@ include_directories (
     ${HPCC_SOURCE_DIR}/dali/base                    #SDS
     ${HPCC_SOURCE_DIR}/system/mp                    #MP, included by dali base
     ${HPCC_SOURCE_DIR}/system/security/shared/
+    ${HPCC_SOURCE_DIR}/testing/unittests
 )
 
 ADD_DEFINITIONS ( -D_USRDLL -DDALIKVSTORE_EXPORTS )

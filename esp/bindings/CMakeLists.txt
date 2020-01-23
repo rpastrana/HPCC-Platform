@@ -14,3 +14,4 @@
 #    limitations under the License.
 ################################################################################
 add_subdirectory (SOAP)
+#add_subdirectory (tests)
