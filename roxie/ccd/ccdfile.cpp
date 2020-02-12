@@ -804,8 +804,6 @@ class CRoxieFileCache : implements IRoxieFileCache, implements ICopyFileProgress
         }
         else
         {
-            IpSubNet subnet; // preferred set but not required
-            IpAddress fromip; // returned
             Owned<IFile> destFile = createIFile(tempFile);
 
             bool hardLinkCreated = false;
@@ -1810,7 +1808,7 @@ template <class X> class PerFormatCacheOf : public PerChannelCacheOf<X>
 
 CRoxieFileCache * fileCache;
 
-class CResolvedFile : implements IResolvedFileCreator, implements ISDSSubscription, public CInterface
+class CResolvedFile : implements IResolvedFileCreator, implements ISafeSDSSubscription, public CInterface
 {
 protected:
     IResolvedFileCache *cached;
@@ -1835,6 +1833,7 @@ protected:
     Linked<IRoxieDaliHelper> daliHelper;
     Owned<IDaliPackageWatcher> notifier;
 
+    virtual ISafeSDSSubscription *linkIfAlive() override { return isAliveAndLink() ? this : nullptr; }
     void addFile(const char *subName, IFileDescriptor *fdesc, IFileDescriptor *remoteFDesc)
     {
         subNames.append(subName);
@@ -1984,7 +1983,7 @@ public:
     {
         ForEachItemIn(idx, subNames)
         {
-            if (stricmp(subNames.item(idx), subname))
+            if (strieq(subNames.item(idx), subname))
                 return idx;
         }
         return NotFound;

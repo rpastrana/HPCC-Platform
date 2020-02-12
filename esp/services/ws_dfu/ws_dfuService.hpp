@@ -141,6 +141,11 @@ class CWsDfuEx : public CWsDfu
     static const unsigned defaultMaxFileAccessExpirySeconds=86400; // 24 hours
 
     void dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileName &lfn, SessionId clientSessionId, const char *requestId, unsigned expirySecs, bool returnTextResponse, unsigned lockTimeoutMs, IEspDFUFileAccessResponse &resp);
+    void clearFileProtections(IDistributedFile *df);
+    bool changeFileProtections(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp);
+    bool changeFileRestrictions(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp);
+    void addFileActionResult(const char* fileName, const char* nodeGroup, bool failed, const  char* msg,
+        IArrayOf<IEspDFUActionInfo>& actionResults);
 public:
     IMPLEMENT_IINTERFACE;
     virtual ~CWsDfuEx(){};
@@ -238,6 +243,8 @@ private:
     void parseStringArray(const char *input, StringArray& strarray);
     int superfileAction(IEspContext &context, const char* action, const char* superfile, StringArray& subfiles,
         const char* beforeSubFile, bool existingSuperfile, bool autocreatesuper, bool deleteFile, bool removeSuperfile =  true);
+    void getFilePartsOnClusters(IEspContext &context, const char *clusterReq, StringArray &clusters, IDistributedFile *df,
+        IEspDFUFileDetail &fileDetails);
     bool getQueryFile(const char *logicalName, const char *querySet, const char *queryID, IEspDFUFileDetail &fileDetails);
     void queryFieldNames(IEspContext &context, const char *fileName, const char *cluster,
         unsigned __int64 fieldMask, StringArray &fieldNames);
@@ -246,6 +253,8 @@ private:
     void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &port, bool &secure, const char *fileName, std::vector<std::string> &groups);
     void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &retPort, bool &retSecure, const char *group);
     void exportRecordDefinitionBinaryType(const char *recordDefinition, MemoryBuffer &layoutBin);
+    void appendTimeString(const char *in, StringBuffer &out);
+    void setTimeRangeFilter(const char *from, const char *to, DFUQFilterField filterID, StringBuffer &filterBuf);
 
     bool attachServiceToDali() override
     {

@@ -176,7 +176,7 @@ public:
     ~JoinSlaveActivity()
     {
         if (portbase) 
-            freePort(portbase,NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
     }
 
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
@@ -214,7 +214,7 @@ public:
             mpTagRPC = container.queryJobChannel().deserializeMPTag(data);
             mptag_t barrierTag = container.queryJobChannel().deserializeMPTag(data);
             barrier.setown(container.queryJobChannel().createBarrier(barrierTag));
-            portbase = allocPort(NUMSLAVEPORTS);
+            portbase = queryJobChannel().allocPort(NUMSLAVEPORTS);
             ActPrintLog("SortJoinSlaveActivity::init portbase = %d, mpTagRPC=%d",portbase,(int)mpTagRPC);
             server.setLocalHost(portbase); 
             sorter.setown(CreateThorSorter(this, server,&container.queryJob().queryIDiskUsage(),&queryJobChannel().queryJobComm(),mpTagRPC));
@@ -284,7 +284,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         CAsyncCallStart asyncSecondaryStart(std::bind(&JoinSlaveActivity::startSecondaryInput, this));
         try
@@ -410,7 +410,7 @@ public:
         rightInput.clear();
         if (portbase)
         {
-            freePort(portbase, NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
             portbase = 0;
         }
         CSlaveActivity::kill();
@@ -418,7 +418,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if(joinhelper) 
         {
             OwnedConstThorRow row = joinhelper->nextRow();
@@ -688,7 +688,7 @@ public:
     }
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         bool matched = true;
         OwnedConstThorRow next = processor.nextGE(seek, numFields, matched, stepExtra);
         if (next)

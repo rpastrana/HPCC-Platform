@@ -138,7 +138,7 @@ public:
 
         assertex(offsetMapSz == sizeof(FPosTableEntry) * offsetCount);
         offsetTable = new FPosTableEntry[offsetCount];
-        memcpy(offsetTable, offsetMap, offsetMapSz);
+        memcpy_iflen(offsetTable, offsetMap, offsetMapSz);
         unsigned c;
         for (c=0; c<offsetCount; c++)
         {
@@ -292,6 +292,7 @@ protected:
 
     IPointerArrayOf<ISourceRowPrefetcher> prefetchers;
     IConstPointerArrayOf<ITranslator> translators;
+    bool initialized = false;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -310,6 +311,16 @@ public:
 
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
+        if (initialized)
+        {
+            parts.kill();
+            offsetMapBytes.clear();
+            prefetchers.kill();
+            translators.kill();
+            eexp.clear();
+        }
+        else
+            initialized = true;
         unsigned numParts;
         data.read(numParts);
         offsetCount = 0;
@@ -369,7 +380,7 @@ public:
 // IThorDataLink impl.
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
 
         if (!keyRowAllocator && fetchBaseHelper->extractAllJoinFields())
@@ -493,7 +504,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon)
             return NULL;
 

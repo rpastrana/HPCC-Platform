@@ -140,7 +140,7 @@ void SubStringInfo::bindToFrom(HqlCppTranslator & translator, BuildCtx & ctx)
 
 //---------------------------------------------------------------------------
 
-WorkflowItem::WorkflowItem(IHqlExpression * _function) : wfid(999999999), function(_function), workflowOp(no_funcdef)
+WorkflowItem::WorkflowItem(IHqlExpression * _function) : wfid(999999999), workflowOp(no_funcdef), function(_function)
 {
     IHqlExpression * body = function->queryChild(0);
     assertex(body->getOperator() == no_outofline);
@@ -495,6 +495,7 @@ bool canRemoveStringCast(ITypeInfo * to, ITypeInfo * from)
                 //Data never calls a conversion function...
                 if ((srcset == tgtset) || (to->getTypeCode() == type_data) || (from->getTypeCode() == type_data))
                     return true;
+                return false;
             }
         case type_qstring:
             return false;
@@ -1546,7 +1547,6 @@ void HqlCppTranslator::cacheOptions()
 
     //Some compound flags, which provide defaults for various other options.
     bool paranoid = getDebugFlag("paranoid", false);
-    bool releaseMode = getDebugFlag("release", true);
 
     struct DebugOption 
     {
@@ -2299,7 +2299,7 @@ void HqlCppTranslator::exportMappings(IWorkUnit * wu) const
     errorProcessor->exportMappings(wu);
 }
 
-void HqlCppTranslator::ThrowStringException(int code,const char *format, ...) const
+void HqlCppTranslator::throwStringExceptionV(int code,const char *format, ...) const
 {
     IHqlExpression * location = queryActiveActivityLocation();
     if (errorProcessor && location)
@@ -2854,7 +2854,7 @@ void HqlCppTranslator::buildIncrementAssign(BuildCtx & ctx, IHqlExpression * tar
         }
     }
 
-    OwnedHqlExpr plus = createValue(no_add, LINK(target), castValue.getClear());
+    OwnedHqlExpr plus = createValue(no_add, LINK(type), LINK(target), castValue.getClear());
     buildAssign(condctx, target, plus);
 }
 
@@ -2886,7 +2886,7 @@ void HqlCppTranslator::buildIncrementAssign(BuildCtx & ctx, const CHqlBoundTarge
         }
     }
 
-    OwnedHqlExpr plus = createValue(no_add, target.getTranslatedExpr(), castValue.getClear());
+    OwnedHqlExpr plus = createValue(no_add, LINK(type), target.getTranslatedExpr(), castValue.getClear());
     buildExprAssign(ctx, target, plus);
 }
 
@@ -10056,7 +10056,7 @@ bool HqlCppTranslator::doBuildExprInfiniteSubString(BuildCtx & ctx, SubStringInf
 
     OwnedHqlExpr length;
     if (start && !isZero(start))
-        length.setown(createValue(no_sub, info.boundTo.expr.getLink(), LINK(start)));
+        length.setown(createValue(no_sub, info.boundTo.getType(), info.boundTo.expr.getLink(), LINK(start)));
     else
         length.setown(info.boundTo.expr.getLink());
     tgt.length.setown(ensureExprType(length, sizetType));
@@ -10785,8 +10785,8 @@ void HqlCppTranslator::assignAndCast(BuildCtx & ctx, const CHqlBoundTarget & tar
                     callProcedure(ctx, strToQStrId, args);
                     break;
                 }
-                //fall through
             }
+            // fallthrough
         default:
             //Need to go via a temporary string.
             OwnedHqlExpr temp = pure.getTranslatedExpr();
@@ -11943,6 +11943,7 @@ void HqlCppTranslator::doBuildUserFunctionReturn(BuildCtx & ctx, ITypeInfo * typ
             doBuildUserFunctionReturn(subctx, type, branches->queryChild(1));
             break;
         }
+        // fallthrough
     default:
         {
             OwnedHqlExpr optimized = spotScalarCSE(value, NULL, queryOptions().spotCseInIfDatasetConditions);
@@ -12121,7 +12122,10 @@ void HqlCppTranslator::buildScriptFunctionDefinition(BuildCtx &ctx, IHqlExpressi
         createParam.append(",NULL");
     createParam.append(");");
     funcctx.addQuoted(createParam);
-    funcctx.addQuoted("EmbedContextBlock __b(__ctx);");
+    if (threadlocal)
+        funcctx.addQuoted("EmbedContextBlock __b(__ctx, ctx);");
+    else
+        funcctx.addQuoted("EmbedContextBlock __b(__ctx);");
     OwnedHqlExpr ctxVar = createVariable("__ctx", makeBoolType());
 
     HqlExprArray scriptArgs;

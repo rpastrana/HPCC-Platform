@@ -151,7 +151,8 @@ interface IExtRowStream: extends IRowStream
     virtual offset_t getOffset() const = 0;
     virtual offset_t getLastRowOffset() const = 0;
     virtual unsigned __int64 queryProgress() const = 0;
-    virtual void stop(CRC32 *crcout=NULL) = 0;
+    using IRowStream::stop;
+    virtual void stop(CRC32 *crcout) = 0;
     virtual const byte *prefetchRow() = 0;
     virtual void prefetchDone() = 0;
     virtual void reinit(offset_t offset,offset_t len,unsigned __int64 maxrows) = 0;
@@ -162,7 +163,8 @@ interface IExtRowStream: extends IRowStream
 interface IExtRowWriter: extends IRowWriter
 {
     virtual offset_t getPosition() = 0;
-    virtual void flush(CRC32 *crcout=NULL) = 0;
+    using IRowWriter::flush;
+    virtual void flush(CRC32 *crcout) = 0;
 };
 
 enum EmptyRowSemantics { ers_forbidden, ers_allow, ers_eogonly };
@@ -235,6 +237,7 @@ public:
     cycle_t endCycles;   // Wall clock time of last entry to this activity
     unsigned __int64 firstRow; // Timestamp of first row (nanoseconds since epoch)
     cycle_t firstExitCycles;    // Wall clock time of first exit from this activity
+    cycle_t blockedCycles;  // Time spent blocked
 
     // Return the total amount of time (in nanoseconds) spent in this activity (first entry to last exit)
     inline unsigned __int64 elapsed() const { return cycle_to_nanosec(endCycles-startCycles); }
@@ -253,6 +256,7 @@ public:
         endCycles = 0;
         firstRow = 0;
         firstExitCycles = 0;
+        blockedCycles = 0;
     }
 };
 
@@ -323,6 +327,32 @@ public:
         }
     }
 };
+
+class BlockedActivityTimer
+{
+    unsigned __int64 startCycles;
+    ActivityTimeAccumulator &accumulator;
+protected:
+    const bool enabled;
+public:
+    BlockedActivityTimer(ActivityTimeAccumulator &_accumulator, const bool _enabled)
+        : accumulator(_accumulator), enabled(_enabled)
+    {
+        if (enabled)
+            startCycles = get_cycles_now();
+        else
+            startCycles = 0;
+    }
+
+    ~BlockedActivityTimer()
+    {
+        if (enabled)
+        {
+            cycle_t elapsedCycles = get_cycles_now() - startCycles;
+            accumulator.blockedCycles += elapsedCycles;
+        }
+    }
+};
 #else
 struct ActivityTimer
 {
@@ -331,6 +361,10 @@ struct ActivityTimer
 struct SimpleActivityTimer
 {
     inline SimpleActivityTimer(cycle_t &_accumulator, const bool _enabled) { }
+};
+struct BlockedActivityTimer
+{
+    inline BlockedActivityTimer(ActivityTimeAccumulator &_accumulator, const bool _enabled) { }
 };
 #endif
 

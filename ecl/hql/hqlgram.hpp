@@ -344,13 +344,14 @@ public:
     Owned<IHqlScope> templateAttrContext;
 };
 
-
+class SelfReferenceReplacer;
 class TransformSaveInfo : public CInterface
 {
 public:
     Owned<IHqlScope> transformScope;
     Owned<IHqlExpression> curTransform;
     OwnedHqlExpr transformRecord;
+    Owned<SelfReferenceReplacer> selfReplacer;
 };
 
 class FunctionCallInfo : public CInterface
@@ -648,7 +649,7 @@ public:
         return lookupCtx.queryParseContext().unsuppressImmediateSyntaxErrors;
     }
     void reportTooManyErrors();
-    void doReportWarning(WarnErrorCategory category, int warnNo, const char *msg, const char *filename, int lineno, int column, int pos);
+    void doReportWarning(WarnErrorCategory category, ErrorSeverity severity, int warnNo, const char *msg, const char *filename, int lineno, int column, int pos);
     void reportError(int errNo, const attribute& a, const char* format, ...) __attribute__((format(printf, 4, 5)));
     void reportError(int errNo, const ECLlocation & pos, const char* format, ...) __attribute__((format(printf, 4, 5)));
     void reportMacroExpansionPosition(IError * warning, HqlLex * lexer);
@@ -802,6 +803,9 @@ protected:
     IHqlExpression * createBuildIndexFromIndex(attribute & indexAttr, attribute & flagsAttr, attribute & errpos);
     void checkOutputRecord(attribute & errpos, bool outerLevel);
     void checkSoapRecord(attribute & errpos);
+    IHqlExpression * processHttpMarkupFlag(__int64 op);
+    IHqlExpression * processHttpMarkupFlag(__int64 op, IHqlExpression *flags);
+    IHqlExpression * processHttpMarkupFlag(__int64 op, IHqlExpression *flags, IHqlExpression *p1);
     IHqlExpression * checkOutputRecord(IHqlExpression *record, const attribute & errpos, bool & allConstant, bool outerLevel);
     void checkDefaultValueVirtualAttr(const attribute &errpos, IHqlExpression * attrs);
 
@@ -824,8 +828,8 @@ protected:
     void unwindSelect(IHqlExpression* expr, HqlExprArray& r);
     void setDefaultString(attribute &a);
 
-    void canNotAssignTypeError(ITypeInfo* expected, ITypeInfo* given, const attribute& errpos);
-    void canNotAssignTypeWarn(ITypeInfo* expected, ITypeInfo* given, const attribute& errpos);
+    void canNotAssignTypeError(ITypeInfo* expected, ITypeInfo* given, const char * name, const attribute& errpos);
+    void canNotAssignTypeWarn(ITypeInfo* expected, ITypeInfo* given, const char * name, const attribute& errpos);
     bool isExceptionalCase(attribute& defineid, attribute& object, attribute& failure);
     void checkSvcAttrNoValue(IHqlExpression* attr, const attribute& errpos);
     void checkFormals(IIdAtom * name, HqlExprArray & parms, HqlExprArray & defaults, attribute& object);
@@ -976,6 +980,7 @@ protected:
     IErrorReceiver *errorHandler;
     IHqlExpression *curTransform;
     OwnedHqlExpr curTransformRecord;
+    Owned<SelfReferenceReplacer> curSelfReplacer;
     ITypeInfo * defaultIntegralType;
     ITypeInfo * uint4Type;
     ITypeInfo * defaultRealType;
@@ -1078,7 +1083,6 @@ protected:
 
     bool haveAssignedToChildren(IHqlExpression * select);
     bool haveAssignedToAllChildren(IHqlExpression * select);
-    bool haveAssignedToAllChildren(IHqlExpression * select, IHqlExpression * record);
     void checkPattern(attribute & pattern, bool isCompound);
     void checkSubPattern(attribute & pattern);
     void checkPattern(attribute & pattern, HqlExprArray & values);
@@ -1299,12 +1303,12 @@ private:
 
         Owned<IProperties> macroParms;
         IIterator *forLoop;
+        IXmlScope *xmlScope;
         IHqlExpression *macroExpr;
         Owned<IFileContents> forBody;
         Owned<IFileContents> forFilter;
         IAtom * hashDollar = nullptr;
 
-        IXmlScope *xmlScope;
 
         enum { HashStmtNone, HashStmtFor, HashStmtForAll, HashStmtLoop, HashStmtIf };
         int lastToken;

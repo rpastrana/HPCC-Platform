@@ -415,7 +415,6 @@ HINSTANCE LoadSharedObject(const char *name, bool isGlobal, bool raiseOnError)
     if (name&&isPathSepChar(*name)&&isPathSepChar(name[1])) {
         RemoteFilename rfn;
         rfn.setRemotePath(name);
-        SocketEndpoint ep;
         if (!rfn.isLocal()) {
             // I guess could copy to a temporary location but currently just fail
             throw MakeStringException(-1,"LoadSharedObject: %s is not a local file",name);
@@ -1692,6 +1691,16 @@ void doStackProbe()
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
+
+extern jlib_decl bool isCloud()
+{
+    static bool cloudy = []()
+        {
+            const char *env = getenv("HPCC_containerized");
+            return (env && atoi(env)==1);
+        }();
+    return cloudy;
+}
 
 #ifdef _WIN32
 

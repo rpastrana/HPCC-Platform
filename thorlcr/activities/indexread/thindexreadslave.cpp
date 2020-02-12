@@ -70,6 +70,7 @@ protected:
     Owned<IKeyManager> keyMergerManager;
     Owned<IKeyIndexSet> keyIndexSet;
     IConstPointerArrayOf<ITranslator> translators;
+    bool initialized = false;
 
     rowcount_t keyedLimitCount = RCMAX;
     rowcount_t keyedLimit = RCMAX;
@@ -487,6 +488,13 @@ public:
         helper = (IHThorIndexReadBaseArg *)container->queryHelper();
         limitTransformExtra = nullptr;
         fixedDiskRecordSize = helper->queryDiskRecordSize()->querySerializedDiskMeta()->getFixedSize(); // 0 if variable and unused
+        allocator.set(queryRowAllocator());
+        deserializer.set(queryRowDeserializer());
+        serializer.set(queryRowSerializer());
+        helper->setCallback(&callback);
+        _statsArr.append(0);
+        _statsArr.append(0);
+        statsArr = _statsArr.getArray();
         reInit = 0 != (helper->getFlags() & (TIRvarfilename|TIRdynamicfilename));
     }
     rowcount_t getLocalCount(const rowcount_t keyedLimit, bool hard)
@@ -546,18 +554,22 @@ public:
         data.read(logicalFilename);
         if (!container.queryLocalOrGrouped())
             mpTag = container.queryJobChannel().deserializeMPTag(data); // channel to pass back partial counts for aggregation
+        if (initialized)
+        {
+            partDescs.kill();
+            keyIndexSet.clear();
+            translators.kill();
+            keyManagers.kill();
+            keyMergerManager.clear();
+        }
+        else
+            initialized = true;
+        
         unsigned parts;
         data.read(parts);
         if (parts)
             deserializePartFileDescriptors(data, partDescs);
         localKey = partDescs.ordinality() ? partDescs.item(0).queryOwner().queryProperties().getPropBool("@local", false) : false;
-        allocator.set(queryRowAllocator());
-        deserializer.set(queryRowDeserializer());
-        serializer.set(queryRowSerializer());
-        helper->setCallback(&callback);
-        _statsArr.append(0);
-        _statsArr.append(0);
-        statsArr = _statsArr.getArray();
         lastSeeks = lastScans = 0;
         localMerge = (localKey && partDescs.ordinality()>1) || seekGEOffset;
 
@@ -646,7 +658,7 @@ public:
     // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         keyedProcessed = 0;
         if (!eoi)
@@ -862,7 +874,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         needTransform = helper->needTransform();
 
@@ -902,7 +914,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (RCMAX != keyedLimitCount)
         {
             bool limitHit;
@@ -1027,7 +1039,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         localAggTable.setown(createRowAggregator(*this, *helper, *helper));
         localAggTable->init(queryRowAllocator());
@@ -1037,7 +1049,7 @@ public:
 // IRowStream
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (done)
             return NULL;
         if (!gathered)
@@ -1153,7 +1165,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         // NB: initLimits sets up remoteLimit before base start() call, because if parts are remote PARENT::start() will use remoteLimit
         initLimits(helper->getChooseNLimit(), helper->getKeyedLimit(), helper->getRowLimit(), helper->hasMatchFilter());
@@ -1172,7 +1184,7 @@ public:
 // IRowStream
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (done)
             return nullptr;
         done = true;
@@ -1328,7 +1340,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         // NB: initLimits sets up remoteLimit before base start() call, because if parts are remote PARENT::start() will use remoteLimit
         initLimits(helper->getChooseNLimit(), helper->getKeyedLimit(), helper->getRowLimit(), helper->hasMatchFilter());
@@ -1352,7 +1364,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (RCMAX != keyedLimitCount)
         {
             bool limitHit;
@@ -1447,7 +1459,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         hadElement = false;
         done = false;
@@ -1456,7 +1468,7 @@ public:
 // IRowStream
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (done)
             return nullptr;
         done = true;

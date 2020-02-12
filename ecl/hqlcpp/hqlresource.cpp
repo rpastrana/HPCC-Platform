@@ -454,9 +454,7 @@ protected:
     bool queryNoteDataset(IHqlExpression * ds)
     {
         bool alwaysHoist = queryHoistDataset(ds);
-        //MORE: It should be possible to remove this condition, but it causes problems with resourcing hsss.xhql amongst others -> disable for the moment
-        if (alwaysHoist)
-            noteDataset(ds, ds, alwaysHoist);
+        noteDataset(ds, ds, alwaysHoist);
         return alwaysHoist;
     }
 
@@ -554,7 +552,6 @@ protected:
             return;
         }
 
-        IHqlExpression * body = expr->queryBody();
         if (alreadyVisited(expr))
             return;
 
@@ -2216,7 +2213,7 @@ bool ResourceGraphLink::isRedundantLink()
 void ResourceGraphLink::trace(const char * name)
 {
 #ifdef TRACE_RESOURCING
-    IERRLOG("%s: %lx source(%lx,%lx) sink(%lx,%lx) %s", name, this, sourceGraph.get(), sourceNode->queryBody(), sinkGraph.get(), sinkNode ? sinkNode->queryBody() : NULL,
+    IERRLOG("%s: %p source(%p,%p) sink(%p,%p) %s", name, this, sourceGraph.get(), sourceNode->queryBody(), sinkGraph.get(), sinkNode ? sinkNode->queryBody() : NULL,
              linkKind == SequenceLink ? "sequence" : "");
 #endif
 }
@@ -2759,7 +2756,7 @@ IHqlExpression * SpillerInfo::createSpilledRead(IHqlExpression * spillReason)
             args.append(*createSpillName());
             args.append(*LINK(record));
         }
-        args.append(*createValue(no_thor));
+        args.append(*createValue(no_thor, makeNullType()));
         addSpillFlags(args, true);
         args.append(*createUniqueId());
         args.append(*createExprAttribute(_signed_Atom, createConstant("hpcc")));
@@ -3905,7 +3902,18 @@ void EclResourcer::deriveUsageCounts(IHqlExpression * expr)
     if (info->numUses)
     {
         if (insideNeverSplit || insideSteppedNeverSplit)
+        {
             info->neverSplit = true;
+            //If this expression should never be split, ensure no input datasets are split, otherwise
+            //a input expression that has already been visited on another path may expect the result to be
+            //spilled, but no spill write will be generated.
+            IHqlExpression * cur = expr;
+            while (getNumActivityArguments(cur) == 1)
+            {
+                cur = cur->queryChild(0);
+                queryResourceInfo(cur)->neverSplit = true;
+            }
+        }
 
         if (info->isAlreadyInScope || info->isActivity || !info->containsActivity)
         {
@@ -5624,7 +5632,6 @@ void EclResourcer::extractSharedInputs(CSplitterInfo & connections, ResourceGrap
     ForEachItemIn(i, connections.externalSources)
     {
         IHqlExpression & cur = connections.externalSources.item(i);
-        ResourcerInfo * info = queryResourceInfo(&cur);
         if (connections.isBalancedSplitter(&cur))
         {
             //Add two entries for compatibility with old code.
@@ -5679,6 +5686,7 @@ void EclResourcer::spotUnbalancedSplitters(const HqlExprArray & exprs)
 // PASS6: Merge sub graphs that can share resources and don't have dependencies
 // MORE: Once sources are merged, should try merging between trees.
 
+#if 0 // Unused function
 static bool conditionsMatch(const HqlExprArray & left, const HqlExprArray & right)
 {
     if (left.ordinality() != right.ordinality())
@@ -5691,6 +5699,7 @@ static bool conditionsMatch(const HqlExprArray & left, const HqlExprArray & righ
     }
     return true;
 }
+#endif
 
 
 bool EclResourcer::queryMergeGraphLink(ResourceGraphLink & link)
@@ -6081,6 +6090,8 @@ void EclResourcer::moveExternalSpillPoints()
 //------------------------------------------------------------------------------------------
 // PASS9: Create a new expression tree representing the information
 
+#if 0
+//Function not currently used
 static IHqlExpression * getScalarReplacement(CChildDependent & cur, ResourcerInfo * hoistedInfo, IHqlExpression * replacement)
 {
     //First skip any wrappers which are there to cause things to be hoisted.
@@ -6117,7 +6128,7 @@ static IHqlExpression * getScalarReplacement(CChildDependent & cur, ResourcerInf
     IHqlExpression * record = replacement->queryRecord();
     return createNewSelectExpr(LINK(replacement), LINK(record->queryChild(0)));
 }
-
+#endif
 
 IHqlExpression * EclResourcer::doCreateResourced(IHqlExpression * expr, ResourceGraphInfo * ownerGraph, bool expandInParent, bool defineSideEffect)
 {
@@ -6235,7 +6246,7 @@ IHqlExpression * EclResourcer::doCreateResourced(IHqlExpression * expr, Resource
         if (!transformed->isAction())
             transformed.setown(info->createTransformedExpr(transformed));
         else if (defineSideEffect)
-            transformed.setown(createValue(no_definesideeffect, LINK(transformed), createUniqueId()));
+            transformed.setown(createValue(no_definesideeffect, makeVoidType(), LINK(transformed), createUniqueId()));
     }
 
     return transformed.getClear();
@@ -6366,9 +6377,9 @@ IHqlExpression * EclResourcer::createResourced(IHqlExpression * expr, ResourceGr
             if (!source->isAction())
             {
                 if (source->isDataset())
-                    source = createDatasetF(no_split, source, createAttribute(balancedAtom), createUniqueId(), NULL);
+                    source = createDataset(no_split, { source, createAttribute(balancedAtom), createUniqueId() });
                 else
-                    source = createRowF(no_split, source, createAttribute(balancedAtom), createUniqueId(), NULL);
+                    source = createRow(no_split, { source, createAttribute(balancedAtom), createUniqueId() });
 
                 ownerGraph->addSharedInput(expr->queryBody(), source);
             }
@@ -6710,8 +6721,6 @@ static IHqlExpression * doResourceGraph(BuildCtx * ctx, HqlCppTranslator & trans
         resourcer.resourceGraph(expr, transformed);
         totalResults = resourcer.numGraphResults();
     }
-
-    hoistNestedCompound(translator, transformed);
 
     if (totalResults == 0)
         totalResults = 1;

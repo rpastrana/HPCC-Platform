@@ -49,6 +49,13 @@ public:
     virtual IOutputMetaData * queryOutputMeta() override { return NULL; }
 };
 
+class ECLRTL_API CThorSinkLibraryArg : public CThorArgOf<IHThorLibraryCallArg>
+{
+public:
+    virtual IOutputMetaData * queryOutputMeta() override { return NULL; }
+    virtual IOutputMetaData * queryOutputMeta(unsigned whichOutput) override { return NULL; }
+};
+
 class ECLRTL_API CThorIndexWriteArg : public CThorSinkArgOf<IHThorIndexWriteArg>
 {
 public:
@@ -810,6 +817,9 @@ class ECLRTL_API CThorSoapActionArg : public CThorSinkArgOf<IHThorSoapActionArg>
     virtual const char * getInputIteratorPath() override;
     virtual size32_t onFailTransform(ARowBuilder & rowBuilder, const void * left, IException * e) override;
     virtual void getLogText(size32_t & lenText, char * & text, const void * left) override;
+    virtual const char * getXpathHintsXml() override;
+    virtual const char * getRequestHeader() override;
+    virtual const char * getRequestFooter() override;
 };
 
 class ECLRTL_API CThorSoapCallArg : public CThorArgOf<IHThorSoapCallArg>
@@ -836,6 +846,9 @@ class ECLRTL_API CThorSoapCallArg : public CThorArgOf<IHThorSoapCallArg>
     virtual const char * getInputIteratorPath() override;
     virtual size32_t onFailTransform(ARowBuilder & rowBuilder, const void * left, IException * e) override;
     virtual void getLogText(size32_t & lenText, char * & text, const void * left) override;
+    virtual const char * getXpathHintsXml() override;
+    virtual const char * getRequestHeader() override;
+    virtual const char * getRequestFooter() override;
 };
 
 typedef CThorSoapCallArg CThorHttpCallArg;
@@ -1213,7 +1226,7 @@ class ECLRTL_API CThorRemoteArg : public CThorArgOf<IHThorRemoteArg>
     virtual void onLimitExceeded() override;
 };
 
-class ECLRTL_API CThorLibraryCallArg : public CThorSinkArgOf<IHThorLibraryCallArg>
+class ECLRTL_API CThorLibraryCallArg : public CThorSinkLibraryArg
 {
 };
 

@@ -398,7 +398,7 @@ public:
     }
     virtual const char * queryScope() const
     {
-        return scope;
+        return scope ? scope : "";
     }
     virtual IStringVal & getFormattedValue(IStringVal & str) const
     {
@@ -1100,7 +1100,8 @@ public:
 
     virtual const char * queryScope() const  override
     {
-        return notes.item(baseIndex).queryScope();
+        const char * scope = notes.item(baseIndex).queryScope();
+        return scope ? scope : "";
     }
 
     virtual StatisticScopeType getScopeType() const override
@@ -4043,8 +4044,8 @@ public:
             { return c->getAbortTimeStamp(); }
 
 
-    virtual void clearExceptions()
-            { c->clearExceptions(); }
+    virtual void clearExceptions(const char *source=nullptr)
+            { c->clearExceptions(source); }
     virtual void commit()
             { c->commit(); }
     virtual IWUException * createException()
@@ -5703,6 +5704,12 @@ public:
                     if (*fv)
                         query.append("=?~\"").append(fv).append('\"');
                     query.append("]");
+                }
+                else if (subfmt==WUSFtotalthortime)
+                {
+                    query.append("[@totalThorTime>=\"");
+                    formatTimeCollatable(query, milliToNano(atoi(fv)), false);
+                    query.append("\"]");
                 }
                 else if (!*fv)
                 {
@@ -8896,7 +8903,7 @@ unsigned CLocalWorkUnit::getExceptionCount() const
     return exceptions.length();
 }
 
-void CLocalWorkUnit::clearExceptions()
+void CLocalWorkUnit::clearExceptions(const char *source)
 {
     CriticalBlock block(crit);
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
@@ -8906,8 +8913,16 @@ void CLocalWorkUnit::clearExceptions()
         IWUException &e = exceptions.item(idx);
         SCMStringBuffer s;
         e.getExceptionSource(s);
-        if (strieq(s.s, "eclcc") || strieq(s.s, "eclccserver") || strieq(s.s, "eclserver") )
-            break;
+        if (source)
+        {
+            if (!strieq(s.s, source))
+                continue;
+        }
+        else
+        {
+            if (strieq(s.s, "eclcc") || strieq(s.s, "eclccserver") || strieq(s.s, "eclserver") )
+                break;
+        }
         VStringBuffer xpath("Exceptions/Exception[@sequence='%d']", e.getSequence());
         p->removeProp(xpath);
         exceptions.remove(idx);

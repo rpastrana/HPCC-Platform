@@ -450,8 +450,8 @@ void CJobManager::run()
     PROGLOG("verifying mp connection to all slaves");
     Owned<IMPServer> mpServer = getMPServer();
     Owned<ICommunicator> comm = mpServer->createCommunicator(&queryClusterGroup());
-    if (!comm->verifyAll())
-        OERRLOG("Failed to connect to all slaves");
+    if (!comm->verifyAll(false, 1000*60*30, 1000*60))
+        throwStringExceptionV(0, "Failed to connect to all slaves");    
     else
         PROGLOG("verified mp connection to all slaves");
 
@@ -694,6 +694,9 @@ void CJobManager::run()
         { 
             reply(workunit, wuid, MakeStringException(0, "Unknown exception"), agentep, false); 
         }
+
+        // reset for next job
+        setProcessAborted(false);
     }
     delete dp;
     jobq.clear();

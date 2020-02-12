@@ -1,20 +1,10 @@
 define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
     "dojo/i18n",
     "dojo/i18n!./nls/hpcc",
-    "dojo/_base/array",
-    "dojo/on",
-    "dojo/dom",
-    "dojo/dom-class",
-    "dojo/dom-construct",
     "dojo/topic",
 
     "dijit/registry",
-    "dijit/form/Button",
-    "dijit/ToolbarSeparator",
-    "dijit/Dialog",
-    "dijit/form/TextBox",
 
     "dgrid/tree",
     "dgrid/selector",
@@ -24,18 +14,15 @@ define([
     "src/ESPPreflight",
     "src/ESPRequest",
     "src/WsTopology",
-    "src/WsESDLConfig",
     "src/Utility",
     "hpcc/DelayLoadWidget",
     "src/ESPUtil",
-    "hpcc/DynamicESDLDefinitionQueryWidget",
-    "hpcc/TargetSelectWidget",
     "hpcc/MachineInformationWidget",
     "hpcc/IFrameWidget"
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, on, dom, domClass, domConstruct, topic,
-    registry, Button, ToolbarSeparator, Dialog, TextBox,
+], function (declare, i18n, nlsHPCC, topic,
+    registry,
     tree, selector,
-    GridDetailsWidget, PreflightDetailsWidget, ESPPreflight, ESPRequest, WsTopology, WsESDLConfig, Utility, DelayLoadWidget, ESPUtil, DynamicESDLDefinitionQueryWidget, TargetSelectWidget, MachineInformationWidget, IFrameWidget) {
+    GridDetailsWidget, PreflightDetailsWidget, ESPPreflight, ESPRequest, WsTopology, Utility, DelayLoadWidget, ESPUtil, MachineInformationWidget, IFrameWidget) {
     return declare("TargetClustersQueryWidget", [GridDetailsWidget, ESPUtil.FormHelper], {
         i18n: nlsHPCC,
 
@@ -86,22 +73,9 @@ define([
             this.inherited(arguments);
             this.openButton = registry.byId(this.id + "Open");
             this.refreshButton = registry.byId(this.id + "Refresh");
-            this.configurationButton = registry.byId(this.id + "Configuration");
 
             this.machineFilter = new MachineInformationWidget({});
-
-            this.configurationButton = new Button({
-                label: this.i18n.OpenConfiguration,
-                onClick: function(event) {
-                    context._onOpenConfiguration()
-                }
-            });
-
             this.machineFilter.placeAt(this.openButton.domNode, "after");
-            this.configurationButton.placeAt(this.openButton.domNode, "after");
-
-            new ToolbarSeparator().placeAt(this.machineFilter.domNode, "before");
-
             this.machineFilter.machineForm.set("style", "width:500px;");
             this.machineFilter.disable(true);
             dojo.destroy(this.id + "Open");
@@ -206,10 +180,7 @@ define([
             });
 
             retVal.on(".dgrid-row:dblclick", function (evt) {
-                if (context._onRowDblClick) {
-                    var item = retVal.row(evt).data;
-                    context._onRowDblClick(item);
-                }
+                event.preventDefault();
             });
 
             retVal.on("dgrid-select", function (event) {
@@ -249,8 +220,8 @@ define([
                     CompType: data.Type,
                     OsType: data.OS,
                 }
-            }).then(function(response) {
-                var tab = context.ensureConfigurationPane(data.Parent.Name + "-" + data.Type , {
+            }).then(function (response) {
+                var tab = context.ensureConfigurationPane(data.Parent.Name + "-" + data.Type, {
                     Component: data.Type,
                     Name: data.Parent.Name,
                     Usergenerated: response
@@ -278,29 +249,13 @@ define([
         refreshActionState: function () {
             var selection = this.grid.getSelected();
             var isTarget = false;
-            var isProcess = false;
 
             for (var i = 0; i < selection.length; ++i) {
-                if (selection.length > 1) {
-                    if (!selection[i].type) { // is a process
-                        isTarget = false;
-                        isProcess = false;
-                    } else if (selection[i].type) {
-                        isTarget = true;
-                        isProcess = false;
-                    }    
-                } else {
-                    if (selection[i] && selection[i].type === "clusterProcess") {
-                        isTarget = true;
-                        isProcess = false;
-                    } else {
-                        isTarget = false;
-                        isProcess = true;
-                    }
+                if (selection) {
+                    isTarget = true;
                 }
             }
             this.machineFilter.disable(!isTarget);
-            this.configurationButton.set("disabled", !isProcess);
         },
 
         ensureConfigurationPane: function (id, params) {

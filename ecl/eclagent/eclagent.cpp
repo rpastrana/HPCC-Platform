@@ -1121,7 +1121,7 @@ void EclAgent::setResultData(const char * stepname, unsigned sequence, int len, 
 
 void EclAgent::doSetResultString(type_t type, const char *name, unsigned sequence, int len, const char *val)
 {
-    LOG(MCsetresult, unknownJob, "setResultString(%s,%d,'%.*s')", nullText(name), sequence, len, val);
+    LOG(MCsetresult, unknownJob, "setResultString(%s,%d,(%d bytes))", nullText(name), sequence, len);
     WorkunitUpdate w = updateWorkUnit();
     Owned<IWUResult> r = updateWorkUnitResult(w, name, sequence);
     if (r)
@@ -1877,7 +1877,7 @@ void EclAgent::doProcess()
         {
             MTIME_SECTION(queryActiveTimer(), "Process");
             Owned<IEclProcess> process = loadProcess();
-            QueryTerminationCleanup threadCleanup;
+            QueryTerminationCleanup threadCleanup(false);
 
             if (checkVersion && (process->getActivityVersion() != eclccCodeVersion))
                 failv(0, "Inconsistent interface versions.  Workunit was created using eclcc for version %u, but the c++ compiler used version %u", eclccCodeVersion, process->getActivityVersion());

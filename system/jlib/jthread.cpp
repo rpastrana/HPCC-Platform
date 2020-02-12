@@ -39,34 +39,58 @@
 
 //#define NO_CATCHALL
 
-static __thread ThreadTermFunc threadTerminationHook;
+//static __thread ThreadTermFunc threadTerminationHook;
+static thread_local std::vector<ThreadTermFunc> threadTermHooks;
+static std::vector<ThreadTermFunc> mainThreadTermHooks;
 
-ThreadTermFunc addThreadTermFunc(ThreadTermFunc onTerm)
+static struct MainThreadIdHelper
 {
-    ThreadTermFunc old = threadTerminationHook;
-    threadTerminationHook = onTerm;
-    return old;
+    ThreadId tid;
+    MainThreadIdHelper()
+    {
+        tid = GetCurrentThreadId();
+    }
+} mainThreadIdHelper;
+
+/*
+ * NB: Thread termination hook functions are tracked using a thread local vector (threadTermHooks).
+ * However, hook functions installed on the main thread must be tracked separately in a non thread local vector (mainThreadTermHooks).
+ * This is because thread local variables are destroyed before atexit functions are called and therefore before ModuleExitObjects().
+ * The hooks tracked by mainThreadTermHooks are called by the MODULE_EXIT below.
+ */
+void addThreadTermFunc(ThreadTermFunc onTerm)
+{
+    auto &termHooks = (GetCurrentThreadId() == mainThreadIdHelper.tid) ? mainThreadTermHooks : threadTermHooks;
+    for (auto hook: termHooks)
+    {
+        if (hook==onTerm)
+            return;
+    }
+    termHooks.push_back(onTerm);
 }
 
-void callThreadTerminationHooks()
+void callThreadTerminationHooks(bool isPooled)
 {
-    if (threadTerminationHook)
+    std::vector<ThreadTermFunc> keepHooks;
+
+    auto &termHooks = (GetCurrentThreadId() == mainThreadIdHelper.tid) ? mainThreadTermHooks : threadTermHooks;
+    for (auto hook: termHooks)
     {
-        (*threadTerminationHook)();
-        threadTerminationHook = NULL;
+        if ((*hook)(isPooled) && isPooled)
+           keepHooks.push_back(hook);
     }
+    termHooks.swap(keepHooks);
 }
 
 PointerArray *exceptionHandlers = NULL;
 MODULE_INIT(INIT_PRIORITY_JTHREAD)
 {
-    if (threadTerminationHook)
-        (*threadTerminationHook)();  // May be too late :(
     exceptionHandlers = new PointerArray();
     return true;
 }
 MODULE_EXIT()
 {
+    callThreadTerminationHooks(false);
     delete exceptionHandlers;
 }
 
@@ -276,7 +300,7 @@ int Thread::begin()
         handleException(MakeStringException(0, "Unknown exception in Thread %s", getName()));
     }
 #endif
-    callThreadTerminationHooks();
+    callThreadTerminationHooks(false);
 #ifdef _WIN32
 #ifndef _DEBUG
     CloseHandle(hThread);   // leak handle when debugging, 
@@ -928,7 +952,7 @@ public:
                 handleException(MakeStringException(0, "Unknown exception in Thread from pool %s", parent.poolname.get()));
             }
 #endif
-            callThreadTerminationHooks();    // Reset any pre-thread state.
+            callThreadTerminationHooks(true);    // Reset any per-thread state.
         } while (parent.notifyStopped(this));
         return 0;
     }
@@ -2092,13 +2116,15 @@ public:
         title.clear();
         prog.set(_prog);
         dir.set(_dir);
-        if (_title) {
+        if (_title)
+        {
             title.set(_title);
             PROGLOG("%s: Creating PIPE program process : '%s' - hasinput=%d, hasoutput=%d stderrbufsize=%d", title.get(), prog.get(),(int)hasinput, (int)hasoutput, stderrbufsize);
         }
         CheckAllowedProgram(prog,allowedprogs);
         retcode = 0;
-        if (forkthread) {
+        if (forkthread)
+        {
             {
                 CriticalUnblock unblock(sect); 
                 forkthread->join();
@@ -2107,18 +2133,23 @@ public:
         }
         forkthread.setown(new cForkThread(this));
         forkthread->start();
+        bool joined = false;
         {
             CriticalUnblock unblock(sect); 
             started.wait();
-            forkthread->join(50); // give a chance to fail
+            joined = forkthread->join(50); // give a chance to fail
         }
-        if (retcode==START_FAILURE) {   
+        // only check retcode if we were able to join
+        if ( (joined) && (retcode==START_FAILURE) )
+        {
             DBGLOG("%s: PIPE process '%s' failed to start", title.get()?title.get():"CLinuxPipeProcess", prog.get());
             forkthread.clear();
             return false;
         }
-        if (stderrbufsize) {
-            if (stderrbufferthread) {
+        if (stderrbufsize)
+        {
+            if (stderrbufferthread)
+            {
                 stderrbufferthread->stop();
                 delete stderrbufferthread;
             }

@@ -48,7 +48,6 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
         stopped = false;
     }
@@ -86,6 +85,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start()
     {
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         skipCount = (rowcount_t)helper->numToSkip();
         limit = (rowcount_t)helper->getLimit();
@@ -94,7 +94,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon)
         {
             if (firstget)
@@ -141,6 +141,7 @@ public:
     virtual bool isGrouped() const override { return queryInput(0)->isGrouped(); }
     virtual void start()
     {
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         skipCount = (rowcount_t)helper->numToSkip();
         limit = (rowcount_t)helper->getLimit();
@@ -148,7 +149,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon)
         {
             for (;;)
@@ -250,7 +251,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start(); // adds to totalTime (common to local and global firstn)
 
         limit = maxres = RCUNBOUND;
@@ -289,6 +290,7 @@ public:
     }
     bool recvCounts()
     {
+        BlockedActivityTimer t(slaveTimerStats, timeActivities);
         CMessageBuffer msgMb;
         if (!receiveMsg(msgMb, 0, mpTag))
             return false; // NB: can be triggered by abort()
@@ -344,7 +346,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon)
         {
             if (firstget)

@@ -81,7 +81,6 @@ interface IDFProtectedIterator: public IInterface
     virtual bool isValid() = 0;
     virtual const char *queryFilename() = 0;
     virtual const char *queryOwner() = 0;
-    virtual unsigned getCount() = 0;
     virtual bool isSuper() = 0;
 };
 
@@ -241,7 +240,8 @@ enum DFUQFilterField
     DFUQFFsubfilename = 30,
     DFUQFFsubfilenum = 31,
     DFUQFFkind = 32,
-    DFUQFFterm = 33,
+    DFUQFFaccessed = 33,
+    DFUQFFterm = 34,
     DFUQFFreverse = 256,
     DFUQFFnocase = 512,
     DFUQFFnumeric = 1024,
@@ -679,12 +679,6 @@ interface IDistributedFileDirectory: extends IInterface
                                       const CDfsLogicalFileName &logicalname,
                                       unsigned timeout=0                // 0 = return state immediately, >0 waits until false or timed-out
                                      ) = 0;
-
-    virtual unsigned queryProtectedCount(const CDfsLogicalFileName &logicalname,
-                                  const char *callerid=NULL) = 0;                   // if NULL  then sums all
-
-    virtual bool getProtectedInfo (const CDfsLogicalFileName &logicalname,
-                                           StringArray &names, UnsignedArray &counts) = 0;
 
     virtual IDFProtectedIterator *lookupProtectedFiles(const char *owner=NULL,bool notsuper=false,bool superonly=false)=0; // if owner = NULL then all
     virtual IDFAttributesIterator* getLogicalFilesSorted(IUserDescriptor* udesc, DFUQResultField *sortOrder, const void* filters, DFUQResultField *localFilters,

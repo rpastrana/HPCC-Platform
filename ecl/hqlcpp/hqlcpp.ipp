@@ -280,6 +280,7 @@ public:
     IHqlExpression * getTranslatedExpr() const;
     inline bool isStreamed() const              { return hasStreamedModifier(queryType()); }
 
+    ITypeInfo * getType() const                 { return expr->getType(); }
     ITypeInfo * queryType() const               { return expr->queryType(); }
     void set(const CHqlBoundExpr & src)         { expr.set(src.expr); length.set(src.length); count.set(src.count); isAll.set(src.isAll); }
     void setFromTarget(const CHqlBoundTarget & target);
@@ -512,12 +513,12 @@ public:
     const char * queryGraphLabel() const { return label ? label.str() : nullptr; }
 
 private:
+    unsigned wfid;
+    node_operator workflowOp;
     LinkedHqlExpr function;
     HqlExprArray exprs;
     UnsignedArray dependencies;
-    unsigned wfid;
     StringBuffer label;
-    node_operator workflowOp;
 };
 
 typedef CIArrayOf<WorkflowItem> WorkflowArray;
@@ -908,7 +909,7 @@ public:
     virtual size32_t errCount() override;
     virtual size32_t warnCount() override;
     virtual void exportMappings(IWorkUnit * wu) const override;
-    virtual __declspec(noreturn) void ThrowStringException(int code,const char *format, ...) const override __attribute__((format(printf, 3, 4), noreturn));            // override the global function to try and add more context information
+    virtual __declspec(noreturn) void throwStringExceptionV(int code,const char *format, ...) const override __attribute__((format(printf, 3, 4), noreturn));            // override the global function to try and add more context information
 
 //Statements.
     void buildStmt(BuildCtx & ctx, IHqlExpression * expr);

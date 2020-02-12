@@ -664,6 +664,17 @@ void KeyedJoinInfo::buildFailureTransform(BuildCtx & ctx, IHqlExpression * onFai
     buildTransformBody(func.ctx, onFailTransform);
 }
 
+
+static bool fieldNameAlreadyExists(const HqlExprArray & fields, IAtom * name)
+{
+    ForEachItemIn(i, fields)
+    {
+        if (fields.item(i).queryName() == name)
+            return true;
+    }
+    return false;
+}
+
 IHqlExpression * KeyedJoinInfo::optimizeTransfer(HqlExprArray & fields, HqlExprArray & values, IHqlExpression * filter, IHqlExpression * leftSelector)
 {
     switch (filter->getOperator())
@@ -697,7 +708,7 @@ IHqlExpression * KeyedJoinInfo::optimizeTransfer(HqlExprArray & fields, HqlExprA
                 {
                     match = fields.ordinality();
                     LinkedHqlExpr field = filter->queryChild(1);
-                    if (fields.find(*field) != NotFound)
+                    if (fieldNameAlreadyExists(fields, field->queryName()))
                     {
                         //Check same field isn't used in two different nested records.
                         StringBuffer name;
@@ -1038,7 +1049,6 @@ bool KeyedJoinInfo::processFilter()
 
     //Now need to transform the index into its real representation so
     //the hozed transforms take place.
-    unsigned payload = numPayloadFields(key);
     TableProjectMapper mapper(expandedKey);
     OwnedHqlExpr rightSelect = createSelector(no_right, key, joinSeq);
     OwnedHqlExpr newFilter = mapper.expandFields(keyedKeyFilter, rightSelect, rawKey, rawKey);
@@ -1338,6 +1348,8 @@ ABoundActivity * HqlCppTranslator::doBuildActivityKeyedJoinOrDenormalize(BuildCt
             flags.append("|FFvarfilename");
         if (hasDynamicFilename(info.queryFile()))     
             flags.append("|FFdynamicfilename");
+        if (isNonConstantAndQueryInvariant(info.queryFileFilename()))
+            flags.append("|FFinvariantfilename");
     }
 
     if (flags.length())

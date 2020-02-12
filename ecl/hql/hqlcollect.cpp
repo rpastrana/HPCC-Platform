@@ -57,7 +57,7 @@ public:
 class CEclSource : public CInterfaceOf<IEclSource>
 {
 public:
-    CEclSource(IIdAtom * _eclId, EclSourceType _type) : eclId(_eclId), type(_type) { }
+    CEclSource(IIdAtom * _eclId, EclSourceType _type) : type(_type), eclId(_eclId)  { }
 
 //interface IEclSource
     virtual IProperties * getProperties() { return NULL; }
@@ -293,9 +293,9 @@ bool FileSystemFile::checkValid()
     if (!eclId)
         return false;
 
+    const char * filename = file->queryFilename();
     if (type == ESTplugin)
     {
-        const char * filename = file->queryFilename();
         try
         {
             if (pluginSO.load(filename, false, false))     // don't clash getECLPluginDefinition symbol
@@ -349,6 +349,8 @@ bool FileSystemFile::checkValid()
         }
     }
 
+    if (type == ESTlibrary)
+        DBGLOG("Loading library %s", filename);
     return true;
 }
 

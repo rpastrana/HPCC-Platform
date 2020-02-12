@@ -2582,12 +2582,9 @@ FILESERVICES_API char * FILESERVICES_CALL fsfGetLogicalFileAttribute(ICodeContex
             ForEach(*piter) {
                 const char *name = piter->get().queryProp("@name");
                 if (name&&*name) {
-                    unsigned count = piter->get().getPropInt("@count");
-                    if (count) {
-                        if (ret.length())
-                            ret.append(',');
-                        ret.append(name);
-                    }
+                    if (ret.length())
+                        ret.append(',');
+                    ret.append(name);
                 }
             }
         }
@@ -2603,17 +2600,24 @@ FILESERVICES_API char * FILESERVICES_CALL fsfGetLogicalFileAttribute(ICodeContex
     return ret.detach();
 }
 
-FILESERVICES_API void FILESERVICES_CALL fsProtectLogicalFile(ICodeContext * ctx,const char *_lfn,bool set)
+FILESERVICES_API void FILESERVICES_CALL fsProtectLogicalFile(ICodeContext * ctx, const char *_lfn, bool set)
 {
     StringBuffer lfn;
     constructLogicalName(ctx, _lfn, lfn);
     Linked<IUserDescriptor> udesc = ctx->queryUserDescriptor();
-    Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(lfn.str(),udesc, false, false, false, nullptr, defaultPrivilegedUser);
-    StringBuffer ret;
-    if (df) {
-        StringBuffer u("user:");
-        udesc->getUserName(u);
-        df->setProtect(u.str(),set);
+    Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(lfn.str(), udesc, false, false, false, nullptr, defaultPrivilegedUser);
+    if (df)
+    {
+        StringBuffer uname;
+        udesc->getUserName(uname);
+        df->setProtect(uname, set);
+        if (!set)
+        {
+            // for backward compatibility only (see HPCC-23190)
+            uname.clear().append("user:");
+            udesc->getUserName(uname);
+            df->setProtect(uname, false);
+        }
     }
     else if (set)
         throw MakeStringException(0, "ProtectLogicalFile: Could not find logical file %s", lfn.str());

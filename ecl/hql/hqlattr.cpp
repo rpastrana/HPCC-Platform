@@ -37,18 +37,6 @@
 #include "hqlattr.hpp"
 #include "hqlmeta.hpp"
 
-static SpinLock * propertyLock;
-
-MODULE_INIT(INIT_PRIORITY_HQLINTERNAL)
-{
-    propertyLock = new SpinLock;
-    return true;
-}
-MODULE_EXIT()
-{
-    delete propertyLock;
-}
-
 // This file should contain most of the derived property calculation for nodes in the expression tree,
 // Other candidates are
 // checkConstant, getChilddatasetType(), getNumChildTables
@@ -2186,7 +2174,7 @@ unsigned getCardinality(IHqlExpression * expr)
                 if (cardinality)
                     return (unsigned)getIntValue(cardinality);
             }
-            //fall through:
+            //fallthrough
         default:
             return expr->queryType()->getCardinality();
         }
@@ -2241,7 +2229,7 @@ const char * const magnitudeText[] = {
     "disk",
     "unknown"
 };
-inline RowCountMagnitude getRowCountMagnitude(__int64 num)
+inline RowCountMagnitude getRowCountMagnitude(unsigned __int64 num)
 {
     if (num == 0)
         return RCMnone;
@@ -3982,13 +3970,17 @@ void CHqlRealExpression::addProperty(ExprPropKind kind, IInterface * value)
 {
     if (value == static_cast<IHqlExpression *>(this))
         value = NULL;
-    CHqlDynamicProperty * attr = new CHqlDynamicProperty(kind, value);
 
-    SpinBlock block(*propertyLock);
     //theoretically we should test if the attribute has already been added by another thread, but in practice there is no
     //problem if the attribute is present twice.
-    attr->next = attributes.load(std::memory_order_acquire);
-    attributes.store(attr, std::memory_order_release);
+    CHqlDynamicProperty * attr = new CHqlDynamicProperty(kind, value);
+    CHqlDynamicProperty * head = attributes.load(std::memory_order_acquire);
+    for (;;)
+    {
+        attr->next = head;
+        if (attributes.compare_exchange_weak(head, attr, std::memory_order_acq_rel))
+            return;
+    }
 }
 
 
@@ -3999,12 +3991,12 @@ void CHqlDataset::addProperty(ExprPropKind kind, IInterface * value)
 {
     if (kind == EPmeta)
     {
-        SpinBlock block(*propertyLock);
         //ensure once meta is set it is never modified
-        if (!metaProperty.load(std::memory_order_acquire))
+        IInterface * prev = metaProperty.load(std::memory_order_acquire);
+        if (!prev && metaProperty.compare_exchange_strong(prev, value, std::memory_order_acq_rel))
         {
+            //Value is guaranteed to stay alive for the duration of this call, so linking now is safe
             LINK(value);
-            metaProperty.store(value, std::memory_order_release);
         }
     }
     else
@@ -4068,4 +4060,83 @@ CHqlMetaProperty * queryMetaProperty(IHqlExpression * expr)
     calculateDatasetMeta(info->meta, body);
     CHqlExprMeta::addProperty(body, EPmeta, info);
     return info;
+}
+
+//--------------------------------------------------------------------------------------------------------------------
+
+inline bool isSelfSelect(IHqlExpression * expr)
+{
+    if (expr->getOperator() != no_select)
+        return false;
+    if (expr->queryChild(0)->getOperator() != no_selfref)
+        return false;
+    return true;
+}
+
+//This should possibly cache the results for a record using an attribute....
+bool canDefinitelyProcessWithTranslator(IHqlExpression * record)
+{
+    dbgassertex(record->getOperator() == no_record);
+    ForEachChild(i, record)
+    {
+        IHqlExpression * cur = record->queryChild(i);
+        switch (cur->getOperator())
+        {
+        case no_field:
+        {
+            ITypeInfo * type = cur->queryType();
+            switch (type->getTypeCode())
+            {
+            case type_alien:
+            case type_any: // I doubt these ever occur...
+            case type_bitfield: // Need to check if these have been implemented
+                return false;
+            case type_row:
+                if (hasReferenceModifier(type))  // Never currently generated
+                    return false;
+                if (!canDefinitelyProcessWithTranslator(cur->queryRecord()))
+                    return false;
+                break;
+            case type_dictionary:
+            case type_groupedtable:
+            case type_table:
+                {
+                    //Check for weird versions of DATASET where the count/size are specified by another field.
+                    ForEachChild(j, cur)
+                    {
+                        IHqlExpression * attr = cur->queryChild(j);
+                        if (attr->isAttribute())
+                        {
+                            IAtom * name = attr->queryName();
+                            if ((name == countAtom) || (name == sizeofAtom))
+                                return false;
+                        }
+                    }
+                    break;
+                }
+            }
+            break;
+        }
+        case no_ifblock:
+            {
+                IHqlExpression * cond = cur->queryChild(0);
+                node_operator condOp = cond->getOperator();
+                //Match the subset of the expressions that are supported by the record translation
+                //false positives are acceptable, false negatives are not
+                if ((condOp == no_eq) || (condOp == no_ne))
+                {
+                    //SELF.x [=|!=] constant
+                    IHqlExpression * lhs = cond->queryChild(0);
+                    IHqlExpression * rhs = cond->queryChild(1);
+                    if (isSelfSelect(lhs) && rhs->getOperator() == no_constant)
+                        return true;
+                }
+                else if (isSelfSelect(cond)) // SELF.someboolean
+                    return true;
+                return false;
+            }
+        }
+    }
+
+    return true;
 }

@@ -635,6 +635,9 @@ public:
     inline void DeleteGlobalRef(jobject val)
     {
         JNIEnv::DeleteGlobalRef(val);
+#ifdef FORCE_GC
+        forceGC(this);
+#endif
     }
     inline jobject NewGlobalRef(jobject val, const char *)
     {
@@ -808,8 +811,12 @@ static void setupGlobals(CheckedJNIEnv *J)
 
 static StringAttr & getSignature(StringAttr &ret, CheckedJNIEnv *J, jclass clazz, const char *funcName)
 {
+    StringBuffer sig;
     jstring result = (jstring) J->CallStaticObjectMethod(customLoaderClass, clc_getSignature, clazz, J->NewStringUTF(funcName));
-    return J->getString(ret, result);
+    J->getString(sig, result);
+    sig.replace('.', '/');
+    ret.set(sig);
+    return ret;
 }
 
 /**
@@ -822,6 +829,16 @@ class PersistedObject : public MappingBase
 {
 public:
     PersistedObject(const char *_name) : name(_name) {}
+    ~PersistedObject()
+    {
+        if (instance)
+        {
+#ifdef TRACE_GLOBALREF
+            DBGLOG("DeleteGlobalRef(singleton): %p", instance);
+#endif
+            queryJNIEnv()->DeleteGlobalRef(instance);
+        }
+    }
     CriticalSection crit;
     jobject instance = nullptr;
     StringAttr name;
@@ -1015,14 +1032,6 @@ public:
     void doUnregister(const char *key)
     {
         CriticalBlock b(hashCrit);
-        PersistedObject *p = persistedObjects.find(key);
-        if (p && p->instance)
-        {
-            queryJNIEnv()->DeleteGlobalRef(p->instance);
-#ifdef FORCE_GC
-            forceGC(queryJNIEnv());
-#endif
-        }
         persistedObjects.remove(key);
     }
     static void unregister(const char *key);
@@ -1082,6 +1091,7 @@ static void checkType(type_t javatype, size32_t javasize, type_t ecltype, size32
 enum PersistMode
 {
     persistNone,
+    persistSupplied,
     persistThread,
     persistChannel,
     persistWorkunit,
@@ -2314,6 +2324,11 @@ public:
 // the C++ thread and the java threading library, ensuring that we register/unregister as needed,
 // and that any thread_local function contexts are destroyed before we detach from the java thread
 
+interface IJavaEmbedFunctionContext : public IEmbedFunctionContext
+{
+    virtual void endThread() = 0;
+};
+
 class JavaThreadContext
 {
 public:
@@ -2327,15 +2342,25 @@ public:
     }
     ~JavaThreadContext()
     {
-        // Make sure all thread-local function contexts are destroyed before we detach from
+        // Make sure all thread-local function contexts and saved objects are destroyed before we detach from
         // the Java thread
         contexts.kill();
+        persistedObjects.kill();
+        loaders.kill();
         // According to the Java VM 1.7 docs, "A native thread attached to
         // the VM must call DetachCurrentThread() to detach itself before
         // exiting."
         globalState->javaVM->DetachCurrentThread();
     }
-
+    void endThread()
+    {
+        persistedObjects.kill();
+        ForEachItemIn(idx, contexts)
+        {
+            auto &context = contexts.item(idx);
+            context.endThread();
+        }
+    }
     jobject getSystemClassLoader()
     {
         jobject systemClassLoaderObj = JNIenv->CallStaticObjectMethod(javaLangClassLoaderClass, cl_getSystemClassLoader);
@@ -2363,13 +2388,60 @@ public:
         JavaObjectXmlWriter x(JNIenv, result, name, *esdl, esdlservice, *writer);
         x.write();
     }
-    void registerContext(IEmbedFunctionContext *ctx)
+    void registerContext(IJavaEmbedFunctionContext *ctx)
     {
         // Note - this object is thread-local so no need for a critsec
         contexts.append(*ctx);
     }
+
+    PersistedObject *getLocalObject(CheckedJNIEnv *JNIenv, const char *name)
+    {
+        // Note - this object is thread-local so no need for a critsec
+        PersistedObject *p;
+        p = persistedObjects.find(name);
+        if (!p)
+        {
+            p = new PersistedObject(name);
+            persistedObjects.replaceOwn(*p);
+        }
+        p->crit.enter();  // needed to keep code common between local/global cases
+        return p;
+    }
+
+    jobject createThreadClassLoader(const char *classPath, const char *classname, size32_t bytecodeLen, const byte *bytecode)
+    {
+        if (bytecodeLen || (classPath && *classPath))
+        {
+            jstring jClassPath = (classPath && *classPath) ? JNIenv->NewStringUTF(classPath) : nullptr;
+            jobject helperName = JNIenv->NewStringUTF(helperLibraryName);
+            jobject contextClassLoaderObj = JNIenv->CallStaticObjectMethod(customLoaderClass, clc_newInstance, jClassPath, getSystemClassLoader(), bytecodeLen, (uint64_t) bytecode, helperName);
+            assertex(contextClassLoaderObj);
+            return contextClassLoaderObj;
+        }
+        else
+        {
+            return getSystemClassLoader();
+        }
+    }
+    jobject getThreadClassLoader(const char *classPath, const char *classname, size32_t bytecodeLen, const byte *bytecode)
+    {
+        StringBuffer key(classname);
+        if (classPath && *classPath)
+            key.append('!').append(classPath);
+        PersistedObject *p;
+        p = loaders.find(key);
+        if (!p)
+        {
+            p = new PersistedObject(key);
+            p->instance = JNIenv->NewGlobalRef(createThreadClassLoader(classPath, classname, bytecodeLen, bytecode), "cachedClassLoader");
+            loaders.replaceOwn(*p);
+        }
+        return p->instance;
+    }
 private:
-    IArrayOf<IEmbedFunctionContext> contexts;
+    IArrayOf<IJavaEmbedFunctionContext> contexts;
+    StringMapOf<PersistedObject> persistedObjects = { false };
+    StringMapOf<PersistedObject> loaders = { false };
 };
 
 class JavaXmlBuilder : implements IXmlWriterExt, public CInterface
@@ -2411,6 +2483,7 @@ public:
     virtual void finalize() override
     {
     }
+    virtual void checkDelimiter() override                        {}
 
     virtual IInterface *saveLocation() const {return nullptr;}
     virtual void rewindTo(IInterface *loc)
@@ -3142,11 +3215,11 @@ private:
 // Objects of class JavaEmbedImportContext are created locally for each call of a function, or thread-local to persist from one call to the next.
 // Methods in here do not need to be thread-safe
 
-class JavaEmbedImportContext : public CInterfaceOf<IEmbedFunctionContext>
+class JavaEmbedImportContext : public CInterfaceOf<IJavaEmbedFunctionContext>
 {
 public:
-    JavaEmbedImportContext(ICodeContext *codeCtx, JavaThreadContext *_sharedCtx, jobject _instance, unsigned flags, const char *options, const IThorActivityContext *_activityContext)
-    : sharedCtx(_sharedCtx), JNIenv(sharedCtx->JNIenv), instance(_instance), activityContext(_activityContext)
+    JavaEmbedImportContext(ICodeContext *codeCtx, JavaThreadContext *_sharedCtx, jobject _instance, unsigned _flags, const char *options, const IThorActivityContext *_activityContext)
+    : sharedCtx(_sharedCtx), JNIenv(sharedCtx->JNIenv), instance(_instance), flags(_flags), activityContext(_activityContext)
     {
         argcount = 0;
         argsig = NULL;
@@ -3212,16 +3285,25 @@ public:
     }
     ~JavaEmbedImportContext()
     {
-        if (persistMode == persistThread)
-        {
-            StringBuffer scopeKey;
-            getScopeKey(scopeKey);
-            JavaGlobalState::unregister(scopeKey);
-        }
         if (javaClass)
             JNIenv->DeleteGlobalRef(javaClass);
         if (classLoader)
             JNIenv->DeleteGlobalRef(classLoader);
+    }
+    virtual void endThread() override
+    {
+        instance = nullptr;
+        if (javaClass)
+        {
+            JNIenv->DeleteGlobalRef(javaClass);
+            javaClass = nullptr;
+        }
+        if (classLoader)
+        {
+            JNIenv->DeleteGlobalRef(classLoader);
+            classLoader = nullptr;
+        }
+        javaMethodID = nullptr;
     }
 
     virtual bool getBooleanResult()
@@ -3302,6 +3384,8 @@ public:
     {
         if (*returnType=='V' && strieq(methodName, "<init>"))
             return (unsigned __int64) result.l;
+        if (*returnType=='L' && JNIenv->IsSameObject(result.l, instance) && persistMode != persistNone)
+            return (unsigned __int64) instance;
         StringBuffer s;
         throw makeStringExceptionV(MSGAUD_user, 0, "javaembed: In method %s: Unsigned results not supported", getReportName(s).str()); // Java doesn't support unsigned
     }
@@ -3661,6 +3745,7 @@ public:
                 throw MakeStringException(MSGAUD_user, 0, "javaembed: In method %s: Null value passed for \"this\"", getReportName(s).str());
             }
             instance = (jobject) val;
+            persistMode = persistSupplied;
             if (JNIenv->GetObjectRefType(instance) != JNIGlobalRefType)
             {
                 StringBuffer s;
@@ -3677,7 +3762,7 @@ public:
                 if (classLoader)
                 {
                     JNIenv->DeleteGlobalRef(classLoader);
-                    javaClass = nullptr;
+                    classLoader = nullptr;
                 }
                 loadFunction(classpath, 0, nullptr);
             }
@@ -4110,7 +4195,7 @@ public:
                         StringBuffer scopeKey;
                         getScopeKey(scopeKey);
                         PersistedObjectCriticalBlock persistBlock;
-                        persistBlock.enter(globalState->getGlobalObject(JNIenv, scopeKey));
+                        persistBlock.enter(persistMode==persistThread ? sharedCtx->getLocalObject(JNIenv, scopeKey) : globalState->getGlobalObject(JNIenv, scopeKey));
                         instance = persistBlock.getInstance();
                         if (instance)
                             persistBlock.leave();
@@ -4125,7 +4210,7 @@ public:
                             if (persistMode==persistQuery || persistMode==persistWorkunit || persistMode==persistChannel)
                             {
                                 assertex(engine);
-                                engine->onTermination(JavaGlobalState::unregister, scopeKey.str(), persistMode!=persistQuery);
+                                engine->onTermination(JavaGlobalState::unregister, scopeKey.str(), persistMode==persistWorkunit);
                             }
                             persistBlock.leave(instance);
                         }
@@ -4201,22 +4286,35 @@ public:
     }
     virtual void enter() override
     {
+        reenter(nullptr);
+    }
+    virtual void reenter(ICodeContext *codeCtx) override
+    {
         // If we rejig codegen to only call loadCompiledScript etc at construction time, then this will need to do the reinit()
         // until we do, it's too early
 
+        if (codeCtx)
+            engine = codeCtx->queryEngineContext();
+        else if (flags & EFthreadlocal && persistMode > persistThread)
+        {
+            StringBuffer s;
+            throw MakeStringException(0, "javaembed: In method %s: Workunit must be recompiled to support this persist mode", getReportName(s).str());
+        }
+
         // Create a new frame for local references and increase the capacity
         // of those references to 64 (default is 16)
+
         JNIenv->PushLocalFrame(64);
     }
     virtual void exit() override
     {
         if (persistMode==persistNone)
             instance = 0;  // otherwise we leave it for next call as it saves a lot of time looking it up
-        JNIenv->PopLocalFrame(nullptr);
         iterators.kill();
 #ifdef FORCE_GC
         forceGC(JNIenv);
 #endif
+        JNIenv->PopLocalFrame(nullptr);
     }
 
 protected:
@@ -4299,22 +4397,6 @@ protected:
         return s.append(methodName);
     }
 
-    jobject createThreadClassLoader(const char *classPath, size32_t bytecodeLen, const byte *bytecode)
-    {
-        if (bytecodeLen || (classPath && *classPath))
-        {
-            jstring jClassPath = (classPath && *classPath) ? JNIenv->NewStringUTF(classPath) : nullptr;
-            jobject helperName = JNIenv->NewStringUTF(helperLibraryName);
-            jobject contextClassLoaderObj = JNIenv->CallStaticObjectMethod(customLoaderClass, clc_newInstance, jClassPath, sharedCtx->getSystemClassLoader(), bytecodeLen, (uint64_t) bytecode, helperName);
-            assertex(contextClassLoaderObj);
-            return contextClassLoaderObj;
-        }
-        else
-        {
-            return sharedCtx->getSystemClassLoader();
-        }
-    }
-
     jobject createInstance()
     {
         jmethodID constructor;
@@ -4377,7 +4459,7 @@ protected:
                     // If a persist scope is specified, we may want to use a pre-existing object. If we do we share its classloader, class, etc.
                     assertex(classname.length());  // MORE - what does this imply?
                     getScopeKey(scopeKey);
-                    persistBlock.enter(globalState->getGlobalObject(JNIenv, scopeKey));
+                    persistBlock.enter(persistMode==persistThread ? sharedCtx->getLocalObject(JNIenv, scopeKey) : globalState->getGlobalObject(JNIenv, scopeKey));
                     instance = persistBlock.getInstance();
                     if (instance)
                         persistBlock.leave();
@@ -4392,7 +4474,7 @@ protected:
                 {
                     if (!classname)
                         throw MakeStringException(MSGAUD_user, 0, "Invalid import name - Expected classname.methodname:signature");
-                    classLoader = JNIenv->NewGlobalRef(createThreadClassLoader(classpath, bytecodeLen, bytecode), "classLoader");
+                    classLoader = JNIenv->NewGlobalRef(sharedCtx->getThreadClassLoader(classpath, classname, bytecodeLen, bytecode), "classLoader");
                     sharedCtx->setThreadClassLoader(classLoader);
 
                     jmethodID loadClassMethod = JNIenv->GetMethodID(JNIenv->GetObjectClass(classLoader), "loadClass","(Ljava/lang/String;)Ljava/lang/Class;");
@@ -4421,7 +4503,7 @@ protected:
                         if (persistMode==persistQuery || persistMode==persistWorkunit || persistMode==persistChannel)
                         {
                             assertex(engine);
-                            engine->onTermination(JavaGlobalState::unregister, scopeKey.str(), persistMode!=persistQuery);
+                            engine->onTermination(JavaGlobalState::unregister, scopeKey.str(), persistMode==persistWorkunit);
                         }
                         persistBlock.leave(instance);
                     }
@@ -4510,12 +4592,12 @@ protected:
         case persistGlobal:
             ret.append("global");
             break;
-        case persistChannel:
-            ret.append(nodeNum).append('.');
             // Fall into
         case persistWorkunit:
             engine->getQueryId(ret, true);
             break;
+        case persistChannel:
+            ret.append(nodeNum).append('.');
         case persistQuery:
             engine->getQueryId(ret, false);
             break;
@@ -4533,6 +4615,7 @@ protected:
     jobject instance = nullptr; // class instance of object to call methods on
     const IThorActivityContext *activityContext = nullptr;
 
+    unsigned flags = 0;
     unsigned nodeNum = 0;
     StringAttr globalScopeKey;
     PersistMode persistMode = persistNone;  // Defines the lifetime of the java object for which this is called.
@@ -4564,20 +4647,21 @@ protected:
 };
 
 static __thread JavaThreadContext* threadContext;  // We reuse per thread, for speed
-static __thread ThreadTermFunc threadHookChain;
 
-static void releaseContext()
+static bool releaseContext(bool isPooled)
 {
     if (threadContext)
     {
-        delete threadContext;
-        threadContext = NULL;
+        threadContext->endThread();
+        if (!isPooled)
+        {
+            delete threadContext;
+            threadContext = NULL;
+        }
+        else
+            return true;
     }
-    if (threadHookChain)
-    {
-        (*threadHookChain)();
-        threadHookChain = NULL;
-    }
+    return false;
 }
 
 static JavaThreadContext *queryContext()
@@ -4585,7 +4669,7 @@ static JavaThreadContext *queryContext()
     if (!threadContext)
     {
         threadContext = new JavaThreadContext;
-        threadHookChain = addThreadTermFunc(releaseContext);
+        addThreadTermFunc(releaseContext);
     }
     return threadContext;
 }

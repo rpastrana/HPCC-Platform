@@ -1,6 +1,5 @@
 define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
     "dojo/i18n",
     "dojo/i18n!./nls/hpcc",
 
@@ -24,62 +23,62 @@ define([
     "dijit/form/DateTextBox",
     "dijit/form/TimeTextBox"
 
-], function (declare, lang, i18n, nlsHPCC,
+], function (declare, i18n, nlsHPCC,
     registry,
     _Widget, ESPUtil, DiskUsage,
     template) {
-        return declare("DiskUsageDetails", [_Widget, ESPUtil.FormHelper], {
-            templateString: template,
-            baseClass: "DiskUsageDetails",
-            i18n: nlsHPCC,
+    return declare("DiskUsageDetails", [_Widget, ESPUtil.FormHelper], {
+        templateString: template,
+        baseClass: "DiskUsageDetails",
+        i18n: nlsHPCC,
 
-            postCreate: function (args) {
-                this.inherited(arguments);
-            },
+        postCreate: function (args) {
+            this.inherited(arguments);
+        },
 
-            resize: function (args) {
-                this.inherited(arguments);
-                this.widget.BorderContainer.resize();
-            },
+        resize: function (args) {
+            this.inherited(arguments);
+            this.widget.BorderContainer.resize();
+        },
 
-            getTitle: function () {
-                return this.i18n.title_DiskUsage;
-            },
+        getTitle: function () {
+            return this.i18n.title_DiskUsage;
+        },
 
-            //  Hitched actions  ---
-            _onRefresh: function (event) {
-                this.refreshGrid();
-            },
+        //  Hitched actions  ---
+        _onRefresh: function (event) {
+            this.refreshGrid();
+        },
 
-            //  Implementation  ---
-            init: function (params) {
-                if (this.inherited(arguments))
-                    return;
+        //  Implementation  ---
+        init: function (params) {
+            if (this.inherited(arguments))
+                return;
 
-                var context = this;
+            var context = this;
 
-                this._diskUsage = new DiskUsage.Details(params.details.Name)
-                    .target(this.id + "DiskUsageGrid")
-                    .details(params.details)
-                    ;
+            this._diskUsage = new DiskUsage.Details(params.details.Name)
+                .target(this.id + "DiskUsageGrid")
+                .details(params.details)
+                ;
 
-                this._diskUsagePane = registry.byId(this.id + "DiskUsageGridCP");
-                var origResize = this._diskUsagePane.resize;
-                this._diskUsagePane.resize = function (size) {
-                    origResize.apply(this, arguments);
-                    if (context._diskUsage) {
-                        context._diskUsage
-                            .resize({ width: size.w, height: size.h })
-                            .lazyRender()
-                            ;
-                    }
+            this._diskUsagePane = registry.byId(this.id + "DiskUsageGridCP");
+            var origResize = this._diskUsagePane.resize;
+            this._diskUsagePane.resize = function (size) {
+                origResize.apply(this, arguments);
+                if (context._diskUsage) {
+                    context._diskUsage
+                        .resize({ width: size.w, height: size.h })
+                        .lazyRender()
+                        ;
                 }
-
-                this.widget.BorderContainer.resize();
-            },
-
-            refreshGrid: function (clearSelection) {
-                this._diskUsage.refresh();
             }
-        });
+
+            this.widget.BorderContainer.resize();
+        },
+
+        refreshGrid: function (clearSelection) {
+            this._diskUsage.refresh();
+        }
     });
+});

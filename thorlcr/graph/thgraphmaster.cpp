@@ -362,7 +362,8 @@ void CSlaveMessageHandler::threadmain()
 
 //////////////////////
 
-CMasterActivity::CMasterActivity(CGraphElementBase *_container) : CActivityBase(_container), threaded("CMasterActivity", this), timingInfo(_container->queryJob())
+CMasterActivity::CMasterActivity(CGraphElementBase *_container) : CActivityBase(_container), threaded("CMasterActivity", this), timingInfo(_container->queryJob()),
+                                                                  blockedTime(queryJob(), StTimeBlocked)
 {
     notedWarnings = createThreadSafeBitSet();
     mpTag = TAG_NULL;
@@ -515,9 +516,7 @@ void CMasterActivity::reset()
 void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(progressCrit); // don't think needed
-    unsigned __int64 localTimeNs;
-    mb.read(localTimeNs);
-    timingInfo.set(node, localTimeNs);
+    deserializeActivityStats(node, mb);
     rowcount_t count;
     ForEachItemIn(p, progressInfo)
     {
@@ -526,9 +525,19 @@ void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
     }
 }
 
+void CMasterActivity::deserializeActivityStats(unsigned node, MemoryBuffer &mb)
+{
+    unsigned __int64 localTimeNs, blockedTimeNs;
+    mb.read(localTimeNs);
+    mb.read(blockedTimeNs);
+    timingInfo.set(node, localTimeNs);
+    blockedTime.set(node, blockedTimeNs);
+}
+
 void CMasterActivity::getActivityStats(IStatisticGatherer & stats)
 {
     timingInfo.getStats(stats);
+    blockedTime.getStats(stats,false);
 }
 
 void CMasterActivity::getEdgeStats(IStatisticGatherer & stats, unsigned idx)
@@ -1056,7 +1065,7 @@ public:
             r->getResultUnicode(MemoryBuffer2IDataVal(result));
             tlen = result.length()/2;
             tgt = (UChar *)malloc(tlen*2);
-            memcpy(tgt, result.toByteArray(), tlen*2);
+            memcpy_iflen(tgt, result.toByteArray(), tlen*2);
         );
     }
     virtual char * getResultVarString(const char * stepname, unsigned sequence) override
@@ -1350,7 +1359,11 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, ILoaded
     }
     sharedAllocator.setown(::createThorAllocator(globalMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
     Owned<IMPServer> mpServer = getMPServer();
-    addChannel(mpServer);
+    CJobChannel *channel = addChannel(mpServer);
+    channel->reservePortKind(TPORT_mp); 
+    channel->reservePortKind(TPORT_watchdog);
+    channel->reservePortKind(TPORT_debug);
+
     slavemptag = allocateMPTag();
     slaveMsgHandler.setown(new CSlaveMessageHandler(*this, slavemptag));
     tmpHandler.setown(createTempHandler(true));
@@ -1368,9 +1381,11 @@ void CJobMaster::endJob()
     PARENT::endJob();
 }
 
-void CJobMaster::addChannel(IMPServer *mpServer)
+CJobChannel *CJobMaster::addChannel(IMPServer *mpServer)
 {
-    jobChannels.append(*new CJobMasterChannel(*this, mpServer, jobChannels.ordinality()));
+    CJobChannel *channel = new CJobMasterChannel(*this, mpServer, jobChannels.ordinality());
+    jobChannels.append(*channel);
+    return channel;
 }
 
 
@@ -2952,19 +2967,22 @@ CTimingInfo::CTimingInfo(CJobBase &ctx) : CThorStats(ctx, StTimeLocalExecute)
 
 ProgressInfo::ProgressInfo(CJobBase &ctx) : CThorStats(ctx, StNumRowsProcessed)
 {
-    startcount = stopcount = 0;
+    startCount = stopCount = 0;
 }
 void ProgressInfo::processInfo() // reimplement as counts have special flags (i.e. stop/start)
 {
     reset();
-    startcount = stopcount = 0;
+    startCount = stopCount = 0;
     ForEachItemIn(n, counts)
     {
         unsigned __int64 thiscount = counts.item(n);
-        if (thiscount & THORDATALINK_STARTED)
-            startcount++;
         if (thiscount & THORDATALINK_STOPPED)
-            stopcount++;
+        {
+            startCount++;
+            stopCount++;
+        }
+        else if (thiscount & THORDATALINK_STARTED)
+            startCount++;
         thiscount = thiscount & THORDATALINK_COUNT_MASK;
         tallyValue(thiscount, n+1);
     }
@@ -2976,8 +2994,8 @@ void ProgressInfo::getStats(IStatisticGatherer & stats)
     CThorStats::getStats(stats, true);
     stats.addStatistic(kind, tot);
     stats.addStatistic(StNumSlaves, counts.ordinality());
-    stats.addStatistic(StNumStarts, startcount);
-    stats.addStatistic(StNumStops, stopcount);
+    stats.addStatistic(StNumStarts, startCount);
+    stats.addStatistic(StNumStops, stopCount);
 }
 
 

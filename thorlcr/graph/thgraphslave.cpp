@@ -378,7 +378,7 @@ void CSlaveActivity::start()
 
 void CSlaveActivity::startAllInputs()
 {
-    ActivityTimer s(totalCycles, timeActivities);
+    ActivityTimer s(slaveTimerStats, timeActivities);
     ForEachItemIn(i, inputs)
     {
         try { startInput(i); }
@@ -540,16 +540,26 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
                 break;
         }
     }
-    unsigned __int64 _totalCycles = queryTotalCycles();
-    if (_totalCycles < inputCycles) // not sure how/if possible, but guard against
+    unsigned __int64 localCycles = queryTotalCycles();
+    if (localCycles < inputCycles) // not sure how/if possible, but guard against
         return 0;
-    return _totalCycles-inputCycles;
+    localCycles -= inputCycles;
+    const unsigned __int64 blockedCycles = queryBlockedCycles();
+    if (localCycles < blockedCycles)
+        return 0;
+    return localCycles-blockedCycles;
+}
+
+void CSlaveActivity::serializeActivityStats(MemoryBuffer &mb) const
+{
+    mb.append((unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    mb.append((unsigned __int64)cycle_to_nanosec(queryBlockedCycles()));
 }
 
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit);
-    mb.append((unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    serializeActivityStats(mb);
     ForEachItemIn(i, outputs)
     {
         IThorDataLink *output = queryOutput(i);
@@ -1693,7 +1703,7 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
         actInitWaitTimeMins = queryMaxLfnBlockTimeMins()+1;
 }
 
-void CJobSlave::addChannel(IMPServer *mpServer)
+CJobChannel *CJobSlave::addChannel(IMPServer *mpServer)
 {
     unsigned nextChannelNum = jobChannels.ordinality();
     CJobSlaveChannel *channel = new CJobSlaveChannel(*this, mpServer, nextChannelNum);
@@ -1701,6 +1711,7 @@ void CJobSlave::addChannel(IMPServer *mpServer)
     unsigned slaveNum = channel->queryMyRank();
     jobChannelSlaveNumbers[nextChannelNum] = slaveNum;
     jobSlaveChannelNum[slaveNum-1] = nextChannelNum;
+    return channel;
 }
 
 void CJobSlave::startJob()

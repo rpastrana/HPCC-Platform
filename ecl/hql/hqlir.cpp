@@ -791,13 +791,13 @@ public:
 struct SimpleTypeBuilderInfo
 {
 public:
-    SimpleTypeBuilderInfo() : length(0), isSigned(false), precision(0), locale(NULL) {}
+    SimpleTypeBuilderInfo() {}
 
 public:
-    size32_t length;
-    size32_t precision;
-    bool isSigned;
-    const char * locale; // locale or code page
+    size32_t length = 0;
+    size32_t precision = 0;
+    bool isSigned = false;
+    const char * locale = nullptr; // locale or code page
 };
 
 struct CompoundTypeBuilderInfo
@@ -839,16 +839,16 @@ public:
 class ExprAnnotationBuilderInfo
 {
 public:
-    ExprAnnotationBuilderInfo() : expr(0), name(NULL), value(0), line(0), col(0), warning(NULL), tree(NULL) {}
+    ExprAnnotationBuilderInfo() {}
 
 public:
-    exprid_t expr;
-    const char * name;
-    IError * warning;
-    IPropertyTree * tree;
-    unsigned value;
-    unsigned line;
-    unsigned col;
+    exprid_t expr = 0;
+    const char * name = nullptr;
+    IError * warning = nullptr;
+    IPropertyTree * tree = nullptr;
+    unsigned value = 0;
+    unsigned line = 0;
+    unsigned col = 0;
     IdArray args;
 };
 
@@ -2114,7 +2114,7 @@ id_t ExpressionIRPlayer::doProcessAnnotation(IHqlExpression * expr)
         {
             IHqlNamedAnnotation * annotation = static_cast<IHqlNamedAnnotation *>(expr->queryAnnotation());
             info.name = str(expr->queryId());
-            info.value = annotation->isExported() ? ob_exported : annotation->isShared() ? ob_shared : 0;
+            info.value = annotation->isExported() ? ob_exported : annotation->isShared() ? ob_shared : ob_private;
             if (annotation->isVirtual())
                 info.value |= ob_virtual;
             info.line = expr->getStartLine();
@@ -2380,7 +2380,7 @@ static const char * const expectedIR1 [] = {
 "%e28 = inlinetable(%e26,%e3) : %t27;",
 "%e29 = %e28 {location '',9,7};",
 "%e30 = %e29 {symbol ds@9};",
-"%e31 = null : <null>;",
+"%e31 = null : %t25;",
 "%e32 = selectfields(%e30,%e31) : %t27;",
 "%t33 = type int4;",
 "%c34 = constant 706706620 : %t33;",

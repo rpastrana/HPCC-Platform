@@ -501,6 +501,7 @@ IHqlExpression * NewThorStoredReplacer::createTransformed(IHqlExpression * expr)
                         forceConstant = true;
                         break;
                     }
+                    // fallthrough
                 default:
                     onlyStored = false;
                     break;
@@ -586,6 +587,7 @@ IHqlExpression * NewThorStoredReplacer::createTransformed(IHqlExpression * expr)
                                 getFriendlyTypeStr(replacementType, replacementTypeText);
                                 translator.reportError(expr, ECODETEXT(HQLERR_HashStoredTypeMismatch), nameText.str(), exprTypeText.str(), replacementTypeText.str());
                             }
+                            // fallthrough
                         default:
                             replacement.setown(ensureExprType(replacement, exprType));
                         }
@@ -1018,7 +1020,7 @@ YesNoOption HqlThorBoundaryTransformer::calcNormalizeThor(IHqlExpression * expr)
         {
             if (functionCallIsActivity(expr))
                 return OptionYes;
-            YesNoOption bodyOption = normalizeThor(expr->queryBody()->queryFunctionDefinition());
+            //YesNoOption bodyOption = normalizeThor(expr->queryBody()->queryFunctionDefinition());
             //do Something with it
             break;
         }
@@ -2736,7 +2738,7 @@ IHqlExpression * ThorHqlTransformer::normalizeGroup(IHqlExpression * expr)
                 //changing a heavyweight global sort into a lightweight distribute,merge
                 OwnedHqlExpr sortOrder = getExistingSortOrder(dataset, true, true);
                 OwnedHqlExpr mergeAttr = createExprAttribute(mergeAtom, replaceSelector(sortOrder, queryActiveTableSelector(), dataset));
-                sorted.setown(createDatasetF(no_distribute, LINK(dataset), LINK(hashed), mergeAttr.getClear(), NULL));
+                sorted.setown(createDataset(no_distribute, { LINK(dataset), LINK(hashed), mergeAttr.getClear() }));
                 sorted.setown(cloneInheritedAnnotations(expr, sorted));
             }
             else
@@ -2756,7 +2758,7 @@ IHqlExpression * ThorHqlTransformer::normalizeGroup(IHqlExpression * expr)
     }
 
     //Do a local group after the sort because we know they can't overlap...
-    OwnedHqlExpr ret = createDatasetF(no_group, sorted.getClear(), LINK(sortlist), createLocalAttribute(), NULL);
+    OwnedHqlExpr ret = createDataset(no_group, { sorted.getClear(), LINK(sortlist), createLocalAttribute() });
     return expr->cloneAllAnnotations(ret);
 }
 
@@ -2835,7 +2837,7 @@ IHqlExpression * ThorHqlTransformer::normalizeCoGroup(IHqlExpression * expr)
                 OwnedHqlExpr mergeAttr;
                 if (bestSortOrder && isAlreadySorted(&cur, bestSortOrder, true, true, false))
                     mergeAttr.setown(createExprAttribute(mergeAtom, replaceSelector(bestSortOrder, queryActiveTableSelector(), &cur)));
-                OwnedHqlExpr distributedInput = createDatasetF(no_distribute, LINK(&cur), LINK(mappedDistribution), mergeAttr.getClear(), NULL);
+                OwnedHqlExpr distributedInput = createDataset(no_distribute, { LINK(&cur), LINK(mappedDistribution), mergeAttr.getClear() });
                 distributedInput.setown(cloneInheritedAnnotations(expr, distributedInput));
                 inputs.replace(*distributedInput.getClear(), iReplace);
             }
@@ -2867,7 +2869,7 @@ IHqlExpression * ThorHqlTransformer::normalizeCoGroup(IHqlExpression * expr)
         OwnedHqlExpr appended = createDataset(no_addfiles, inputs);
         appended.setown(cloneInheritedAnnotations(expr, appended));
         OwnedHqlExpr mappedOrder = replaceSelector(grouping, queryActiveTableSelector(), appended);
-        merged.setown(createDatasetF(no_sort, LINK(appended), mappedOrder.getClear(), LINK(localFlag), NULL));
+        merged.setown(createDataset(no_sort, { LINK(appended), mappedOrder.getClear(), LINK(localFlag) } ));
     }
 
     //Now group by the grouping condition
@@ -2993,7 +2995,7 @@ IHqlExpression * ThorHqlTransformer::normalizeJoinAndGroup(IHqlExpression * expr
     assertex(groupOrder);
     OwnedHqlExpr left = createSelector(no_left, expr->queryChild(0), querySelSeq(expr));
     OwnedHqlExpr leftSortOrder = replaceSelector(groupOrder, left, newLeft);
-    newLeft.setown(createDatasetF(no_sort, newLeft.getClear(), LINK(leftSortOrder), LINK(newLocalAttr), NULL));
+    newLeft.setown(createDataset(no_sort, { newLeft.getClear(), LINK(leftSortOrder), LINK(newLocalAttr) }));
 
     if (oldRight == oldLeft)
         newRight.set(newLeft);
@@ -3021,11 +3023,11 @@ IHqlExpression * ThorHqlTransformer::normalizeJoinAndGroup(IHqlExpression * expr
     {
         OwnedHqlExpr hashOut = createValue(no_hash32, makeIntType(4, false), LINK(mappedOrder));
         OwnedHqlExpr mergeOut = createExprAttribute(mergeAtom, LINK(mappedOrder));
-        distributed.setown(createDatasetF(no_distribute, LINK(newJoin), hashOut.getClear(), mergeOut.getClear(), NULL));
+        distributed.setown(createDataset(no_distribute, { LINK(newJoin), hashOut.getClear(), mergeOut.getClear() }));
     }
 
     //And finally group it.
-    return createDatasetF(no_group, LINK(distributed), LINK(mappedOrder), LINK(newLocalAttr), NULL);
+    return createDataset(no_group, { LINK(distributed), LINK(mappedOrder), LINK(newLocalAttr) });
 }
 
 static IHqlExpression * queryDistributionKey(IHqlExpression * rhs)
@@ -3055,6 +3057,18 @@ IHqlExpression * ThorHqlTransformer::normalizeJoinOrDenormalize(IHqlExpression *
     IHqlExpression * rightDs = queryJoinRhs(expr);
     IHqlExpression * seq = querySelSeq(expr);
     node_operator op = expr->getOperator();
+    IHqlExpression * onFail = expr->queryAttribute(onFailAtom);
+    if (onFail)
+    {
+        OwnedHqlExpr right = createSelector(no_right, rightDs, seq);
+        if (onFail->usesSelector(right))
+        {
+            //Replace all references to right with the default values
+            OwnedHqlExpr newFail = replaceSelectorWithNull(onFail, right);
+            assertex(!newFail->usesSelector(right));
+            return replaceOwnedAttribute(expr, newFail.getClear());
+        }
+    }
 
     if (op == no_join)
     {
@@ -3171,7 +3185,7 @@ IHqlExpression * ThorHqlTransformer::normalizeJoinOrDenormalize(IHqlExpression *
                     OwnedHqlExpr keyedCondition = joinInfo.getContiguousJoinCondition(numKeyedFields);
                     if (keyedCondition)
                     {
-                        OwnedHqlExpr distribute = createDataset(no_keyeddistribute, LINK(leftDs), createComma(LINK(rhsKey), keyedCondition.getClear(), LINK(seq)));
+                        OwnedHqlExpr distribute = createDataset(no_keyeddistribute, { LINK(leftDs), LINK(rhsKey), keyedCondition.getClear(), LINK(seq) });
                         HqlExprArray args;
                         args.append(*distribute.getClear());
                         unwindChildren(args, expr, 1);
@@ -3806,9 +3820,9 @@ IHqlExpression * ThorHqlTransformer::normalizeMergeAggregate(IHqlExpression * ex
 
     OwnedHqlExpr mergeAttr = createExprAttribute(mergeAtom, LINK(mappedGrouping));
     OwnedHqlExpr hashed = createValue(no_hash32, LINK(unsignedType), LINK(mappedGrouping), createAttribute(internalAtom));
-    OwnedHqlExpr redistributed = createDatasetF(no_distribute, LINK(transformedFirstAggregate), LINK(hashed), mergeAttr.getClear(), NULL);
+    OwnedHqlExpr redistributed = createDataset(no_distribute, { LINK(transformedFirstAggregate), LINK(hashed), mergeAttr.getClear() });
     redistributed.setown(cloneInheritedAnnotations(expr, redistributed));
-    OwnedHqlExpr grouped = createDatasetF(no_group, LINK(redistributed), LINK(mappedGrouping), createLocalAttribute(), NULL);
+    OwnedHqlExpr grouped = createDataset(no_group, { LINK(redistributed), LINK(mappedGrouping), createLocalAttribute() });
     grouped.setown(cloneInheritedAnnotations(expr, grouped));
 
     HqlExprArray args;
@@ -4325,6 +4339,8 @@ void CompoundSourceTransformer::analyseGatherInfo(IHqlExpression * expr)
     switch (op)
     {
     case no_newkeyindex:
+        if (!canDefinitelyProcessWithTranslator(expr->queryRecord()))
+            break;
         extra->sourceOp = no_compound_indexread;
         extra->uid.set(expr->queryAttribute(_uid_Atom));
         extra->mode = no_thor;
@@ -4333,6 +4349,8 @@ void CompoundSourceTransformer::analyseGatherInfo(IHqlExpression * expr)
         {
             IHqlExpression * mode = expr->queryChild(2);
             if (!mode)
+                break;
+            if (!canDefinitelyProcessWithTranslator(expr->queryRecord()))
                 break;
             switch (mode->getOperator())
             {
@@ -5094,7 +5112,6 @@ IHqlExpression * OptimizeActivityTransformer::optimizeCompare(IHqlExpression * l
     {
         if (lhs->getOperator() == no_count)
         {
-            IHqlExpression * ds = lhs->queryChild(0);
             HqlExprArray args;
             unwindChildren(args, lhs);
             OwnedHqlExpr ret = createValue(no_exists, makeBoolType(), args);
@@ -5650,7 +5667,7 @@ void GlobalAttributeInfo::doSplitGlobalDefinition(ITypeInfo * type, IHqlExpressi
             args.kill();
             args.append(*LINK(filename));
             args.append(*LINK(record));
-            args.append(*createValue(no_thor));
+            args.append(*createValue(no_thor, makeNullType()));
             args.append(*createAttribute(_noVirtual_Atom));         // don't interpret virtual fields in spilled output
             args.append(*createExprAttribute(_signed_Atom, createConstant("hpcc")));
 
@@ -5786,18 +5803,6 @@ void GlobalAttributeInfo::splitSmallDataset(IHqlExpression * value, SharedHqlExp
 }
 
 //------------------------------------------------------------------------
-
-static bool isStored(IHqlExpression * set)
-{
-    switch (set->getOperator())
-    {
-    case no_setresult:
-    case no_ensureresult:
-    case no_output:
-        return matchesConstantValue(queryAttributeChild(set, sequenceAtom, 0), ResultSequenceStored);
-    }
-    return false;
-}
 
 static bool isTrivialStored(IHqlExpression * set)
 {
@@ -6923,7 +6928,7 @@ IHqlExpression * WorkflowTransformer::createSequentialWorkflow(IHqlExpression * 
         else
         {
             if (nextBranch)
-                nextBranch.setown(createValue(expr->getOperator(), nextBranch.getClear(), LINK(transformed)));
+                nextBranch.setown(createValue(expr->getOperator(), makeVoidType(), nextBranch.getClear(), LINK(transformed)));
             else
                 nextBranch.set(transformed);
             inheritDependencies(nextBranch);
@@ -8504,7 +8509,7 @@ bool AutoScopeMigrateInfo::addGraph(unsigned graph)
 
 bool AutoScopeMigrateInfo::doAutoHoist(IHqlExpression * transformed, bool minimizeWorkunitTemporaries)
 {
-    if (useCount == 0)
+    if ((useCount == 0) || neverHoist)
         return false;
 
     node_operator op = original->getOperator();
@@ -8564,7 +8569,48 @@ AutoScopeMigrateTransformer::AutoScopeMigrateTransformer(IWorkUnit * _wu, HqlCpp
     globalTarget = NULL;
 }
 
-void AutoScopeMigrateTransformer::analyseExpr(IHqlExpression * expr)
+//Ensure all input activities are marked as never hoisting, but child activities are unaffected
+void AutoScopeMigrateTransformer::ensureNeverHoisted(IHqlExpression * expr)
+{
+    for (;;)
+    {
+        AutoScopeMigrateInfo * extra = queryBodyExtra(expr);
+        if (extra->neverHoist)
+            return;
+        extra->neverHoist = true;
+        if (getNumActivityArguments(expr) != 1)
+            return;
+        expr = expr->queryChild(0);
+    }
+}
+
+//If an expression must be part of a compound source operation, ensure that the input
+//dataset is never hoisted, otherwise it will cause a later cannot key error.
+void AutoScopeMigrateTransformer::analysePass0(IHqlExpression * expr)
+{
+    switch (expr->getOperator())
+    {
+    case no_keyedlimit:
+        ensureNeverHoisted(expr);
+        break;
+    case no_hqlproject:
+    case no_newusertable:
+    case no_aggregate:
+    case no_newaggregate:
+        if (expr->hasAttribute(keyedAtom))
+            ensureNeverHoisted(expr);
+        break;
+    case no_filter:
+        if (filterIsKeyed(expr))
+            ensureNeverHoisted(expr);
+        break;
+    }
+
+    if (!alreadyVisited(expr))
+        NewHqlTransformer::analyseExpr(expr);
+}
+
+void AutoScopeMigrateTransformer::analysePass1(IHqlExpression * expr)
 {
     AutoScopeMigrateInfo * extra = queryBodyExtra(expr);
     if (isConditional)
@@ -8585,6 +8631,19 @@ void AutoScopeMigrateTransformer::analyseExpr(IHqlExpression * expr)
     unsigned savedDepth = activityDepth;
     doAnalyseExpr(expr);
     activityDepth = savedDepth;
+}
+
+void AutoScopeMigrateTransformer::analyseExpr(IHqlExpression * expr)
+{
+    switch (pass)
+    {
+    case 0:
+        analysePass0(expr);
+        break;
+    case 1:
+        analysePass1(expr);
+        break;
+    }
 }
 
 void AutoScopeMigrateTransformer::doAnalyseConditionalExpr(IHqlExpression * expr, unsigned firstConditional)
@@ -8658,7 +8717,7 @@ void AutoScopeMigrateTransformer::doAnalyseExpr(IHqlExpression * expr)
         break;
     case no_thor:
         //ignore thor attribute on a dataset..
-        if (expr->queryType())
+        if (expr->queryType() && (expr->queryType()->getTypeCode() != type_null))
         {
             curGraph++;
             graphDepth++;
@@ -8937,14 +8996,14 @@ IHqlExpression * FilterCloner::inheritFilters(IHqlExpression * expr)
             {
                 DBGLOG("Inheriting filter condition");
                 IHqlExpression * cond = replaceExpression(lhsExtra, lhs, rhs);
-                return createValue(no_and, LINK(expr), cond);
+                return createValue(no_and, makeBoolType(), LINK(expr), cond);
             }
             IHqlExpression * rhsExtra = (IHqlExpression *)rhs->queryTransformExtra();
             if (rhsExtra)
             {
                 DBGLOG("Inheriting filter condition");
                 IHqlExpression * cond = replaceExpression(rhsExtra, rhs, lhs);
-                return createValue(no_and, LINK(expr), cond);
+                return createValue(no_and, makeBoolType(), LINK(expr), cond);
             }
             break;
         }
@@ -8958,7 +9017,7 @@ IHqlExpression * FilterCloner::inheritFilters(IHqlExpression * expr)
             if (lhsExtra)
             {
                 DBGLOG("Inheriting filter condition");
-                return createValue(no_and, LINK(expr), LINK(lhsExtra));
+                return createValue(no_and, makeBoolType(), LINK(expr), LINK(lhsExtra));
             }
             break;
         }
@@ -9110,7 +9169,7 @@ IHqlExpression * DFSLayoutTransformer::createTransformed(IHqlExpression * expr)
     if (translate)
     {
         ECLlocation where(ds);
-        OwnedHqlExpr folded  = foldHqlExpression(errs, filename, nullptr, HFOforcefold);
+        OwnedHqlExpr folded  = foldHqlExpression(errs, filename, HFOforcefold);
         StringBuffer fileNameText;
         getStringValue(fileNameText, folded);
         if (fileNameText.length())   // PIPE creates a no_table with a blank filename, it seems
@@ -9823,7 +9882,7 @@ IHqlExpression * HqlLinkedChildRowTransformer::ensureInputSerialized(IHqlExpress
     //and then use it to expand references to the unserialized format
     IHqlExpression * selector = dataset->queryNormalizedSelector();
     OwnedHqlExpr mapTransform = createRecordMappingTransform(no_newtransform, serializedRecord, selector);
-    OwnedHqlExpr newDataset = createDatasetF(no_newusertable, LINK(dataset), LINK(serializedRecord), LINK(mapTransform), LINK(selSeq), NULL);
+    OwnedHqlExpr newDataset = createDataset(no_newusertable, { LINK(dataset), LINK(serializedRecord), LINK(mapTransform), LINK(selSeq) });
 
     NewProjectMapper2 mapper;
     mapper.setMapping(mapTransform);
@@ -10411,6 +10470,9 @@ IHqlExpression * HqlScopeTagger::createTransformed(IHqlExpression * expr)
             }
             break;
         case annotate_symbol:
+            if (!expr->getStartLine())
+                break;
+            //fallthrough
         case annotate_location:
             {
                 ErrorSeverityMapper::SymbolScope saved(errorMapper, expr);
@@ -11118,7 +11180,7 @@ void LeftRightTransformer::process(HqlExprArray & exprs)
 
 
   */
-static void unwindAnnotations(HqlExprCopyArray & unwound, IHqlExpression * expr)
+void unwindAnnotations(HqlExprCopyArray & unwound, IHqlExpression * expr)
 {
     if (expr->getAnnotationKind() == annotate_none)
         return;
@@ -11987,11 +12049,11 @@ IHqlExpression * HqlTreeNormalizer::transformCaseToIfs(IHqlExpression * expr)
 
         OwnedHqlExpr test = createBoolExpr(no_eq, ensureExprType(testVar, type), transform(castCurValue));
         if (options.constantFoldNormalize)
-            test.setown(foldConstantOperator(test, 0, NULL));
+            test.setown(foldConstantOperator(test, 0));
         OwnedHqlExpr trueExpr = transform(cur->queryChild(1));
         elseExpr.setown(createIf(test.getClear(), trueExpr.getClear(), elseExpr.getClear()));
         if (options.constantFoldNormalize)
-            elseExpr.setown(foldConstantOperator(elseExpr, 0, NULL));
+            elseExpr.setown(foldConstantOperator(elseExpr, 0));
     }
     return elseExpr.getClear();
 }
@@ -12118,7 +12180,7 @@ IHqlExpression * HqlTreeNormalizer::transformMap(IHqlExpression * expr)
         IHqlExpression * cur = expr->queryChild(idx);
         elseExpr.setown(createIf(transform(cur->queryChild(0)), transform(cur->queryChild(1)), elseExpr.getClear()));
         if (options.constantFoldNormalize)
-            elseExpr.setown(foldConstantOperator(elseExpr, 0, NULL));
+            elseExpr.setown(foldConstantOperator(elseExpr, 0));
     }
     return elseExpr.getClear();
 }
@@ -12309,7 +12371,7 @@ IHqlExpression * HqlTreeNormalizer::transformTable(IHqlExpression * untransforme
     if (getStringValue(s, filename, NULL).length() == 0)
         return transformed.getClear();
 
-    OwnedHqlExpr modeThor = createValue(no_thor);
+    OwnedHqlExpr modeThor = createValue(no_thor, makeNullType());
     IHqlExpression * diskRead = replaceChild(transformed, 2, modeThor);
     HqlExprArray args;
     args.append(*diskRead);
@@ -12448,7 +12510,6 @@ IHqlExpression * HqlTreeNormalizer::transformTransform(IHqlExpression * expr)
 
 IHqlExpression * HqlTreeNormalizer::transformIfAssert(node_operator newOp, IHqlExpression * expr)
 {
-    unsigned max = expr->numChildren();
     HqlExprArray children;
     bool same = transformChildren(expr, children);
     if ((expr->hasAttribute(assertAtom) || (options.assertSortedDistributed && (newOp != no_assertgrouped))) && !options.removeAsserts)
@@ -12847,7 +12908,7 @@ IHqlExpression * HqlTreeNormalizer::createTransformed(IHqlExpression * expr)
         break;
     }
     OwnedHqlExpr transformed = createTransformedBody(expr);
-    return foldConstantOperator(transformed, 0, NULL);
+    return foldConstantOperator(transformed, 0);
 }
 
 IHqlExpression * HqlTreeNormalizer::createTransformedBody(IHqlExpression * expr)
@@ -13290,7 +13351,7 @@ IHqlExpression * HqlTreeNormalizer::createTransformedBody(IHqlExpression * expr)
         {
             IHqlExpression * child = expr->queryChild(0);
             OwnedHqlExpr ret = transform(child);
-            OwnedHqlExpr folded  = foldHqlExpression(translator.queryErrorProcessor(), ret, NULL, HFOforcefold);
+            OwnedHqlExpr folded  = foldHqlExpression(translator.queryErrorProcessor(), ret, HFOforcefold);
             if (!folded->isConstant())
             {
                 StringBuffer s;
@@ -13508,7 +13569,7 @@ IHqlExpression * HqlTreeNormalizer::createTransformedBody(IHqlExpression * expr)
         if (options.outputRowsAsDatasets && expr->queryChild(0)->isDatarow())
         {
             HqlExprArray args;
-            bool same = transformChildren(expr, args);
+            transformChildren(expr, args);
             args.replace(*createDatasetFromRow(LINK(&args.item(0))), 0);
             return createValue(no_output, makeVoidType(), args);
         }
@@ -13685,7 +13746,7 @@ void normalizeHqlTree(HqlCppTranslator & translator, HqlExprArray & exprs)
     if (translator.queryOptions().constantFoldPostNormalize)
     {
         HqlExprArray transformed;
-        quickFoldExpressions(transformed, exprs, NULL, 0);
+        quickFoldExpressions(transformed, exprs, 0);
         replaceArray(exprs, transformed);
     }
 
@@ -13818,8 +13879,6 @@ void hoistNestedCompound(HqlCppTranslator & translator, WorkflowArray & workflow
 
 //---------------------------------------------------------------------------
 
-static IHqlExpression * substituteClusterSize(unsigned numNodes, IHqlExpression * expr, ICodegenContextCallback * ctxCallback, IWorkUnit * wu);
-
 static HqlTransformerInfo clusterSubstitueTransformerInfo("ClusterSubstitueTransformer");
 class ClusterSubstitueTransformer : public NewHqlTransformer
 {
@@ -13900,12 +13959,6 @@ protected:
     IWorkUnit * wu;
     OwnedHqlExpr clusterSizeValue;
 };
-
-IHqlExpression * substituteClusterSize(unsigned numNodes, IHqlExpression * expr, ICodegenContextCallback * ctxCallback, IWorkUnit * wu)
-{
-    ClusterSubstitueTransformer transformer(numNodes, ctxCallback, wu);
-    return transformer.transformRoot(expr);
-}
 
 void HqlCppTranslator::checkWorkflowDuplication(HqlExprArray & exprs)
 {

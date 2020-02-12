@@ -1087,17 +1087,15 @@ void FileSprayer::calculateMany2OnePartition()
     const char *partSeparator = srcFormat.getPartSeparatorString();
     offset_t partSeparatorLength = ( partSeparator == nullptr ? 0 : strlen(partSeparator));
     offset_t lastContentLength = 0;
-    offset_t contentLength = 0;
     ForEachItemIn(idx, sources)
     {
         FilePartInfo & cur = sources.item(idx);
         RemoteFilename curFilename;
         curFilename.set(cur.filename);
         setCanAccessDirectly(curFilename);
-        if (partSeparator)
+        if (cur.size)
         {
-            contentLength = (cur.size > cur.xmlHeaderLength + cur.xmlFooterLength  + partSeparatorLength ? cur.size - cur.xmlHeaderLength - cur.xmlFooterLength - partSeparatorLength : 0);
-            if (contentLength)
+            if (partSeparator)
             {
                 if (lastContentLength)
                 {
@@ -1105,14 +1103,10 @@ void FileSprayer::calculateMany2OnePartition()
                     part.whichOutput = 0;
                     partition.append(part);
                 }
-                lastContentLength = contentLength;
+                lastContentLength = cur.size;
             }
-        }
-        else
-            contentLength = (cur.size > cur.headerSize ? cur.size - cur.headerSize : 0);
-
-        if (contentLength)
             partition.append(*new PartitionPoint(idx, 0, cur.headerSize, cur.size, cur.size));
+        }
     }
 
     if (srcFormat.isCsv())
@@ -1616,7 +1610,11 @@ void FileSprayer::analyseFileHeaders(bool setcurheadersize)
                 }
                 cur.headerSize += (unsigned)cur.xmlHeaderLength;
                 if (cur.size >= cur.xmlHeaderLength + cur.xmlFooterLength)
+                {
                     cur.size -= (cur.xmlHeaderLength + cur.xmlFooterLength);
+                    if (cur.size <= srcFormat.rowTag.length()) // implies there's a header and footer but no rows (whitespace only)
+                        cur.size = 0;
+                }
                 else
                     throwError3(DFTERR_InvalidXmlPartSize, cur.size, cur.xmlHeaderLength, cur.xmlFooterLength);
             }
@@ -1759,7 +1757,21 @@ void FileSprayer::derivePartitionExtra()
 void FileSprayer::displayPartition()
 {
     ForEachItemIn(idx, partition)
+    {
         partition.item(idx).display();
+
+#ifdef _DEBUG
+        if ((partition.item(idx).whichInput >= 0) && (partition.item(idx).whichInput < sources.ordinality()) )
+            LOG(MCdebugInfoDetail, unknownJob,
+                     "   Header size: %" I64F "u, XML header size: %" I64F "u, XML footer size: %" I64F "u",
+                     sources.item(partition.item(idx).whichInput).headerSize,
+                     sources.item(partition.item(idx).whichInput).xmlHeaderLength,
+                     sources.item(partition.item(idx).whichInput).xmlFooterLength
+            );
+        else
+            LOG(MCdebugInfoDetail, unknownJob,"   No source file for this partition");
+#endif
+    }
 }
 
 
@@ -3003,27 +3015,19 @@ void FileSprayer::spray()
 bool FileSprayer::isSameSizeHeaderFooter()
 {
     bool retVal = true;
-    unsigned whichHeaderInput = 0;
-    bool isEmpty = true;
-    headerSize = 0;
-    footerSize = 0;
 
     if (sources.ordinality() == 0)
         return retVal;
+
+    unsigned whichHeaderInput = 0;
+    headerSize = sources.item(whichHeaderInput).xmlHeaderLength;
+    footerSize = sources.item(whichHeaderInput).xmlFooterLength;
 
     ForEachItemIn(idx, partition)
     {
         PartitionPoint & cur = partition.item(idx);
         if (cur.inputLength && (idx+1 == partition.ordinality() || partition.item(idx+1).whichOutput != cur.whichOutput))
         {
-            if (isEmpty)
-            {
-                headerSize = sources.item(whichHeaderInput).xmlHeaderLength;
-                footerSize = sources.item(cur.whichInput).xmlFooterLength;
-                isEmpty = false;
-                continue;
-            }
-
             if (headerSize != sources.item(whichHeaderInput).xmlHeaderLength)
             {
                 retVal = false;
@@ -3039,7 +3043,6 @@ bool FileSprayer::isSameSizeHeaderFooter()
             if ( idx+1 != partition.ordinality() )
                 whichHeaderInput = partition.item(idx+1).whichInput;
         }
-
     }
     return retVal;
 }
@@ -3151,21 +3154,24 @@ void FileSprayer::updateTargetProperties()
 
                     curProps.setProp("@modified", temp.getString(timestr).str());
                 }
-                if (replicate && (distributedSource != distributedTarget) )
+                if ((distributedSource != distributedTarget) && (cur.whichInput != (unsigned)-1))
                 {
-                    assertex(cur.whichInput != (unsigned)-1);
                     FilePartInfo & curSource = sources.item(cur.whichInput);
                     if (curSource.properties)
                     {
                         Owned<IAttributeIterator> aiter = curSource.properties->getAttributes();
-                        //At the moment only clone the topLevelKey indicator (stored in kind), but make it easy to add others.
-                        ForEach(*aiter) {
+                        ForEach(*aiter)
+                        {
                             const char *aname = aiter->queryName();
-                            if (strieq(aname,"@kind")
-                                ) {
-                                if (!curProps.hasProp(aname))
-                                    curProps.setProp(aname,aiter->queryValue());
-                            }
+                            if ( !( strieq(aname,"@fileCrc") ||
+                                    strieq(aname,"@modified") ||
+                                    strieq(aname,"@node") ||
+                                    strieq(aname,"@num")  ||
+                                    strieq(aname,"@size") ||
+                                    strieq(aname,"@name") ) ||
+                                    ( strieq(aname,"@recordCount") && (sources.ordinality() == targets.ordinality()) )
+                               )
+                                curProps.setProp(aname,aiter->queryValue());
                         }
                     }
                 }

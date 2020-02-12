@@ -3,34 +3,19 @@ define([
     "dojo/_base/lang",
     "dojo/i18n",
     "dojo/i18n!./nls/hpcc",
-    "dojo/_base/array",
-    "dojo/dom",
-    "dojo/dom-class",
-    "dojo/dom-form",
-    "dojo/date",
-    "dojo/on",
-    "dojo/topic",
 
     "dijit/registry",
-    "dijit/Menu",
-    "dijit/MenuItem",
-    "dijit/MenuSeparator",
-    "dijit/PopupMenuItem",
-
-    "dgrid/selector",
 
     "hpcc/_TabContainerWidget",
     "src/ESPBase",
     "src/ESPUtil",
-    "src/ESPWorkunit",
-    "hpcc/DelayLoadWidget",
-    "hpcc/TargetSelectWidget",
-    "hpcc/FilterDropDownWidget",
-    "hpcc/ECLSourceWidget",
     "src/WsTopology",
 
     "dojo/text!../templates/LogWidget.html",
 
+    "hpcc/TargetSelectWidget",
+    "hpcc/FilterDropDownWidget",
+    "hpcc/ECLSourceWidget",
     "dijit/layout/BorderContainer",
     "dijit/layout/TabContainer",
     "dijit/layout/ContentPane",
@@ -46,11 +31,10 @@ define([
     "dijit/ToolbarSeparator",
     "dijit/TooltipDialog"
 
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, dom, domClass, domForm, date, on, topic,
-                registry, Menu, MenuItem, MenuSeparator, PopupMenuItem,
-                selector,
-                _TabContainerWidget, ESPBase, ESPUtil, ESPWorkunit, DelayLoadWidget, TargetSelectWidget, FilterDropDownWidget, ECLSourceWidget, WsTopology,
-                template) {
+], function (declare, lang, i18n, nlsHPCC,
+    registry,
+    _TabContainerWidget, ESPBaseMod, ESPUtil, WsTopology,
+    template) {
     return declare("LogWidget", [_TabContainerWidget, ESPUtil.FormHelper], {
         templateString: template,
         baseClass: "LogWidget",
@@ -100,7 +84,7 @@ define([
         },
 
         _doDownload: function (zip) {
-            var base = new ESPBase.default();
+            var base = new ESPBaseMod.ESPBase();
             var name = "//" + this.params.getNetaddress() + this.params.getLogDirectory() + "/" + this.logTargetSelect.get("value");
             var type = "tpcomp_log";
             window.open(base.getBaseURL("WsTopology") + "/SystemLog?Name=" + name + "&Type=" + type + "&Zip=" + zip, "_blank");
@@ -197,8 +181,8 @@ define([
                     store: store,
                     query: this.getFilter(),
                     columns: {
-                        MsgID: {width: 80 },
-                        Audience: { label: this.i18n.Audience, width: 60},
+                        MsgID: { width: 80 },
+                        Audience: { label: this.i18n.Audience, width: 60 },
                         Date: { label: this.i18n.Date, width: 100 },
                         Timemilli: { label: this.i18n.Time, width: 100 },
                         PID: { label: "PID", width: 60 },
@@ -231,7 +215,7 @@ define([
         refreshGrid: function (clearSelection) {
             this.rawText.setText(this.i18n.loadingMessage);
             var filter = lang.mixin(this.getFilter(), {
-                Name: this.params.getNetaddress ? "//" + this.params.getNetaddress()+this.params.getLogDirectory() + "/" + this.logTargetSelect.get("value") : "//" + this.params.params.Netaddress + this.params.LogDirectory + "/" + this.logTargetSelect.get("value"),
+                Name: this.params.getNetaddress ? "//" + this.params.getNetaddress() + this.params.getLogDirectory() + "/" + this.logTargetSelect.get("value") : "//" + this.params.params.Netaddress + this.params.LogDirectory + "/" + this.logTargetSelect.get("value"),
                 Type: "tpcomp_log",
                 LoadData: 1
             });

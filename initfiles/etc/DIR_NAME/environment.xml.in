@@ -265,6 +265,7 @@
               maxBacklogQueueSize="200"
               maxConcurrentThreads="0"
               maxRequestEntityLength="8000000"
+              minCompressLength="1000"
               name="myesp"
               perfReportDelay="60"
               portalurl="${PORTALURL}">
@@ -623,6 +624,7 @@
              port="8877"/>
   </SashaServerProcess>
   <EspService ActivityInfoCacheSeconds="10"
+              ActivityInfoCacheAutoRebuildSeconds="120"
               allowNewRoxieOnDemandQuery="false"
               AWUsCacheTimeout="15"
               build="_"

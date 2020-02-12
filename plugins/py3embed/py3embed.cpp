@@ -268,20 +268,15 @@ private:
 };
 
 static __thread PythonThreadContext* threadContext;  // We reuse per thread, for speed
-static __thread ThreadTermFunc threadHookChain;
 
-static void releaseContext()
+static bool releaseContext(bool isPooled)
 {
     if (threadContext)
     {
         delete threadContext;
         threadContext = NULL;
     }
-    if (threadHookChain)
-    {
-        (*threadHookChain)();
-        threadHookChain = NULL;
-    }
+    return false;
 }
 
 // Use a global object to ensure that the Python interpreter is initialized on main thread
@@ -613,7 +608,7 @@ static void checkThreadContext()
         if (!globalState.isInitialized())
             rtlFail(0, "Python not initialized");
         threadContext = new PythonThreadContext;
-        threadHookChain = addThreadTermFunc(releaseContext);
+        addThreadTermFunc(releaseContext);
     }
 }
 
@@ -1844,6 +1839,7 @@ public:
         throwUnexpected();
     }
     virtual void enter() override {}
+    virtual void reenter(ICodeContext *codeCtx) override {}
     virtual void exit() override {}
     virtual void setActivityOptions(const IThorActivityContext *ctx) override
     {
@@ -1918,6 +1914,7 @@ public:
         throwUnexpected();
     }
     virtual void enter() override {}
+    virtual void reenter(ICodeContext *codeCtx) override {}
     virtual void exit() override {}
     virtual void callFunction()
     {

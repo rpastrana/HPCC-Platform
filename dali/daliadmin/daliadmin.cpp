@@ -1180,7 +1180,7 @@ static void listprotect(const char *filename, const char *callerid)
     Owned<IDFProtectedIterator> piter = queryDistributedFileDirectory().lookupProtectedFiles((strcmp(callerid,"*")==0)?NULL:callerid); 
     ForEach(*piter) {
         if (WildMatch(piter->queryFilename(),filename))
-            OUTLOG("%s,%s,%s,%u",piter->isSuper()?"SuperFile":"File",piter->queryFilename(),piter->queryOwner(),piter->getCount());
+            OUTLOG("%s,%s,%s", piter->isSuper()?"SuperFile":"File", piter->queryFilename(), piter->queryOwner());
     }
 }
 
@@ -2709,7 +2709,7 @@ public:
 
         xml.appendf("<attr source='%s' message='%s' timestamp='%s' exceptionCode='%u' severity='%u' scope='%s' cost='%u'",
                     source.str(), message.str(), timestamp.str(),
-                    exception.getExceptionCode(), exception.getSeverity(), exception.queryScope(), exception.getPriority());
+                    exception.getExceptionCode(), exception.getSeverity(), nullText(exception.queryScope()), exception.getPriority());
         xml.append("/>");
         printf(" %s\n", xml.str());
     }

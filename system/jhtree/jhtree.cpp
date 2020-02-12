@@ -460,7 +460,7 @@ public:
             buf.setLength(0);
             MemoryBufferBuilder aBuilder(buf, 0);
             layoutSize = layoutTrans->translate(aBuilder, unexpectedFieldCallback, reinterpret_cast<byte const *>(keyCursor->queryKeyBuffer()));
-            return reinterpret_cast<byte const *>(buf.toByteArray());
+            return aBuilder.getSelf();
         }
         else
             return reinterpret_cast<byte const *>(keyCursor->queryKeyBuffer());
@@ -977,26 +977,26 @@ void CKeyIndex::init(KeyHdr &hdr, bool isTLK, bool allowPreload)
     try
     {
         keyHdr->load(hdr);
+        offset_t rootPos = keyHdr->getRootFPos();
+        Linked<CNodeCache> nodeCache = queryNodeCache();
+        if (allowPreload)
+        {
+            if (nodeCache->getNodeCachePreload() && !nodeCache->isPreloaded(iD, rootPos))
+            {
+                cacheNodes(nodeCache, rootPos, isTLK);
+            }
+        }
+        rootNode = nodeCache->getNode(this, iD, rootPos, NULL, isTLK);
+        loadBloomFilters();
     }
     catch (IKeyException *ke)
     {
         if (!name.get()) throw;
         StringBuffer msg;
-        IKeyException *ke2 = MakeKeyException(ke->errorCode(), "%s. In key '%s'.", ke->errorMessage(msg).str(), name.get());
+        IKeyException *ke2 = MakeKeyException(ke->errorCode(), "%s. In key '%s' (corrupt index?)", ke->errorMessage(msg).str(), name.get());
         ke->Release();
         throw ke2;
     }
-    offset_t rootPos = keyHdr->getRootFPos();
-    Linked<CNodeCache> nodeCache = queryNodeCache();
-    if (allowPreload)
-    {
-        if (nodeCache->getNodeCachePreload() && !nodeCache->isPreloaded(iD, rootPos))
-        {
-            cacheNodes(nodeCache, rootPos, isTLK);
-        }
-    }
-    rootNode = nodeCache->getNode(this, iD, rootPos, NULL, isTLK);
-    loadBloomFilters();
 }
 
 CKeyIndex::~CKeyIndex()
