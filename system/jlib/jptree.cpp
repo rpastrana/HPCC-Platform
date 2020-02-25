@@ -7688,6 +7688,9 @@ void mergeConfiguration(IPropertyTree & target, IPropertyTree & source)
         IPropertyTree & child = iter->query();
         const char * tag = child.queryName();
         const char * name = child.queryProp("@name");
+        //Legacy support for old roxie configuration files that have repeated elements with no name tag
+        if (!name)
+            name = child.queryProp("@netAddress");
         const char * path = tag;
         if (name)
         {
@@ -7857,16 +7860,15 @@ static void applyCommandLineOption(IPropertyTree * config, const char * option)
     }
 }
 
-static void displayConfig(IPropertyTree * config, const char * componentTag)
+jlib_decl StringBuffer & regenerateConfig(StringBuffer &jsonText, IPropertyTree * config, const char * componentTag)
 {
     Owned<IPropertyTree> recreated = createPTree();
     Owned<IPropertyTree> json = mapXmlConfigToJson(config);
     recreated->setProp("version", currentVersion);
     recreated->addPropTree(componentTag, json.getClear());
 
-    StringBuffer jsonText;
     toJSON(recreated, jsonText, 0, JSON_SortTags|JSON_Format);
-    printf("%s\n", jsonText.str());
+    return jsonText;
 }
 
 jlib_decl IPropertyTree * loadConfiguration(const char * defaultYaml, const char * * argv, const char * componentTag, const char * envPrefix, const char * legacyFilename, IPropertyTree * (mapper)(IPropertyTree *))
@@ -7899,9 +7901,19 @@ jlib_decl IPropertyTree * loadConfiguration(const char * defaultYaml, const char
         }
         else if (strsame(cur, "--init"))
         {
-            displayConfig(config, componentTag);
+            StringBuffer jsonText;
+            regenerateConfig(jsonText, config, componentTag);
+            printf("%s\n", jsonText.str());
             exit(0);
         }
+#ifdef _DEBUG
+        else if (strsame(cur, "--hold"))
+        {
+            bool held = true;
+            while (held)
+                Sleep(5);
+        }
+#endif
         else if (strsame(cur, "--outputconfig"))
         {
             outputConfig = true;
@@ -7952,7 +7964,9 @@ jlib_decl IPropertyTree * loadConfiguration(const char * defaultYaml, const char
 
     if (outputConfig)
     {
-        displayConfig(config, componentTag);
+        StringBuffer jsonText;
+        regenerateConfig(jsonText, config, componentTag);
+        printf("%s\n", jsonText.str());
         exit(0);
     }
 

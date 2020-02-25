@@ -1,14 +1,27 @@
 #!/bin/bash
 
+##############################################################################
+#
+#    HPCC SYSTEMS software Copyright (C) 2020 HPCC Systems®.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+##############################################################################
+
+# Utility script for starting a local cluster corresponding to current git branch
+
 HEAD=$(git rev-parse --short HEAD)
 
-kubectl run dali --image=hpccsystems/dali:${HEAD} --image-pull-policy=Never
-kubectl expose deployment dali --port=7070
-kubectl run esp --image=hpccsystems/esp:${HEAD} --image-pull-policy=Never
-kubectl expose deployment esp --port=8010 --type=LoadBalancer
-kubectl run roxie --image=hpccsystems/roxie:${HEAD} --image-pull-policy=Never
-kubectl run eclcc --image=hpccsystems/eclccserver:${HEAD} --image-pull-policy=Never
-kubectl run eclagent --image=hpccsystems/eclagent:${HEAD} --image-pull-policy=Never
-
-#kubectl logs mydali-759f975769-v6tmm
+helm install mycluster hpcc/ --set global.image.version=$HEAD-Debug
+sleep 1
+kubectl get pods
 

@@ -22,13 +22,14 @@
 #include "jfile.hpp"
 #include "agentexec.hpp"
 #include "jutil.hpp"
+#include "eclagent.hpp"
 
 Owned<CEclAgentExecutionServer> execSvr = NULL;
 
 
 //---------------------------------------------------------------------------------
 
-CEclAgentExecutionServer::CEclAgentExecutionServer() : Thread("Workunit Execution Server")
+CEclAgentExecutionServer::CEclAgentExecutionServer(IPropertyTree *_config) : Thread("Workunit Execution Server"), config(_config)
 {
     started = false;
 }
@@ -50,21 +51,9 @@ void CEclAgentExecutionServer::start()
         assert(false);
     }
 
-    Owned<IPropertyTree> properties;
-    try
-    {
-        DBGLOG("AgentExec: Loading properties file 'agentexec.xml'");
-        properties.setown(createPTreeFromXMLFile("agentexec.xml"));
-    }
-    catch (IException *e) 
-    {
-        EXCLOG(e, "Error processing properties file\n");
-        throwUnexpected();
-    }
-
     {
         //Build logfile from component properties settings
-        Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(properties, "eclagent");
+        Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(config, "eclagent");
         lf->setCreateAliasFile(false);
         lf->beginLogging();
         PROGLOG("Logging to %s",lf->queryLogFileSpec());
@@ -72,20 +61,20 @@ void CEclAgentExecutionServer::start()
 
     //get name of workunit job queue
     StringBuffer sb;
-    properties->getProp("@name", sb.clear());
+    config->getProp("@name", sb.clear());
     agentName.set(sb);
     if (!agentName.length())
     {
-        OERRLOG("'name' not specified in properties file\n");
+        OERRLOG("'name' not specified in config file\n");
         throwUnexpected();
     }
     setStatisticsComponentName(SCThthor, agentName, true);
 
     //get dali server(s)
-    properties->getProp("@daliServers", daliServers);
+    config->getProp("@daliServers", daliServers);
     if (!daliServers.length())
     {
-        OERRLOG("'daliServers' not specified in properties file\n");
+        OERRLOG("'daliServers' not specified in config file\n");
         throwUnexpected();
     }
 
@@ -207,7 +196,7 @@ int CEclAgentExecutionServer::executeWorkunit(const char * wuid)
 #endif
 
     StringBuffer cmdLine(command);
-    cmdLine.append(" WUID=").append(wuid).append(" DALISERVERS=").append(daliServers);
+    cmdLine.append(" --wuid=").append(wuid).append(" --daliServers=").append(daliServers);
 
     DWORD runcode;
     PROGLOG("AgentExec: Executing '%s'", cmdLine.str());
@@ -253,7 +242,7 @@ bool ControlHandler()
 
 //---------------------------------------------------------------------------------
 
-int main(int argc, char **argv) 
+int main(int argc, const char *argv[]) 
 { 
     for (unsigned i=0;i<(unsigned)argc;i++) {
         if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
@@ -268,9 +257,20 @@ int main(int argc, char **argv)
 
     addAbortHandler(ControlHandler);
 
+    Owned<IPropertyTree> config;
     try
-    { 
-        execSvr.setown(new CEclAgentExecutionServer());
+    {
+        config.setown(loadConfiguration(eclagentDefaultJson, argv, "EclAgent", "ECLAGENT", "agentexec.xml", nullptr));
+    }
+    catch (IException *e) 
+    {
+        EXCLOG(e, "Error processing config file\n");
+        return 1;
+    }
+
+    try
+    {
+        execSvr.setown(new CEclAgentExecutionServer(config));
         execSvr->start();
     } 
     catch (...)

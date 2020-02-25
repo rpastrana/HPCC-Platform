@@ -1,19 +1,28 @@
+{{ range $.Values.eclagent -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: eclagent
+  name: {{ .name | quote }}
 spec:
-  replicas: {{ .Values.hpcc.eclagent.replicas }}
+  replicas: {{ .replicas | default 1 }}
   selector:
     matchLabels:
-      run: eclagent
+      run: {{ .name | quote }}
   template:
     metadata:
       labels:
-        run: eclagent
+        run: {{ .name | quote }}
     spec:
       containers:
-      - name: eclagent
-        image: "hpccsystems/eclagent:{{ .Values.hpcc.version }}"
-        imagePullPolicy: {{ .Values.hpcc.pullPolicy }}
-
+      - name: {{ .name | quote }}
+        args: [ 
+                {{ include "hpcc.utils.configArg" . }},
+                {{ include "hpcc.utils.daliArg" $ }}
+              ]
+{{ include "hpcc.utils.addImageAttrs" (dict "root" $ "imagename" "eclagent") | indent 8 }}
+{{ include "hpcc.utils.addVolumeMounts" . | indent 8 }}
+{{ include "hpcc.utils.addVolumes" . | indent 6 }}
+---
+{{- include "hpcc.utils.generateConfigMap" (dict "root" $ "me" .) -}}
+---
+{{- end }}

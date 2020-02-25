@@ -5313,7 +5313,7 @@ void CWorkUnitFactory::reportAbnormalTermination(const char *wuid, WUState &stat
     wu->setState(state);
     Owned<IWUException> e = wu->createException();
     e->setExceptionCode(isEcl ? 1001 : 1000);
-    e->setExceptionMessage(isEcl ? "EclServer terminated unexpectedly" : "Workunit terminated unexpectedly");
+    e->setExceptionMessage(isEcl ? "EclCC terminated unexpectedly" : "Workunit terminated unexpectedly");
 }
 
 static CriticalSection deleteDllLock;
@@ -7380,8 +7380,6 @@ public:
                         primaryThorProcesses.append(thorName);
                 }
                 unsigned nodes = thor.getCount("ThorSlaveProcess");
-                if (!nodes)
-                    throw MakeStringException(WUERR_MismatchClusterSize,"CEnvironmentClusterInfo: Thor cluster can not have 0 slave processes");
                 unsigned slavesPerNode = thor.getPropInt("@slavesPerNode", 1);
                 unsigned channelsPerSlave = thor.getPropInt("@channelsPerSlave", 1);
                 unsigned ts = nodes * slavesPerNode * channelsPerSlave;
@@ -7389,9 +7387,6 @@ public:
                 if (clusterWidth && (ts!=clusterWidth)) 
                     throw MakeStringException(WUERR_MismatchClusterSize,"CEnvironmentClusterInfo: mismatched thor sizes in cluster");
                 clusterWidth = ts;
-                bool islcr = !thor.getPropBool("@Legacy");
-                if (!islcr)
-                    throw MakeStringException(WUERR_MismatchThorType,"CEnvironmentClusterInfo: Legacy Thor no longer supported");
             }
             platform = ThorLCRCluster;
         }
@@ -7763,7 +7758,7 @@ IConstWUClusterInfo* getTargetClusterInfo(IPropertyTree *environment, IPropertyT
 {
     const char *clustname = cluster->queryProp("@name");
 
-    // MORE - at the moment configenf specifies eclagent and thor queues by (in effect) placing an 'example' thor or eclagent in the topology 
+    // MORE - at the moment configenv specifies eclagent and thor queues by (in effect) placing an 'example' thor or eclagent in the topology
     // that uses the queue that will be used.
     // We should and I hope will change that, at which point the code below gets simpler
 
@@ -7788,7 +7783,8 @@ IConstWUClusterInfo* getTargetClusterInfo(IPropertyTree *environment, IPropertyT
         if (thorName) 
         {
             xpath.clear().appendf("Software/ThorCluster[@name=\"%s\"]", thorName);
-            thors.append(*environment->getPropTree(xpath.str()));
+            if (environment->hasProp(xpath.str()))
+                thors.append(*environment->getPropTree(xpath.str()));
         }
     }
     const char *roxieName = cluster->queryProp("RoxieCluster/@process");
@@ -13526,12 +13522,30 @@ IPropertyTree * resolveDefinitionInArchive(IPropertyTree * archive, const char *
 
 extern WORKUNIT_API void associateLocalFile(IWUQuery * query, WUFileType type, const char * name, const char * description, unsigned crc, unsigned minActivity, unsigned maxActivity)
 {
-    StringBuffer hostname;
-    queryHostIP().getIpText(hostname);
-
-    StringBuffer fullPathname;
-    makeAbsolutePath(name, fullPathname);
-    query->addAssociatedFile(type, fullPathname, hostname, description, crc, minActivity, maxActivity);
+    StringBuffer fullPathName;
+    makeAbsolutePath(name, fullPathName);
+    if (isCloud())
+    {
+        const char *dllserver_root = getenv("HPCC_DLLSERVER_PATH");
+        assertex(dllserver_root != nullptr);
+        StringBuffer destPathName(dllserver_root);
+        addNonEmptyPathSepChar(destPathName);
+        splitFilename(fullPathName.str(), nullptr, nullptr, &destPathName, &destPathName);
+        OwnedIFile source = createIFile(fullPathName);
+        OwnedIFile target = createIFile(destPathName);
+        if (!target->exists())
+        {
+            source->copyTo(target, 0, NULL, true);
+        }
+        query->addAssociatedFile(type, destPathName, "localhost", description, crc, minActivity, maxActivity);
+        // Should we delete the local files? May not matter...
+    }
+    else
+    {
+        StringBuffer hostname;
+        queryHostIP().getIpText(hostname);
+        query->addAssociatedFile(type, fullPathName, hostname, description, crc, minActivity, maxActivity);
+    }
 }
 
 extern WORKUNIT_API void descheduleWorkunit(char const * wuid)
