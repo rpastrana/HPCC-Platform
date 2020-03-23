@@ -14,17 +14,41 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 ############################################################################## */
-#ifndef ECLAGENT_HPP
-#define ECLAGENT_HPP
 
-static constexpr const char * eclagentDefaultYaml = R"!!(
-version: "1.0"
-eclagent:
-    analyzeWorkunit: true
-    defaultMemoryLimitMB: 300
-    name: myeclagent
-    thorConnectTimeout: 600
-    traceLevel: 0
-)!!";
+#onwarning(4523, ignore);
 
-#endif
+import Std.File AS FileServices;
+import $.setup;
+prefix := setup.Files(false, false).QueryFilePrefix;
+
+num := 10;
+pnum := 3;
+
+payloadRec := RECORD
+ UNSIGNED8 p1;
+END;
+rec := RECORD
+ UNSIGNED4 id;
+ DATASET(payloadRec) pl;
+END;
+
+d := DATASET(num, TRANSFORM(rec, SELF.id := COUNTER; SELF.pl := DATASET(pnum, TRANSFORM(payloadRec, SELF.p1 := -COUNTER))));
+
+i := INDEX(d, {id}, {d}, prefix + 'idx');
+
+payloadRec2 := RECORD
+ STRING p1;
+END;
+rec2 := RECORD
+ UNSIGNED4 id;
+ DATASET(payloadRec2) pl;
+END;
+
+d2 := DATASET([], rec2);
+i2 := INDEX(d2, {id}, {d2}, prefix + 'idx');
+
+SEQUENTIAL(
+ OUTPUT(d, , prefix + 'ds', OVERWRITE);
+ BUILDINDEX(i, OVERWRITE);
+ OUTPUT(i2);
+);

@@ -21,7 +21,8 @@
 #include "jlog.hpp"
 #include "jfile.hpp"
 #include "jutil.hpp"
-#include "eclagent.hpp"
+#include "daqueue.hpp"
+#include "workunit.hpp"
 #include "environment.hpp"
 
 class CEclAgentExecutionServer : public CInterfaceOf<IThreadFactory>
@@ -37,6 +38,7 @@ private:
 
     const char *agentName;
     const char *daliServers;
+    const char *apptype;
     Owned<IJobQueue> queue;
     Linked<IPropertyTree> config;
 #ifdef _CONTAINERIZED
@@ -60,6 +62,10 @@ CEclAgentExecutionServer::CEclAgentExecutionServer(IPropertyTree *_config) : con
 
     daliServers = config->queryProp("@daliServers");
     assertex(daliServers);
+
+    apptype = config->queryProp("@type");
+    if (!apptype)
+        apptype = "hthor";
 #ifdef _CONTAINERIZED
     unsigned poolSize = config->getPropInt("@maxActive", 100);
     pool.setown(createThreadPool("agentPool", this, NULL, poolSize, INFINITE));
@@ -81,7 +87,11 @@ CEclAgentExecutionServer::~CEclAgentExecutionServer()
 
 int CEclAgentExecutionServer::run()
 {
+#ifdef _CONTAINERIZED
+    StringBuffer queueNames;
+#else
     SCMStringBuffer queueNames;
+#endif
     Owned<IFile> sentinelFile = createSentinelTarget();
     removeSentinelFile(sentinelFile);
     try
@@ -89,11 +99,10 @@ int CEclAgentExecutionServer::run()
         Owned<IGroup> serverGroup = createIGroup(daliServers, DALI_SERVER_PORT);
         initClientProcess(serverGroup, DCR_AgentExec);
 #ifdef _CONTAINERIZED
-        config->getProp("@queueNames", queueNames.s);
-        
-        // temporary
-        if (0 == queueNames.length())
-            getAgentQueueNames(queueNames, agentName);
+        if (streq("thor", apptype))
+            getClusterThorQueueName(queueNames, agentName);
+        else
+            getClusterEclAgentQueueName(queueNames, agentName);
 #else
         getAgentQueueNames(queueNames, agentName);
 #endif
@@ -143,6 +152,7 @@ int CEclAgentExecutionServer::run()
                 catch(IException *e)
                 {
                     EXCLOG(e, "CEclAgentExecutionServer::run: ");
+                    e->Release();
                 }
                 catch(...)
                 {
@@ -183,7 +193,7 @@ int CEclAgentExecutionServer::run()
 class WaitThread : public CInterfaceOf<IPooledThread>
 {
 public:
-    WaitThread(const char *_dali) : dali(_dali)
+    WaitThread(const char *_dali, const char *_apptype, const char *_queue) : dali(_dali), apptype(_apptype), queue(_queue)
     {
     }
     virtual void init(void *param) override
@@ -200,29 +210,72 @@ public:
     }
     virtual void threadmain() override
     {
+        Owned<IException> exception;
         try
         {
+            StringAttr jobSpecName(apptype);
+            StringAttr processName(apptype);
+
+            /* NB: In the case of handling apptype='thor', the queued items is of the form <wuid>/<graphName>
+             */
+            StringAttr graphName;
+            bool isThorJob = streq("thor", apptype);
+            if (isThorJob)
+            {
+                StringArray sArray;
+                sArray.appendList(wuid.get(), "/");
+                assertex(2 == sArray.ordinality());
+                wuid.set(sArray.item(0));
+                graphName.set(sArray.item(1));
+
+                // JCSMORE - idealy apptype, image and executable name would all be same.
+                jobSpecName.set("thormaster");
+                processName.set("thormaster_lcr");
+            }
             if (queryComponentConfig().getPropBool("@containerPerAgent", false))  // MORE - make this a per-workunit setting?
             {
-                runK8sJob("eclagent", wuid, wuid);
+                std::list<std::pair<std::string, std::string>> params = { };
+                if (queryComponentConfig().getPropBool("@useThorQueue", true))
+                    params.push_back({ "queue", queue.get() });
+                StringBuffer jobName(wuid);
+                if (isThorJob)
+                {
+                    params.push_back({ "graphName", graphName.get() });
+                    jobName.append('-').append(graphName);
+                }
+                runK8sJob(jobSpecName, wuid, jobName, queryComponentConfig().getPropBool("@deleteJobs", true), params);
             }
             else
             {
-                VStringBuffer exec("eclagent --workunit=%s --daliServers=%s", wuid.str(), dali.str());
+                VStringBuffer exec("%s --workunit=%s --daliServers=%s", processName.get(), wuid.str(), dali.str());
+                if (queryComponentConfig().hasProp("@config"))
+                {
+                    exec.append(" --config=");
+                    queryComponentConfig().getProp("@config", exec);
+                }
+                if (queryComponentConfig().getPropBool("@useThorQueue", true))
+                    exec.append(" --queue=").append(queue);
+                if (isThorJob)
+                    exec.appendf(" --graphName=%s", graphName.get());
                 Owned<IPipeProcess> pipe = createPipeProcess();
-                if (!pipe->run("eclagent", exec.str(), ".", false, true, false, 0, false))
+                if (!pipe->run(apptype.str(), exec.str(), ".", false, true, false, 0, false))
                     throw makeStringExceptionV(0, "Failed to run %s", exec.str());
             }
         }
-        catch (IException *E)
+        catch (IException *e)
         {
-            EXCLOG(E);
-            E->Release();
+            exception.setown(e);
+        }
+        if (exception)
+        {
+            EXCLOG(exception);
             Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
             Owned<IWorkUnit> workunit = factory->updateWorkUnit(wuid);
             if (workunit)
             {
                 workunit->setState(WUStateFailed);
+                StringBuffer eStr;
+                addExceptionToWorkunit(workunit, SeverityError, "agentexec", exception->errorCode(), exception->errorMessage(eStr).str(), nullptr, 0, 0, 0);
                 workunit->commit();
             }
         }
@@ -230,13 +283,15 @@ public:
 private:
     StringAttr wuid;
     StringAttr dali;
+    StringAttr apptype;
+    StringAttr queue;
 };
 #endif
 
 IPooledThread *CEclAgentExecutionServer::createNew()
 {
 #ifdef _CONTAINERIZED
-    return new WaitThread(daliServers);
+    return new WaitThread(daliServers, apptype, agentName);
 #else
     throwUnexpected();
 #endif
@@ -252,7 +307,7 @@ bool CEclAgentExecutionServer::executeWorkunit(const char * wuid)
     StringBuffer command;
 
 #ifdef _WIN32
-    command.append(".\\eclagent.exe");
+    command.append(".\\hthor.exe");
 #else
     command.append("start_eclagent");
 #endif
@@ -294,6 +349,13 @@ bool CEclAgentExecutionServer::executeWorkunit(const char * wuid)
 
 //---------------------------------------------------------------------------------
 
+static constexpr const char * defaultYaml = R"!!(
+version: "1.0"
+eclagent:
+    name: myeclagent
+    type: hthor
+)!!";
+
 int main(int argc, const char *argv[]) 
 { 
 #ifndef _CONTAINERIZED
@@ -312,7 +374,7 @@ int main(int argc, const char *argv[])
     Owned<IPropertyTree> config;
     try
     {
-        config.setown(loadConfiguration(eclagentDefaultYaml, argv, "eclagent", "ECLAGENT", "agentexec.xml", nullptr));
+        config.setown(loadConfiguration(defaultYaml, argv, "eclagent", "AGENTEXEC", "agentexec.xml", nullptr));
     }
     catch (IException *e) 
     {
