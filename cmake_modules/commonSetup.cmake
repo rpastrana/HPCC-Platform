@@ -111,6 +111,7 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
   option(USE_PYTHON2 "Enable python2 language support for platform build" ON)
   option(USE_PYTHON3 "Enable python3 language support for platform build" ON)
   option(USE_OPTIONAL "Automatically disable requested features with missing dependencies" ON)
+  option(USE_METRICS "Enable use of prometheus-cpp library" ON)
   option(JLIB_ONLY  "Build JLIB for other projects such as Configurator, Ganglia Monitoring, etc" OFF)
   # Generates code that is more efficient, but will cause problems if target platforms do not support it.
   if (CMAKE_SIZEOF_VOID_P EQUAL 8)
