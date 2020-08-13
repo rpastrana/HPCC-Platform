@@ -412,6 +412,11 @@
                          resource="WsELKAccess"
                          service="ws_elk"/>
     <AuthenticateFeature authenticate="Yes"
+                         description="Access to Metrics service"
+                         path="MetricsAccess"
+                         resource="MetricsKAccess"
+                         service="metrics"/>
+    <AuthenticateFeature authenticate="Yes"
                          description="Access to ws store service"
                          path="WsStoreAccess"
                          resource="WsStoreAccess"
@@ -745,6 +750,10 @@
                          path="WsELKAccess"
                          resource="WsELKAccess"
                          service="ws_elk"/>
+    <AuthenticateFeature description="Access to Metrics service"
+                         path="MetricsAccess"
+                         resource="MetricsAccess"
+                         service="metrics"/>
     <AuthenticateFeature description="Access to ws store service"
                          path="WsStoreAccess"
                          resource="WsStoreAccess"
@@ -1137,6 +1146,10 @@
                           path="WsELKAccess"
                           resource="WsELKAccess"
                           service="ws_elk"/>
+	<AuthenticateFeature description="Access to Metrics service"
+                          path="MetricsAccess"
+                          resource="MetricsAccess"
+                          service="metrics"/>
      <AuthenticateFeature description="Access to sign ECL code"
                           path="CodeSignAccess"
                           resource="CodeSignAccess"

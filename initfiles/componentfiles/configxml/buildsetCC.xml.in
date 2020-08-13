@@ -209,6 +209,10 @@
                         path="WsELKAccess"
                         resource="WsELKAccess"
                         service="ws_elk"/>
+                    <AuthenticateFeature description="Access to Metrics service"
+                        path="MetricsAccess"
+                        resource="MetricsAccess"
+                        service="metrics"/>
                     <AuthenticateFeature description="Access to ws store service"
                         path="WsStoreAccess"
                         resource="WsStoreAccess"

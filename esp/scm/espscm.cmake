@@ -48,6 +48,7 @@ set ( ESPSCM_SRCS
       ws_store.ecm
       ws_codesign.ecm
       ws_decoupledlogging.ecm
+      metrics.ecm
     )
 
 foreach ( loop_var ${ESPSCM_SRCS} )
