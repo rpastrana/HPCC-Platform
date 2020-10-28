@@ -1,8 +1,7 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
 
     "dgrid/selector",
 
@@ -11,82 +10,84 @@ define([
     "hpcc/DelayLoadWidget",
     "src/ESPUtil"
 
-], function (declare, lang, i18n, nlsHPCC,
+], function (declare, lang, nlsHPCCMod,
     selector,
     GridDetailsWidget, WsTopology, DelayLoadWidget, ESPUtil) {
-        return declare("TpClusterInfoWidget", [GridDetailsWidget], {
 
-            i18n: nlsHPCC,
-            gridTitle: nlsHPCC.title_ClusterInfo,
-            idProperty: "Name",
+    var nlsHPCC = nlsHPCCMod.default;
+    return declare("TpClusterInfoWidget", [GridDetailsWidget], {
 
-            init: function (params) {
-                if (this.inherited(arguments))
-                    return;
+        i18n: nlsHPCC,
+        gridTitle: nlsHPCC.title_ClusterInfo,
+        idProperty: "Name",
 
-                this.refreshGrid();
-            },
+        init: function (params) {
+            if (this.inherited(arguments))
+                return;
 
-            createGrid: function (domID) {
-                var context = this;
+            this.refreshGrid();
+        },
 
-                var retVal = new declare([ESPUtil.Grid(false, true)])({
-                    store: this.store,
-                    columns: {
-                        col1: selector({
-                            width: 27,
-                            selectorType: 'checkbox',
-                            sortable: false
-                        }),
-                        Name: {
-                            label: this.i18n.Name,
-                            width: 180,
-                            sortable: true,
-                            formatter: function (cell, row) {
-                                return "<a href='#' class='dgrid-row-url'>" + cell + "</a>";
-                            }
-                        },
-                        WorkUnit: { label: this.i18n.WUID, sortable: true }
-                    }
-                }, domID);
-                retVal.on(".dgrid-row-url:click", function (evt) {
-                    if (context._onRowDblClick) {
-                        var row = retVal.row(evt).data;
-                        context._onRowDblClick(row);
-                    }
-                });
-                return retVal;
-            },
+        createGrid: function (domID) {
+            var context = this;
 
-            createDetail: function (id, row, params) {
-                return new DelayLoadWidget({
-                    id: id,
-                    title: row.Name,
-                    closable: true,
-                    delayWidget: "TpThorStatusWidget",
-                    hpcc: {
-                        params: {
-                            ClusterName: this.params.ClusterName,
-                            Name: row.Name
+            var retVal = new declare([ESPUtil.Grid(false, true)])({
+                store: this.store,
+                columns: {
+                    col1: selector({
+                        width: 27,
+                        selectorType: 'checkbox',
+                        sortable: false
+                    }),
+                    Name: {
+                        label: this.i18n.Name,
+                        width: 180,
+                        sortable: true,
+                        formatter: function (cell, row) {
+                            return "<a href='#' class='dgrid-row-url'>" + cell + "</a>";
                         }
-                    }
-                });
-            },
+                    },
+                    WorkUnit: { label: this.i18n.WUID, sortable: true }
+                }
+            }, domID);
+            retVal.on(".dgrid-row-url:click", function (evt) {
+                if (context._onRowDblClick) {
+                    var row = retVal.row(evt).data;
+                    context._onRowDblClick(row);
+                }
+            });
+            return retVal;
+        },
 
-            refreshGrid: function () {
-                var context = this;
-                WsTopology.TpClusterInfo({
-                    request: {
-                        Name: this.params.ClusterName
+        createDetail: function (id, row, params) {
+            return new DelayLoadWidget({
+                id: id,
+                title: row.Name,
+                closable: true,
+                delayWidget: "TpThorStatusWidget",
+                hpcc: {
+                    params: {
+                        ClusterName: this.params.ClusterName,
+                        Name: row.Name
                     }
-                }).then(function (response) {
-                    var results = [];
-                    if (lang.exists("TpClusterInfoResponse.TpQueues.TpQueue", response)) {
-                        results = response.TpClusterInfoResponse.TpQueues.TpQueue;
-                    }
-                    context.store.setData(results);
-                    context.grid.refresh();
-                });
-            }
-        });
+                }
+            });
+        },
+
+        refreshGrid: function () {
+            var context = this;
+            WsTopology.TpClusterInfo({
+                request: {
+                    Name: this.params.ClusterName
+                }
+            }).then(function (response) {
+                var results = [];
+                if (lang.exists("TpClusterInfoResponse.TpQueues.TpQueue", response)) {
+                    results = response.TpClusterInfoResponse.TpQueues.TpQueue;
+                }
+                context.store.setData(results);
+                context.grid.refresh();
+            });
+        }
     });
+});

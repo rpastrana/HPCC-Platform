@@ -64,7 +64,6 @@ class JoinSlaveActivity : public CSlaveActivity, implements ILookAheadStopNotify
     Owned<IJoinHelper> joinhelper;
     rowcount_t lhsProgressCount = 0, rhsProgressCount = 0;
     CriticalSection joinHelperCrit;
-    CRuntimeStatisticCollection spillStats;
     IHThorJoinBaseArg *helper;
     IHThorJoinArg *helperjn;
     IHThorDenormalizeArg *helperdn;
@@ -136,7 +135,7 @@ class JoinSlaveActivity : public CSlaveActivity, implements ILookAheadStopNotify
 
 public:
     JoinSlaveActivity(CGraphElementBase *_container, bool local)
-        : CSlaveActivity(_container), spillStats(spillStatistics)
+        : CSlaveActivity(_container, joinActivityStatistics)
     {
         islocal = local;
         switch (container.getKind())
@@ -176,7 +175,7 @@ public:
     ~JoinSlaveActivity()
     {
         if (portbase) 
-            freePort(portbase,NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
     }
 
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
@@ -214,7 +213,7 @@ public:
             mpTagRPC = container.queryJobChannel().deserializeMPTag(data);
             mptag_t barrierTag = container.queryJobChannel().deserializeMPTag(data);
             barrier.setown(container.queryJobChannel().createBarrier(barrierTag));
-            portbase = allocPort(NUMSLAVEPORTS);
+            portbase = queryJobChannel().allocPort(NUMSLAVEPORTS);
             ActPrintLog("SortJoinSlaveActivity::init portbase = %d, mpTagRPC=%d",portbase,(int)mpTagRPC);
             server.setLocalHost(portbase); 
             sorter.setown(CreateThorSorter(this, server,&container.queryJob().queryIDiskUsage(),&queryJobChannel().queryJobComm(),mpTagRPC));
@@ -284,7 +283,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         CAsyncCallStart asyncSecondaryStart(std::bind(&JoinSlaveActivity::startSecondaryInput, this));
         try
@@ -294,7 +293,8 @@ public:
         catch (IException *e)
         {
             fireException(e);
-            barrier->cancel();
+            if (barrier) // no barrier if local join
+                barrier->cancel();
             asyncSecondaryStart.wait();
             stopOtherInput();
             throw;
@@ -304,7 +304,8 @@ public:
         {
             IException *e=secondaryStartException.getClear();
             fireException(e);
-            barrier->cancel();
+            if (barrier)
+                barrier->cancel();
             stopPartitionInput();
             throw e;
         }
@@ -410,7 +411,7 @@ public:
         rightInput.clear();
         if (portbase)
         {
-            freePort(portbase, NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
             portbase = 0;
         }
         CSlaveActivity::kill();
@@ -418,7 +419,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if(joinhelper) 
         {
             OwnedConstThorRow row = joinhelper->nextRow();
@@ -456,7 +457,8 @@ public:
             leftStream.setown(iLoaderL->load(leftInputStream, abortSoon));
             isemptylhs = 0 == iLoaderL->numRows();
             stopLeftInput();
-            mergeStats(spillStats, iLoaderL);
+
+            mergeStats(stats, iLoaderL, spillStatistics);
         }
         IEngineRowStream *rightInputStream = queryInputStream(1);
         if (isemptylhs&&((helper->getJoinFlags()&JFrightouter)==0))
@@ -476,7 +478,8 @@ public:
         {
             rightStream.setown(iLoaderR->load(rightInputStream, abortSoon));
             stopRightInput();
-            mergeStats(spillStats, iLoaderR);
+
+            mergeStats(stats, iLoaderR, spillStatistics);
         }
     }
     bool doglobaljoin()
@@ -583,7 +586,8 @@ public:
             sorter->Gather(secondaryRowIf, secondaryInputStream, secondaryCompare, primarySecondaryCompare, primarySecondaryUpperCompare, primaryKeySerializer, primaryCompare, partitionRow, noSortOtherSide(), isUnstable(), abortSoon, primaryRowIf); // primaryKeySerializer *is* correct
         else
             sorter->Gather(secondaryRowIf, secondaryInputStream, secondaryCompare, nullptr, nullptr, nullptr, nullptr, partitionRow, noSortOtherSide(), isUnstable(), abortSoon, nullptr);
-        mergeStats(spillStats, sorter);
+
+        mergeStats(stats, sorter, spillStatistics);
         //MORE: Stats from spilling the primaryStream??
         partitionRow.clear();
         stopOtherInput();
@@ -611,19 +615,24 @@ public:
     }
     virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-        CriticalBlock b(joinHelperCrit);
-        if (!joinhelper)
         {
-            mb.append(lhsProgressCount);
-            mb.append(rhsProgressCount);
+            bool isSelfJoin = (TAKselfjoin == container.getKind() || TAKselfjoinlight != container.getKind());
+
+            CriticalBlock b(joinHelperCrit);
+            if (!joinhelper) // bit odd, but will leave as was for now.
+            {
+                stats.setStatistic(StNumLeftRows, lhsProgressCount);
+                if (!isSelfJoin)
+                    stats.setStatistic(StNumRightRows, rhsProgressCount);
+            }
+            else
+            {
+                stats.setStatistic(StNumLeftRows, joinhelper->getLhsProgress());
+                if (!isSelfJoin)
+                    stats.setStatistic(StNumRightRows, joinhelper->getRhsProgress());
+            }
         }
-        else
-        {
-            mb.append(joinhelper->getLhsProgress());
-            mb.append(joinhelper->getRhsProgress());
-        }
-        spillStats.serialize(mb);
+        PARENT::serializeStats(mb);
     }
 };
 
@@ -688,7 +697,7 @@ public:
     }
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         bool matched = true;
         OwnedConstThorRow next = processor.nextGE(seek, numFields, matched, stepExtra);
         if (next)

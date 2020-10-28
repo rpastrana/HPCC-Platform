@@ -33,7 +33,10 @@ include_directories (
          ${HPCC_SOURCE_DIR}/system/include
          ${HPCC_SOURCE_DIR}/system/jlib
          ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/system/mp
          ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/system/security/shared
          ${OPENSSL_INCLUDE_DIR}
     )
 
@@ -43,6 +46,7 @@ HPCC_ADD_LIBRARY( cryptolib SHARED ${SRCS} )
 install ( TARGETS cryptolib DESTINATION plugins )
 target_link_libraries ( 
         cryptolib
+        dalibase
         jlib
         ${ZLIB_LIBRARIES}
     )

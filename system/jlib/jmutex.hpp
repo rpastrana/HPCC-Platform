@@ -661,6 +661,7 @@ public:
     void lockWrite()        { lockWrite(false, 0); }
     bool lockRead(unsigned timeout) { return lockRead(true, timeout); }
     bool lockWrite(unsigned timeout) { return lockWrite(true, timeout); }
+    unsigned queryReadLockCount() const { return readLocks; }
     void unlock()           { 
                                 cs.enter(); 
                                 if (readLocks) readLocks--;

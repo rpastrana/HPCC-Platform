@@ -276,7 +276,7 @@ public:
             }
             return createDaliServixFile(filename);
 #endif
-#endif
+#else
             if (!noport)            // expect all filenames that specify port to be dafilesrc or daliservix
                 return createDaliServixFile(filename);  
             if (filename.isUnixPath()
@@ -285,6 +285,7 @@ public:
 #endif
                 )
                 return createDaliServixFile(filename);  
+#endif
         }
         else if (forceRemotePattern)
         {
@@ -1189,7 +1190,7 @@ public:
     }
 };
 
-class CRemoteFileIO : implements IFileIO, public CInterface
+class CRemoteFileIO : public CInterfaceOf<IFileIO>
 {
 protected:
     Linked<CRemoteFile> parent;
@@ -1203,10 +1204,9 @@ protected:
     std::atomic<unsigned> ioRetries;
     IFOmode mode;
     compatIFSHmode compatmode;
-    IFEflags extraFlags;
+    IFEflags extraFlags = IFEnone;
     bool disconnectonexit;
 public:
-    IMPLEMENT_IINTERFACE
     CRemoteFileIO(CRemoteFile *_parent)
         : parent(_parent), ioReadCycles(0), ioWriteCycles(0), ioReadBytes(0), ioWriteBytes(0), ioReads(0), ioWrites(0), ioRetries(0)
     {
@@ -1570,7 +1570,7 @@ IFileIO * CRemoteFile::open(IFOmode mode,IFEflags extraFlags)
 void CRemoteFile::copyTo(IFile *dest, size32_t buffersize, ICopyFileProgress *progress, bool usetmp, CFflags copyFlags)
 {
     CRemoteFile *dstfile = QUERYINTERFACE(dest,CRemoteFile);
-    if (dstfile&&!dstfile->queryEp().isLocal()) {
+    if (dstfile&&(!dstfile->queryEp().isLocal() || (dstfile->queryEp().port!=DAFILESRV_PORT && dstfile->queryEp().port!=SECURE_DAFILESRV_PORT))) {
         StringBuffer tmpname;
         Owned<IFile> destf;
         RemoteFilename dest;
@@ -2024,6 +2024,19 @@ extern DAFSCLIENT_API void installFileHooks(const char *hookFileSpec)
     }
 }
 
+void installDefaultFileHooks(IPropertyTree * config)
+{
+    StringBuffer hookdir;
+    if (!config || !config->getProp("@fileHooks", hookdir))
+    {
+        getPackageFolder(hookdir);
+        addPathSepChar(hookdir).append("filehooks");
+        if (!checkFileExists(hookdir))
+            return;
+    }
+    installFileHooks(hookdir);
+}
+
 typedef void (*HookInstallFunction)();
 
 static void installFileHook(const char *hookFile)
@@ -2035,11 +2048,11 @@ static void installFileHook(const char *hookFile)
     {
         addPathSepChar(absolutePath).append(dirTail);
         Owned<IFile> file = createIFile(absolutePath);
-        if (file->isDirectory() == foundYes)
+        if (file->isDirectory() == fileBool::foundYes)
         {
             installFileHooks(addPathSepChar(absolutePath).append('*'));
         }
-        else if (file->isFile() == foundYes)
+        else if (file->isFile() == fileBool::foundYes)
         {
             HookInstallFunction hookInstall;
             SharedObject *so = new SharedObject(); // MORE - this leaks! Kind-of deliberate right now...
@@ -2508,6 +2521,7 @@ public:
     virtual unsigned querySeeks() const override { return 0; } // not sure how best to handle these, perhaps should log/record somewhere on server-side
     virtual unsigned queryScans() const override { return 0; }
     virtual unsigned querySkips() const override { return 0; }
+    virtual unsigned queryWildSeeks() const override { return 0; }
 };
 
 

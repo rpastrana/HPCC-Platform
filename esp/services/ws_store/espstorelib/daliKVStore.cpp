@@ -35,7 +35,7 @@ bool CDALIKVStore::createStore(const char * apptype, const char * storename, con
     VStringBuffer xpath("Store[%s='%s'][1]", DALI_KVSTORE_NAME_ATT,  storename);
     if (root->hasProp(xpath.str()))
     {
-        IWARNLOG("DALI KV Store: Cannot create app '%s' entry, it already exists", storename);
+        LOG(MCuserInfo,"DALI Keystore createStore(): '%s' entry already exists", storename);
         return false;
     }
 
@@ -410,7 +410,7 @@ bool CDALIKVStore::fetch(const char * storename, const char * ns, const char * k
     {
         xpath.appendf("/%s", key);
         if(!storetree->hasProp(xpath.str()))
-            throw MakeStringException(-1, "DALI Keystore fetch: invalid key '%s' detected!", key);
+            throw makeStringExceptionV(MSGAUD_user, -1, "DALI Keystore fetch: invalid key '%s' detected!", key);
 
         value.set(storetree->queryProp(xpath.str()));
 

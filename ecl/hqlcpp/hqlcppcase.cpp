@@ -284,8 +284,8 @@ void HqlCppCaseInfo::buildChop3Map(BuildCtx & ctx, IExprProcessor & target, CHql
     {
         unsigned mid = start + (end - start) / 2;
         generateCompareVar(ctx, temp, test, queryCompare(mid));
-        OwnedHqlExpr test1 = createValue(no_eq, LINK(temp), getZero());
-        OwnedHqlExpr test2 = createValue(no_lt, LINK(temp), getZero());
+        OwnedHqlExpr test1 = createValue(no_eq, makeBoolType(), LINK(temp), getZero());
+        OwnedHqlExpr test2 = createValue(no_lt, makeBoolType(), LINK(temp), getZero());
 
         BuildCtx subctx(ctx);
         IHqlStmt * if1 = subctx.addFilter(test1);                   // if (test == 0)
@@ -615,7 +615,7 @@ void HqlCppCaseInfo::buildLoopChopMap(BuildCtx & ctx, IExprProcessor & target, C
         target.process(translator,ctx, defaultValue);
 
         OwnedHqlExpr loopc = createBoolExpr(no_lt, LINK(leftVar), LINK(rightVar));
-        OwnedHqlExpr mid = createValue(no_div, createValue(no_add, LINK(leftVar), LINK(rightVar)), createConstant(indexType->castFrom(false, 2)));
+        OwnedHqlExpr mid = createValue(no_div, LINK(indexType), createValue(no_add, LINK(indexType), LINK(leftVar), LINK(rightVar)), createConstant(indexType->castFrom(false, 2)));
         OwnedHqlExpr mid_p1 = createValue(no_add, LINK(indexType), LINK(midVar), createConstant(indexType->castFrom(false, 1)));
         OwnedHqlExpr curelem = createValue(no_index, LINK(compareType), boundTable.getTranslatedExpr(), createTranslated(mid_p1));
         OwnedHqlExpr test1 = createBoolExpr(no_lt, LINK(compareVar), getZero());
@@ -1010,10 +1010,11 @@ IHqlExpression * HqlCppCaseInfo::createResultsExpr(IHqlExpression * matchVar, bo
     }
 
     unsigned firstMatchEntry = 0;
-    if (canIncludeDefault)
+    const bool useStaticArray = areConstant && canBuildStaticList(resultType);
+    if (useStaticArray)
     {
         //If all the values are constant, then can add the default as an extra 0th entry, because -1 will be the index for the default
-        if (areConstant && defaultValue->isConstant() && defaultValue->queryType() == values.item(0).queryType())
+        if (canIncludeDefault && defaultValue->isConstant() && defaultValue->queryType() == values.item(0).queryType())
         {
             firstMatchEntry = 1;
             values.add(*LINK(defaultValue), 0);
@@ -1024,7 +1025,7 @@ IHqlExpression * HqlCppCaseInfo::createResultsExpr(IHqlExpression * matchVar, bo
     // easy way to create a value list...
     ITypeInfo * storeType = getArrayElementType(retType);
     OwnedHqlExpr newlist = createValue(no_list, makeSetType(storeType), values);
-    if (areConstant && canBuildStaticList(resultType))
+    if (useStaticArray)
     {
         IHqlExpression * index = adjustValue(matchVar, 1+firstMatchEntry);
         return createValue(no_index, LINK(retType), LINK(newlist), index, createAttribute(noBoundCheckAtom));
@@ -1047,7 +1048,7 @@ IHqlExpression * HqlCppCaseInfo::createResultsExpr(IHqlExpression * matchVar, bo
 
 void HqlCppCaseInfo::generateCompareVar(BuildCtx & ctx, IHqlExpression * target, CHqlBoundExpr & test, IHqlExpression * other)
 {
-    OwnedHqlExpr compare = createValue(no_order, test.getTranslatedExpr(), LINK(other));
+    OwnedHqlExpr compare = createValue(no_order, makeIntType(4, true), test.getTranslatedExpr(), LINK(other));
     translator.buildAssignToTemp(ctx, target, compare);
 }
     

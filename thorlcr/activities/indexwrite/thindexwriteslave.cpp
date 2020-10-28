@@ -48,6 +48,7 @@ class IndexWriteSlaveActivity : public ProcessSlaveActivity, public ILookAheadSt
     bool buildTlk, active;
     bool sizeSignalled;
     bool isLocal, singlePartKey, reportOverflow, fewcapwarned, refactor;
+    bool defaultNoSeek = false;
     unsigned __int64 totalCount;
 
     size32_t maxDiskRecordSize, lastRowSize, firstRowSize;
@@ -75,7 +76,7 @@ class IndexWriteSlaveActivity : public ProcessSlaveActivity, public ILookAheadSt
 public:
     IMPLEMENT_IINTERFACE_USING(PARENT);
 
-    IndexWriteSlaveActivity(CGraphElementBase *_container) : ProcessSlaveActivity(_container)
+    IndexWriteSlaveActivity(CGraphElementBase *_container) : ProcessSlaveActivity(_container, indexWriteActivityStatistics)
     {
         helper = static_cast <IHThorIndexWriteArg *> (queryHelper());
         init();
@@ -86,6 +87,7 @@ public:
         singlePartKey = false;
         refactor = false;
         enableTlkPart0 = (0 != container.queryJob().getWorkUnitValueInt("enableTlkPart0", globals->getPropBool("@enableTlkPart0", true)));
+        defaultNoSeek = (0 != container.queryJob().getWorkUnitValueInt("noSeekBuildIndex", globals->getPropBool("@noSeekBuildIndex", isContainerized())));
         reInit = (0 != (TIWvarfilename & helper->getFlags()));
         duplicateKeyCount = 0;
     }
@@ -155,9 +157,8 @@ public:
         StringBuffer partFname;
         getPartFilename(partDesc, 0, partFname);
         bool compress=false;
-        OwnedIFileIO iFileIO = createMultipleWrite(this, partDesc, 0, TW_RenameToPrimary, compress, NULL, this, &abortSoon);
-        Owned<IFileIOStream> out = createBufferedIOStream(iFileIO);
         ActPrintLog("INDEXWRITE: created fixed output stream %s", partFname.str());
+        bool needsSeek = true;
         unsigned flags = COL_PREFIX;
         if (TIWrowcompress & helper->getFlags())
             flags |= HTREE_COMPRESSED_KEY|HTREE_QUICK_COMPRESSED_KEY;
@@ -171,7 +172,21 @@ public:
             flags |= HTREE_TOPLEVEL_KEY;
         buildUserMetadata(metadata);                
         buildLayoutMetadata(metadata);
-        unsigned nodeSize = metadata ? metadata->getPropInt("_nodeSize", NODESIZE) : NODESIZE;
+        // NOTE - if you add any more flags here, be sure to update checkReservedMetadataName
+        unsigned nodeSize = metadata->getPropInt("_nodeSize", NODESIZE);
+        if (metadata->getPropBool("_noSeek", defaultNoSeek))
+        {
+            flags |= TRAILING_HEADER_ONLY;
+            needsSeek = false;
+        }
+        if (metadata->getPropBool("_useTrailingHeader", true))
+            flags |= USE_TRAILING_HEADER;
+        unsigned twFlags = isUrl(partFname) ? TW_Direct : TW_RenameToPrimary;
+        OwnedIFileIO iFileIO = createMultipleWrite(this, partDesc, 0, twFlags, compress, NULL, this, &abortSoon);
+        Owned<IFileIOStream> out = createBufferedIOStream(iFileIO, 0x100000);
+        if (!needsSeek)
+            out.setown(createNoSeekIOStream(out));
+
         builder.setown(createKeyBuilder(out, flags, maxDiskRecordSize, nodeSize, helper->getKeyedSize(), isTopLevel ? 0 : totalCount, helper, !isTlk, isTlk));
     }
     void buildUserMetadata(Owned<IPropertyTree> & metadata)
@@ -185,7 +200,7 @@ public:
         {
             StringBuffer name(nameLen, nameBuff);
             StringBuffer value(valueLen, valueBuff);
-            if(*nameBuff == '_' && strcmp(name, "_nodeSize") != 0)
+            if(*nameBuff == '_' && !checkReservedMetadataName(name))
                 throw MakeActivityException(this, 0, "Invalid name %s in user metadata for index %s (names beginning with underscore are reserved)", name.str(), logicalFilename.get());
             if(!validateXMLTag(name.str()))
                 throw MakeActivityException(this, 0, "Invalid name %s in user metadata for index %s (not legal XML element name)", name.str(), logicalFilename.get());
@@ -251,7 +266,7 @@ public:
     }
     virtual void process() override
     {
-        ActPrintLog("INDEXWRITE: Start");
+        ::ActPrintLog(this, thorDetailedLogLevel, "INDEXWRITE: Start");
         init();
 
         IRowStream *stream = inputStream;
@@ -389,9 +404,8 @@ public:
                 {
                     StringBuffer partFname;
                     getPartFilename(*partDesc, 0, partFname);
-                    ActPrintLog("INDEXWRITE: process: handling fname : %s", partFname.str());
+                    ::ActPrintLog(this, thorDetailedLogLevel, "INDEXWRITE: process: handling fname : %s", partFname.str());
                     open(*partDesc, false, helper->queryDiskRecordSize()->isVariableSize(), false);
-                    ActPrintLog("INDEXWRITE: write");
 
                     BooleanOnOff tf(receiving);
                     if (!refactor || !active)
@@ -403,7 +417,6 @@ public:
                             break;
                         processRow(row);
                     } while (!abortSoon);
-                    ActPrintLog("INDEXWRITE: write level 0 complete");
                 }
                 catch (CATCHALL)
                 {
@@ -418,7 +431,7 @@ public:
 
                 if (buildTlk)
                 {
-                    ActPrintLog("INDEXWRITE: sending rows");
+                    ::ActPrintLog(this, thorDetailedLogLevel, "INDEXWRITE: sending rows");
                     NodeInfoArray tlkRows;
 
                     CMessageBuffer msg;
@@ -461,7 +474,7 @@ public:
 
                     if (firstNode())
                     {
-                        ActPrintLog("INDEXWRITE: Waiting on tlk to complete");
+                        ::ActPrintLog(this, thorDetailedLogLevel, "INDEXWRITE: Waiting on tlk to complete");
 
                         // JCSMORE if refactor==true, is rowsToReceive here right??
                         unsigned rowsToReceive = (refactor ? (tlkDesc->queryOwner().numParts()-1) : container.queryJob().querySlaves()) -1; // -1 'cos got my own in array already
@@ -491,7 +504,7 @@ public:
 
                         StringBuffer path;
                         getPartFilename(*tlkDesc, 0, path);
-                        ActPrintLog("INDEXWRITE: creating toplevel key file : %s", path.str());
+                        ::ActPrintLog(this, thorDetailedLogLevel, "INDEXWRITE: creating toplevel key file : %s", path.str());
                         try
                         {
                             open(*tlkDesc, true, helper->queryDiskRecordSize()->isVariableSize(), true);
@@ -534,7 +547,7 @@ public:
                     }
                 }
             }
-            ActPrintLog("INDEXWRITE: All done");
+            ::ActPrintLog(this, thorDetailedLogLevel, "INDEXWRITE: All done");
         }
     }
     virtual void endProcess() override
@@ -634,7 +647,7 @@ public:
             fireException(e);
         }
     }
-    virtual void onInputFinished(rowcount_t finalcount)
+    virtual void onInputFinished(rowcount_t finalcount) override
     {
         if (!sizeSignalled)
         {
@@ -642,14 +655,14 @@ public:
             ActPrintLog("finished input %" RCPF "d", finalcount);
         }
     }
-    virtual void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
+        stats.setStatistic(StPerReplicated, replicateDone);
         PARENT::serializeStats(mb);
-        mb.append(replicateDone);
     }
 
 // ICopyFileProgress
-    CFPmode onProgress(unsigned __int64 sizeDone, unsigned __int64 totalSize)
+    virtual CFPmode onProgress(unsigned __int64 sizeDone, unsigned __int64 totalSize) override
     {
         replicateDone = sizeDone ? ((unsigned)(sizeDone*100/totalSize)) : 0;
         return abortSoon?CFPstop:CFPcontinue;

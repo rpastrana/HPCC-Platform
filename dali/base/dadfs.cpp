@@ -1129,8 +1129,6 @@ public:
     IFileDescriptor *createDescriptorFromMetaFile(const CDfsLogicalFileName &logicalname,IUserDescriptor *user);
 
     bool isProtectedFile(const CDfsLogicalFileName &logicalname, unsigned timeout) ;
-    unsigned queryProtectedCount(const CDfsLogicalFileName &logicalname, const char *owner);
-    bool getProtectedInfo(const CDfsLogicalFileName &logicalname, StringArray &names, UnsignedArray &counts);
     IDFProtectedIterator *lookupProtectedFiles(const char *owner=NULL,bool notsuper=false,bool superonly=false);
     IDFAttributesIterator* getLogicalFilesSorted(IUserDescriptor* udesc, DFUQResultField *sortOrder, const void *filterBuf, DFUQResultField *specialFilters,
             const void *specialFilterBuf, unsigned startOffset, unsigned maxNum, __int64 *cacheHint, unsigned *total, bool *allMatchingFilesReceived);
@@ -1376,6 +1374,7 @@ public:
         if (!lfn.isExternal() && !checkLogicalName(lfn,user,true,true,true,"remove"))
             ThrowStringException(-1, "Logical Name fails for removal on %s", lfn.get());
 
+        CTimeMon timer(timeoutms);
         for (;;)
         {
             // Transaction files have already been unlocked at this point, delete all remaining files
@@ -1386,6 +1385,7 @@ public:
             if (!file->canRemove(reason, false))
                 ThrowStringException(-1, "Can't remove %s: %s", lfn.get(), reason.str());
 
+            Owned<IException> timeoutException;
             // This will do the right thing for either super-files and logical-files.
             try
             {
@@ -1398,15 +1398,27 @@ public:
                 {
                     case SDSExcpt_LockTimeout:
                     case SDSExcpt_LockHeld:
-                        e->Release();
+                        timeoutException.setown(e);
                         break;
                     default:
                         throw;
                 }
             }
             file.clear();
+            unsigned sleepTime = SDS_TRANSACTION_RETRY/2+(getRandom()%SDS_TRANSACTION_RETRY);
+            if (INFINITE != timeoutms)
+            {
+                unsigned remaining;
+                if (timer.timedout(&remaining))
+                {
+                    StringBuffer timeoutText;
+                    throwStringExceptionV(-1, "Failed to remove %s: %s", logicalname, timeoutException->errorMessage(timeoutText).str());
+                }
+                if (sleepTime>remaining)
+                    sleepTime = remaining;
+            }
             PROGLOG("CDelayedDelete: pausing due to locked file = %s", logicalname);
-            Sleep(SDS_TRANSACTION_RETRY/2+(getRandom()%SDS_TRANSACTION_RETRY));
+            Sleep(sleepTime);
         }
     }
 };
@@ -2035,14 +2047,9 @@ public:
             ForEach(*piter) {
                 const char *name = piter->get().queryProp("@name");
                 if (name&&*name) {
-                    unsigned count = piter->get().getPropInt("@count");
-                    if (count) {
-                        if (plist.length())
-                            plist.append(',');
-                        plist.append(name);
-                        if (count>1)
-                            plist.append(':').append(count);
-                    }
+                    if (plist.length())
+                        plist.append(',');
+                    plist.append(name);
                 }
             }
             if (plist.length()) {
@@ -2152,7 +2159,6 @@ class CDFProtectedIterator: implements IDFProtectedIterator, public CInterface
 {
     StringAttr owner;
     StringAttr fn;
-    unsigned count;
     bool issuper;
     Owned<IRemoteConnection> conn;
     Owned<IPropertyTreeIterator> fiter;
@@ -2168,7 +2174,6 @@ class CDFProtectedIterator: implements IDFProtectedIterator, public CInterface
         fn.set(t.queryProp("OrigName"));
         IPropertyTree &pt = piter->query();
         owner.set(pt.queryProp("@name"));
-        count = pt.getPropInt("@count");
     }
 
     void clear()
@@ -2185,7 +2190,6 @@ public:
     CDFProtectedIterator(const char *_owner,bool _notsuper,bool _superonly,unsigned _defaultTimeout)
         : owner(_owner)
     {
-        count = 0;
         issuper = false;
         notsuper=_notsuper;
         superonly=_superonly;
@@ -2280,11 +2284,6 @@ public:
     const char *queryOwner()
     {
         return owner;
-    }
-
-    unsigned getCount()
-    {
-        return count;
     }
 
     bool isSuper()
@@ -2619,38 +2618,33 @@ static bool setFileProtectTree(IPropertyTree &p,const char *owner, bool protect)
     bool ret = false;
     CDateTime dt;
     dt.setNow();
-    if (owner&&*owner) {
-        Owned<IPropertyTree> t = getNamedPropTree(&p,"Protect","@name",owner,false);
-        if (t) {
-            unsigned c = t->getPropInt("@count");
+    if (owner&&*owner)
+    {
+        Owned<IPropertyTree> t = getNamedPropTree(&p, "Protect", "@name", owner, false);
+        if (t)
+        {
             if (protect)
-                c++;
-            else {
-                if (c>=1) {
-                    p.removeTree(t);
-                    c = 0;
-                }
-                else
-                    c--;
-            }
-            if (c) {
-                t->setPropInt("@count",c);
+            {
                 StringBuffer str;
-                t->setProp("@modified",dt.getString(str).str());
+                t->setProp("@modified", dt.getString(str).str());
             }
+            else
+                p.removeTree(t);
         }
-        else if (protect) {
-            t.setown(addNamedPropTree(&p,"Protect","@name",owner));
-            t->setPropInt("@count",1);
+        else if (protect)
+        {
+            t.setown(addNamedPropTree(&p, "Protect", "@name", owner));
             StringBuffer str;
             t->setProp("@modified",dt.getString(str).str());
         }
         ret = true;
     }
-    else if (!protect) {
+    else if (!protect)
+    {
         unsigned n=0;
         IPropertyTree *pt;
-        while ((pt=p.queryPropTree("Protect[1]"))!=NULL) {
+        while ((pt=p.queryPropTree("Protect[1]"))!=NULL)
+        {
             p.removeTree(pt);
             n++;
         }
@@ -2664,18 +2658,18 @@ static bool checkProtectAttr(const char *logicalname,IPropertyTree *froot,String
 {
     Owned<IPropertyTreeIterator> wpiter = froot->getElements("Attr/Protect");
     bool prot = false;
-    ForEach(*wpiter) {
+    ForEach(*wpiter)
+    {
         IPropertyTree &t = wpiter->query();
-        if (t.getPropInt("@count")) {
-            const char *wpname = t.queryProp("@name");
-            if (!wpname||!*wpname)
-                wpname = "<Unknown>";
-            if (prot)
-                reason.appendf(", %s",wpname);
-            else {
-                reason.appendf("file %s protected by %s",logicalname,wpname);
-                prot = true;
-            }
+        const char *wpname = t.queryProp("@name");
+        if (!wpname||!*wpname)
+            wpname = "<Unknown>";
+        if (prot)
+            reason.appendf(", %s", wpname);
+        else
+        {
+            reason.appendf("file %s protected by %s", logicalname, wpname);
+            prot = true;
         }
     }
     return prot;
@@ -4839,14 +4833,14 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
                     if (subfile) {
                         CDfsLogicalFileName lname;
                         lname.set(subfile.get());
-                        transaction->addDelayedDelete(lname, SDS_SUB_LOCK_TIMEOUT);
+                        transaction->addDelayedDelete(lname, INFINITE);
                     } else { // Remove all subfiles
                         Owned<IDistributedFileIterator> iter = parent->getSubFileIterator(false);
                         ForEach (*iter) {
                             CDfsLogicalFileName lname;
                             IDistributedFile *f = &iter->query();
                             lname.set(f->queryLogicalName());
-                            transaction->addDelayedDelete(lname, SDS_SUB_LOCK_TIMEOUT);
+                            transaction->addDelayedDelete(lname, INFINITE);
                         }
                     }
                 }
@@ -4927,7 +4921,7 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
                         {
                             CDfsLogicalFileName lname;
                             lname.set(logicalName);
-                            transaction->addDelayedDelete(lname, SDS_SUB_LOCK_TIMEOUT);
+                            transaction->addDelayedDelete(lname, INFINITE);
                         }
                     }
                 }
@@ -5138,7 +5132,6 @@ protected:
                 subfile.setown(transaction?transaction->lookupFile(subname.str(),timeout):parent->lookup(subname.str(), udesc, false, false, false, transaction, defaultPrivilegedUser, timeout));
                 if (!subfile.get())
                     subfile.setown(transaction?transaction->lookupSuperFile(subname.str(),timeout):parent->lookupSuperFile(subname.str(),udesc,transaction,timeout));
-                containsRestrictedSubfile = containsRestrictedSubfile || subfile->isRestrictedAccess();
                 // Some files are ok not to exist
                 if (!subfile.get())
                 {
@@ -5157,14 +5150,23 @@ protected:
                             _transaction->ensureFile(subfile);
                         }
                     }
+                    else if (logicalName.isMulti())
+                    {
+                        /*
+                         * implicit superfiles, can't validate subfile presence at this point,
+                         * but will be caught if empty and not OPT later.
+                         */
+                        continue;
+                    }
                     else
                         ThrowStringException(-1, "CDistributedSuperFile: SuperFile %s: corrupt subfile file '%s' cannot be found", logicalName.get(), subname.str());
                 }
+                containsRestrictedSubfile = containsRestrictedSubfile || subfile->isRestrictedAccess();
                 subfiles.append(*subfile.getClear());
                 if (link)
                     linkSubFile(f);
             }
-            // This is *only* due to foreign files
+            // This is can happen due to missing referenced foreign files, or missing files referenced via an implicit inline superfile definition
             if (subfiles.ordinality() != n)
             {
                 IWARNLOG("CDistributedSuperFile: SuperFile %s's number of sub-files updated to %d", logicalName.get(), subfiles.ordinality());
@@ -5199,7 +5201,7 @@ protected:
         if (pos==0)
         {
             Owned<IPropertyTree> superAttrs = createPTreeFromIPT(&file->queryAttributes());
-            superAttrs->removeProp("Protect"); // do not automatically inherit protected status
+            while (superAttrs->removeProp("Protect")); // do not automatically inherit protected status
             resetFileAttr(superAttrs.getClear());
         }
         root->addPropTree("SubFile",sub);
@@ -5229,7 +5231,7 @@ protected:
             if (subfiles.ordinality())
             {
                 Owned<IPropertyTree> superAttrs = createPTreeFromIPT(&subfiles.item(0).queryAttributes());
-                superAttrs->removeProp("Protect"); // do not automatically inherit protected status
+                while (superAttrs->removeProp("Protect")); // do not automatically inherit protected status
                 resetFileAttr(superAttrs.getClear());
             }
             else
@@ -5790,15 +5792,23 @@ public:
     __int64 getRecordCount()
     {
         __int64 ret = queryAttributes().getPropInt64("@recordCount",-1);
-        if (ret==-1) {
+        if (ret==-1)
+        {
             ret = 0;
-            ForEachItemIn(i,subfiles) {
-                __int64 rc = subfiles.item(i).queryAttributes().getPropInt64("@recordCount",-1);
-                if (rc == -1) {
-                    ret = rc;
-                    break;
+            ForEachItemIn(i,subfiles)
+            {
+                IDistributedFile &subFile = subfiles.item(i);
+                __int64 rc = subFile.queryAttributes().getPropInt64("@recordCount", -1);
+                if (rc == -1)
+                {
+                    IDistributedSuperFile *super = subFile.querySuperFile();
+
+                    // if regular file or non-empty super, must have a @recordCount to aggregate a total
+                    if ((nullptr == super) || (super->numSubFiles()>0))
+                        return -1;
                 }
-                ret += rc;
+                else
+                    ret += rc;
             }
         }
         return ret;
@@ -7324,6 +7334,35 @@ public:
         }
     }
 
+    void addGroup(const char *logicalgroupname, const std::vector<std::string> &hosts, bool cluster, const char *dir, GroupType groupType, bool overwrite)
+    {
+        dbgassertex(hosts.size());
+        StringBuffer name(logicalgroupname);
+        name.toLowerCase();
+        name.trim();
+        StringBuffer prop;
+        prop.appendf("Group[@name=\"%s\"]",name.str());
+        CConnectLock connlock("CNamedGroup::add", SDS_GROUPSTORE_ROOT, true, false, false, defaultTimeout);
+        if (!overwrite && connlock.conn->queryRoot()->hasProp(prop.str()))
+            return;
+        connlock.conn->queryRoot()->removeProp(prop.str());
+        if (0 == hosts.size())
+            return;
+        Owned<IPropertyTree> groupTree = doAddHosts(connlock, name.str(), hosts, cluster, dir);
+        SocketEndpointArray eps;
+        if (!loadGroup(groupTree, eps, nullptr, nullptr))
+        {
+            IWARNLOG("CNamedGroupStore.add: failed to add group '%s', due to unresolved hosts", name.str());
+            return;
+        }
+        Owned<IGroup> group = createIGroup(eps);
+        {
+            CriticalBlock block(cachesect);
+            cache.kill();
+            cache.append(*new CNamedGroupCacheEntry(group, name, dir, groupType));
+        }
+    }
+
     virtual void addUnique(IGroup *group,StringBuffer &lname, const char *dir) override
     {
         if (group->ordinality()==1)
@@ -7378,29 +7417,26 @@ public:
 
     virtual void add(const char *logicalgroupname, const std::vector<std::string> &hosts, bool cluster, const char *dir, GroupType groupType) override
     {
-        dbgassertex(hosts.size());
-        StringBuffer name(logicalgroupname);
-        name.toLowerCase();
-        name.trim();
-        StringBuffer prop;
-        prop.appendf("Group[@name=\"%s\"]",name.str());
-        CConnectLock connlock("CNamedGroup::add", SDS_GROUPSTORE_ROOT, true, false, false, defaultTimeout);
-        connlock.conn->queryRoot()->removeProp(prop.str());
-        if (0 == hosts.size())
-            return;
-        Owned<IPropertyTree> groupTree = doAddHosts(connlock, name.str(), hosts, cluster, dir);
-        SocketEndpointArray eps;
-        if (!loadGroup(groupTree, eps, nullptr, nullptr))
-        {
-            IWARNLOG("CNamedGroupStore.add: failed to add group '%s', due to unresolved hosts", name.str());
-            return;
-        }
-        Owned<IGroup> group = createIGroup(eps);
-        {
-            CriticalBlock block(cachesect);
-            cache.kill();
-            cache.append(*new CNamedGroupCacheEntry(group, name, dir, groupType));
-        }
+        addGroup(logicalgroupname, hosts, cluster, dir, groupType, true);
+    }
+
+    virtual void ensure(const char *logicalgroupname, const std::vector<std::string> &hosts, bool cluster, const char *dir, GroupType groupType) override
+    {
+        addGroup(logicalgroupname, hosts, cluster, dir, groupType, false);
+    }
+
+    virtual void ensureNasGroup(size32_t size) override
+    {
+        std::vector<std::string> hosts;
+        for (unsigned n=0; n<size; n++)
+            hosts.push_back("localhost");
+        VStringBuffer nasGroupName("__nas__%u", size);
+        ensure(nasGroupName, hosts, false, nullptr, grp_unknown);
+    }
+
+    virtual StringBuffer &getNasGroupName(StringBuffer &groupName, size32_t size) const override
+    {
+        return groupName.append("__nas__").append(size);
     }
 
     virtual unsigned removeNode(const char *logicalgroupname, const char *nodeToRemove) override
@@ -8302,11 +8338,11 @@ IDistributedSuperFile *CDistributedFileDirectory::createSuperFile(const char *_l
     else
         localtrans.setown(new CDistributedFileTransaction(user));
 
-    IDistributedSuperFile *sfile = localtrans->lookupSuperFile(logicalname.get());
+    Owned<IDistributedSuperFile> sfile = localtrans->lookupSuperFile(logicalname.get());
     if (sfile)
     {
         if (ifdoesnotexist)
-            return sfile;
+            return sfile.getClear();
         else
             throw MakeStringException(-1,"createSuperFile: SuperFile %s already exists",logicalname.get());
     }
@@ -8732,7 +8768,7 @@ const char* DFUQFilterFieldNames[] = { "", "@description", "@directory", "@group
     "@partmask", "@OrigName", "Attr", "Attr/@job", "Attr/@owner", "Attr/@recordCount", "Attr/@recordSize", "Attr/@size",
     "Attr/@compressedsize", "Attr/@workunit", "Cluster", "Cluster/@defaultBaseDir", "Cluster/@defaultReplDir", "Cluster/@mapFlags",
     "Cluster/@name", "Part", "Part/@name", "Part/@num", "Part/@size", "SuperOwner", "SuperOwner/@name",
-    "SubFile", "SubFile/@name", "SubFile/@num", "Attr/@kind" };
+    "SubFile", "SubFile/@name", "SubFile/@num", "Attr/@kind", "Attr/@accessed" };
 
 extern da_decl const char* getDFUQFilterFieldName(DFUQFilterField feild)
 {
@@ -8882,9 +8918,9 @@ public:
         const char* prop = file.queryProp(attrPath.get());
         if (!prop || !*prop)
             return false;
-        if (filterValue && (strcmp(filterValue, prop) > 0))
+        if (!filterValue.isEmpty() && (strcmp(filterValue, prop) > 0))
             return false;
-        if (filterValueHigh && (strcmp(filterValueHigh, prop) < 0))
+        if (!filterValueHigh.isEmpty() && (strcmp(filterValueHigh, prop) < 0))
             return false;
         return true;
     }
@@ -9517,7 +9553,7 @@ class CInitGroups
         return loadMachineMap(conn->queryRoot());
     }
 
-    IPropertyTree *createClusterGroup(GroupType groupType, const std::vector<std::string> &hosts, const char *dir, const IPropertyTree &envCluster, bool realCluster, bool _expand)
+    IPropertyTree *createClusterGroup(GroupType groupType, const std::vector<std::string> &hosts, const char *dir, const IPropertyTree * envCluster, bool realCluster, bool _expand)
     {
         bool expand = _expand;
         if (grp_thor != groupType)
@@ -9553,8 +9589,9 @@ class CInitGroups
         };
         if (expand)
         {
-            unsigned slavesPerNode = envCluster.getPropInt("@slavesPerNode", 1);
-            unsigned channelsPerSlave = envCluster.getPropInt("@channelsPerSlave", 1);
+            assertex(envCluster);
+            unsigned slavesPerNode = envCluster->getPropInt("@slavesPerNode", 1);
+            unsigned channelsPerSlave = envCluster->getPropInt("@channelsPerSlave", 1);
             for (unsigned s=0; s<(slavesPerNode*channelsPerSlave); s++)
                 addHostsToIPTFunc();
         }
@@ -9625,7 +9662,7 @@ class CInitGroups
         if (!hosts.size())
             return nullptr;
 
-        return createClusterGroup(groupType, hosts, dir, cluster, realCluster, expand);
+        return createClusterGroup(groupType, hosts, dir, &cluster, realCluster, expand);
     }
 
     bool constructGroup(const IPropertyTree &cluster, const char *altName, IPropertyTree *oldEnvCluster, GroupType groupType, bool force, StringBuffer &messages)
@@ -9663,9 +9700,7 @@ class CInitGroups
         if (altName)
             gname.clear().append(altName).toLowerCase();
 
-        VStringBuffer xpath("Group[@name=\"%s\"]", gname.str());
-        IPropertyTree *existingClusterGroup = groupsconnlock.conn->queryRoot()->queryPropTree(xpath.str()); // 'live' cluster group
-
+        IPropertyTree *existingClusterGroup = queryExistingGroup(gname);
         bool matchOldEnv = false;
         Owned<IPropertyTree> newClusterGroup = createClusterGroupFromEnvCluster(groupType, cluster, defDir, realCluster, true);
         bool matchExisting = !force && clusterGroupCompare(newClusterGroup, existingClusterGroup);
@@ -9731,7 +9766,7 @@ class CInitGroups
                     VStringBuffer gname("hthor__%s", groupname);
                     if (ins>1)
                         gname.append('_').append(ins);
-                    Owned<IPropertyTree> clusterGroup = createClusterGroup(grp_hthor, { na }, nullptr, cluster, true, false);
+                    Owned<IPropertyTree> clusterGroup = createClusterGroup(grp_hthor, { na }, nullptr, &cluster, true, false);
                     addClusterGroup(gname.str(), clusterGroup.getClear(), true);
                 }
             }
@@ -9888,7 +9923,6 @@ public:
         {
             SocketEndpointArray existingGroupBoundEps;
             StringAttr groupDir;
-            GroupType type;
             if (!loadGroup(existing, existingGroupBoundEps, nullptr, nullptr))
             {
                 IWARNLOG("removeSpares: failed to load group: '%s'", groupName.str());
@@ -9970,13 +10004,86 @@ public:
             }
         }
     }
+
+    IPropertyTree * createStorageGroup(const char * name, size32_t size, const char * path)
+    {
+        std::vector<std::string> hosts(size, "localhost");
+        return createClusterGroup(grp_unknown, hosts, path, nullptr, false, false);
+    }
+
+    void ensureStorageGroup(bool force, const char * name, unsigned numDevices, const char * path, StringBuffer & messages)
+    {
+        IPropertyTree *existingClusterGroup = queryExistingGroup(name);
+        Owned<IPropertyTree> newClusterGroup = createStorageGroup(name, numDevices, path);
+        bool matchExisting = clusterGroupCompare(newClusterGroup, existingClusterGroup);
+        if (!existingClusterGroup || !matchExisting)
+        {
+            if (!existingClusterGroup)
+            {
+                VStringBuffer msg("New cluster layout for cluster %s", name);
+                UWARNLOG("%s", msg.str());
+                messages.append(msg).newline();
+                addClusterGroup(name, newClusterGroup.getClear(), false);
+            }
+            else if (force)
+            {
+                VStringBuffer msg("Forcing new group layout for storageplane %s", name);
+                UWARNLOG("%s", msg.str());
+                messages.append(msg).newline();
+                addClusterGroup(name, newClusterGroup.getClear(), false);
+            }
+            else
+            {
+                VStringBuffer msg("Active cluster '%s' group layout does not match stroageplane definition", name);
+                UWARNLOG("%s", msg.str());                                                                        \
+                messages.append(msg).newline();
+            }
+        }
+    }
+
+    void constructStorageGroups(bool force, StringBuffer &messages)
+    {
+        IPropertyTree & global = queryGlobalConfig();
+        IPropertyTree * storage = global.queryPropTree("storage");
+        if (storage)
+        {
+            Owned<IPropertyTreeIterator> planes = storage->getElements("planes");
+            ForEach(*planes)
+            {
+                IPropertyTree & plane = planes->query();
+                const char * name = plane.queryProp("@name");
+                if (isEmptyString(name))
+                    continue;
+
+                //Lower case the group name - see CnamedGroupStore::dolookup which lower cases before resolving.
+                StringBuffer gname;
+                gname.append(name).toLowerCase();
+
+                //Two main type of storage plane - with a host group (bare metal) and without.
+                IPropertyTree *existingGroup = queryExistingGroup(gname);
+                const char * hosts = plane.queryProp("@hosts");
+                const char * prefix = plane.queryProp("@prefix");
+                if (hosts)
+                {
+                    IPropertyTree *existingClusterGroup = queryExistingGroup(gname);
+                    if (!existingClusterGroup)
+                        UNIMPLEMENTED_X("Bare metal storage planes not yet supported");
+                }
+                else
+                {
+                    unsigned numDevices = plane.getPropInt("@numDevices", 1);
+                    ensureStorageGroup(force, gname, numDevices, prefix, messages);
+                }
+            }
+        }
+    }
     IGroup *getGroupFromCluster(const char *type, const IPropertyTree &cluster, bool expand)
     {
         loadMachineMap();
         GroupType gt = getGroupType(type);
         return getGroupFromCluster(gt, cluster, expand);
     }
-    IPropertyTree *queryRawGroup(const char *name)
+    IPropertyTree *queryExistingGroup(const char *name)
     {
         VStringBuffer xpath("Group[@name=\"%s\"]", name);
         return groupsconnlock.conn->queryRoot()->queryPropTree(xpath.str());
@@ -9987,6 +10094,21 @@ void initClusterGroups(bool force, StringBuffer &response, IPropertyTree *oldEnv
 {
     CInitGroups init(timems);
     init.constructGroups(force, response, oldEnvironment);
+}
+
+void initClusterAndStoragePlaneGroups(bool force, IPropertyTree *oldEnvironment, unsigned timems)
+{
+    CInitGroups init(timems);
+
+    StringBuffer response;
+    init.constructGroups(force, response, oldEnvironment);
+    if (response.length())
+        PROGLOG("DFS group initialization : %s", response.str()); // should this be a syslog?
+
+    response.clear();
+    init.constructStorageGroups(false, response);
+    if (response.length())
+        PROGLOG("StoragePlane group initialization : %s", response.str()); // should this be a syslog?
 }
 
 bool resetClusterGroup(const char *clusterName, const char *type, bool spares, StringBuffer &response, unsigned timems)
@@ -10033,7 +10155,7 @@ static IGroup *getClusterNodeGroup(const char *clusterName, const char *type, bo
         throwStringExceptionV(0, "Failed to get group for '%s' cluster '%s'", type, clusterName);
     if (!expandedClusterGroup->equals(nodeGroup))
     {
-        IPropertyTree *rawGroup = init.queryRawGroup(nodeGroupName);
+        IPropertyTree *rawGroup = init.queryExistingGroup(nodeGroupName);
         if (!rawGroup)
             throwUnexpectedX("missing node group");
         unsigned nodesSwapped = rawGroup->getPropInt("@nodesSwapped");
@@ -12457,52 +12579,7 @@ bool CDistributedFileDirectory::isProtectedFile(const CDfsLogicalFileName &logic
     CFileAttrLock attrLock;
     if (!attrLock.init(logicalName, RTM_LOCK_READ, NULL, timeout?timeout:INFINITE, "CDistributedFileDirectory::isProtectedFile"))
         return false; // timeout will raise exception
-    Owned<IPropertyTreeIterator> wpiter = attrLock.queryRoot()->getElements("Protect");
-    bool prot = false;
-    ForEach(*wpiter) {
-        IPropertyTree &t = wpiter->query();
-        if (t.getPropInt("@count")) {
-            prot = true;
-            break;
-        }
-    }
-    // timeout retry TBD
-    return prot;
-}
-
-unsigned CDistributedFileDirectory::queryProtectedCount(const CDfsLogicalFileName &logicalName, const char *owner)
-{
-    CFileAttrLock attrLock;
-    if (!attrLock.init(logicalName, RTM_LOCK_READ, NULL, defaultTimeout, "CDistributedFileDirectory::queryProtectedCount"))
-        return 0; // timeout will raise exception
-    Owned<IPropertyTreeIterator> wpiter = attrLock.queryRoot()->getElements("Protect");
-    unsigned count = 0;
-    ForEach(*wpiter) {
-        IPropertyTree &t = wpiter->query();
-        const char *name = t.queryProp("@name");
-        if (!owner||!*owner||(name&&(strcmp(owner,name)==0)))
-            count += t.getPropInt("@count");
-    }
-    return count;
-}
-
-bool CDistributedFileDirectory::getProtectedInfo(const CDfsLogicalFileName &logicalName, StringArray &names, UnsignedArray &counts)
-{
-    CFileAttrLock attrLock;
-    if (!attrLock.init(logicalName, RTM_LOCK_READ, NULL, defaultTimeout, "CDistributedFileDirectory::getProtectedInfo"))
-        return false; // timeout will raise exception
-    Owned<IPropertyTreeIterator> wpiter = attrLock.queryRoot()->getElements("Protect");
-    bool prot = false;
-    ForEach(*wpiter) {
-        IPropertyTree &t = wpiter->query();
-        const char *name = t.queryProp("@name");
-        names.append(name?name:"<Unknown>");
-        unsigned c = t.getPropInt("@count");
-        if (c)
-            prot = true;
-        counts.append(c);
-    }
-    return prot;
+    return attrLock.queryRoot()->hasProp("Protect");
 }
 
 IDFProtectedIterator *CDistributedFileDirectory::lookupProtectedFiles(const char *owner,bool notsuper,bool superonly)

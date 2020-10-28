@@ -601,7 +601,7 @@ void CThorExpandingRowArray::doSort(rowidx_t n, void **const rows, ICompare &com
         parsortvecstableinplace(rows, n, compare, stableTablePtr, maxCores);
     }
     else
-        parqsortvec((void **const)rows, n, compare, maxCores);
+        parqsortvec((void **)rows, n, compare, maxCores);
 }
 
 inline const void **CThorExpandingRowArray::_allocateRowTable(rowidx_t num, unsigned maxSpillCost)
@@ -966,7 +966,7 @@ bool CThorExpandingRowArray::resize(rowidx_t requiredRows, unsigned maxSpillCost
 void CThorExpandingRowArray::sort(ICompare &compare, unsigned maxCores)
 {
     if (numRows>1)
-        doSort(numRows, (void **const)rows, compare, maxCores);
+        doSort(numRows, (void **)rows, compare, maxCores);
 }
 
 void CThorExpandingRowArray::reorder(rowidx_t start, rowidx_t num, rowidx_t *neworder)
@@ -1361,7 +1361,7 @@ void CThorSpillableRowArray::sort(ICompare &compare, unsigned maxCores)
     rowidx_t n = numCommitted();
     if (n>1)
     {
-        void **const rows = (void **const)getBlock(n);
+        void ** rows = (void **)getBlock(n);
         doSort(n, rows, compare, maxCores);
     }
 }
@@ -1417,7 +1417,7 @@ rowidx_t CThorSpillableRowArray::save(IFile &iFile, unsigned _spillCompInfo, boo
             const void *row = rows[i];
             if (i == nextCBI)
             {
-                writer->flush();
+                writer->flush(NULL);
                 do
                 {
                     nextCB->filePosition(writer->getPosition());
@@ -1444,7 +1444,7 @@ rowidx_t CThorSpillableRowArray::save(IFile &iFile, unsigned _spillCompInfo, boo
             }
             ++i;
         }
-        writer->flush();
+        writer->flush(NULL);
     }
     catch (IException *e)
     {
@@ -1646,11 +1646,10 @@ protected:
         StringBuffer tempPrefix, tempName;
         if (iCompare)
         {
-            ActPrintLog(&activity, "%sSorting %" RIPF "d rows", tracingPrefix.str(), spillableRows.numCommitted());
             CCycleTimer timer;
             spillableRows.sort(*iCompare, maxCores); // sorts committed rows
             sortCycles += timer.elapsedCycles();
-            ActPrintLog(&activity, "%sSort took: %f", tracingPrefix.str(), ((float)timer.elapsedMs())/1000);
+            ActPrintLog(&activity, "%sSorting %" RIPF "u rows took: %f", tracingPrefix.str(), spillableRows.numCommitted(), ((float)timer.elapsedMs())/1000);
             tempPrefix.append("srt");
         }
         tempPrefix.appendf("spill_%d", activity.queryId());
@@ -1864,7 +1863,7 @@ public:
              * memory usage.
              */
             size32_t compBlkSz = activity.getOptUInt(THOROPT_SORT_COMPBLKSZ, DEFAULT_SORT_COMPBLKSZ);
-            activity.ActPrintLog("%sSpilling will use compressed block size = %u", tracingPrefix.str(), compBlkSz);
+            ActPrintLog(&activity, thorDetailedLogLevel, "%sSpilling will use compressed block size = %u", tracingPrefix.str(), compBlkSz);
             spillableRows.setCompBlockSize(compBlkSz);
         }
     }

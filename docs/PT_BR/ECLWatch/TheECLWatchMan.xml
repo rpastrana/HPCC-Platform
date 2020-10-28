@@ -374,9 +374,21 @@
 
           <para>O link <emphasis role="bold">Set Banner (Fixar
           Banner)</emphasis> permite que você configure uma mensagem de banner
-          personalizada no topo da janela do navegador ao abrir o ECL Watch. É
-          possível usar esse recurso para enviar mensagens para os
-          usuários.</para>
+          personalizada no topo da janela do navegador ao abrir o ECL Watch.
+          Marque a caixa <emphasis role="bold">Enable</emphasis> para ativar
+          um banner. Você pode usar o banner para enviar uma mensagem sobre o
+          ambiente aos usuários. Personalize a aparência do banner da mensagem
+          com os outros controles. As configurações de banner persistem até
+          que o servidor ESP seja reiniciado.</para>
+
+          <para>O link <emphasis role="bold">Set Toolbar</emphasis> permite
+          personalizar a barra de ferramentas na parte superior da página do
+          ECL Watch. Marque a caixa <emphasis role="bold">Enable Environment
+          Text </emphasis> para exibir o texto <emphasis role="bold"> Name of
+          Environment</emphasis> na parte superior da página e na guia do
+          navegador. Rotular as abas do navegador é útil ao trabalhar com
+          vários ambientes. As configurações da barra de ferramentas persistem
+          durante a reinicialização do servidor ESP.</para>
 
           <para>O link <emphasis role="bold">Error/Warning(s)
           (Erro/aviso(s))</emphasis> exibe uma aba que exibe mensagens de
@@ -735,7 +747,7 @@
         </sect3>
 
         <sect3>
-          <title>Limpar</title>
+          <title>Clean</title>
 
           <para>Remover todas as workunits da fila de jobs. O estado das
           workunits removidas é definido como cancelado. Quaisquer workunits
@@ -995,11 +1007,12 @@
       interceptação</para>
 
       <para>O agendamento ECL oferece uma maneira para automatizar processos
-      no código ECL ou para sequenciar os processos para eles funcionem em
-      sequência. Por exemplo, é possível gravar o código ECL que supervisiona
-      uma zona de entrada de arquivos para a chegada de um arquivo e, quando
-      ele chega, realiza a distribuição aos nós do Thor, processa, compila um
-      índice e depois o adiciona a um superarquivo.</para>
+      no código ECL ou para sequenciar os processos de maneira que eles
+      funcionem em sequência. Por exemplo, é possível gravar o código ECL que
+      supervisiona uma zona de entrada de arquivos para a chegada de um
+      arquivo e, quando ele chega, realiza a distribuição aos nós do Thor,
+      processa, compila um índice e depois o adiciona a um
+      superarquivo.</para>
 
       <para>O agendamento ECL é baseado em eventos. O agendador ECL monitora
       uma lista de agendamentos que contém workunit e eventos registrados e

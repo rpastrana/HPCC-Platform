@@ -503,30 +503,30 @@ fileBool CFile::isDirectory()
 #ifdef _WIN32
     DWORD attr = GetFileAttributes(filename);
     if (attr == -1)
-        return notFound;
-    return ( attr & FILE_ATTRIBUTE_DIRECTORY) ? foundYes : foundNo;
+        return fileBool::notFound;
+    return ( attr & FILE_ATTRIBUTE_DIRECTORY) ? fileBool::foundYes : fileBool::foundNo;
 #else
     struct stat info;
     if (stat(filename, &info) != 0)
-        return notFound;
-    return S_ISDIR(info.st_mode) ? foundYes : foundNo;
+        return fileBool::notFound;
+    return S_ISDIR(info.st_mode) ? fileBool::foundYes : fileBool::foundNo;
 #endif
 }
 
 fileBool CFile::isFile()
 {
     if (stdIoHandle(filename)>=0)
-        return foundYes;
+        return fileBool::foundYes;
 #ifdef _WIN32
     DWORD attr = GetFileAttributes(filename);
     if (attr == -1)
-        return notFound;
-    return ( attr & FILE_ATTRIBUTE_DIRECTORY) ? foundNo : foundYes;
+        return fileBool::notFound;
+    return ( attr & FILE_ATTRIBUTE_DIRECTORY) ? fileBool::foundNo : fileBool::foundYes;
 #else
     struct stat info;
     if (stat(filename, &info) != 0)
-        return notFound;
-    return S_ISREG(info.st_mode) ? foundYes : foundNo;
+        return fileBool::notFound;
+    return S_ISREG(info.st_mode) ? fileBool::foundYes : fileBool::foundNo;
 #endif
 }
 
@@ -535,14 +535,14 @@ fileBool CFile::isReadOnly()
 #ifdef _WIN32
     DWORD attr = GetFileAttributes(filename);
     if (attr == -1)
-        return notFound;
-    return ( attr & FILE_ATTRIBUTE_READONLY) ? foundYes : foundNo;
+        return fileBool::notFound;
+    return ( attr & FILE_ATTRIBUTE_READONLY) ? fileBool::foundYes : fileBool::foundNo;
 #else
     struct stat info;
     if (stat(filename, &info) != 0)
-        return notFound;
+        return fileBool::notFound;
     //MORE: I think this is correct, but someone with better unix knowledge should check!
-    return (info.st_mode & (S_IWUSR|S_IWGRP|S_IWOTH)) ? foundNo : foundYes;
+    return (info.st_mode & (S_IWUSR|S_IWGRP|S_IWOTH)) ? fileBool::foundNo : fileBool::foundYes;
 #endif
 }
 
@@ -707,7 +707,7 @@ bool CFile::remove()
 #ifdef _WIN32
     unsigned retry = 0;
     for (;;) {
-        if (isDirectory()==foundYes) {
+        if (isDirectory()==fileBool::foundYes) {
             if (RemoveDirectory(filename) != 0)
                 return true;
         }
@@ -727,7 +727,7 @@ bool CFile::remove()
     }
     return false;
 #else
-    if (isDirectory()==foundYes) {
+    if (isDirectory()==fileBool::foundYes) {
         if (rmdir(filename) == 0)
             return true;
     }
@@ -1186,18 +1186,6 @@ unsigned CFile::getCRC()
 
 //---------------------------------------------------------------------------
 
-static Linked<IPasswordProvider> passwordProvider;
-
-MODULE_INIT(INIT_PRIORITY_JFILE)
-{
-    return true;
-}
-
-MODULE_EXIT()
-{
-    passwordProvider.clear();
-}
-
 #ifdef _WIN32
 static bool parseShare(const char *filename,IpAddress &machine,StringBuffer &share)
 { // windows share parsing
@@ -1229,6 +1217,8 @@ static CriticalSection connectcrit;
 
 static bool connectToExternalDrive(const char * const filename)
 {
+#if 0
+    //The following code used the passwordProvider.  Retained in case similar code is needed in the future.
     CriticalBlock block(connectcrit);
     if (!passwordProvider)
         return false;
@@ -1241,7 +1231,6 @@ static bool connectToExternalDrive(const char * const filename)
         return false;
 
     // first see if connected
-
     char buf[255];
     buf[0] = 0;
     DWORD len = sizeof(buf);
@@ -1276,6 +1265,7 @@ static bool connectToExternalDrive(const char * const filename)
             return true;
         Sleep(retry*100);
     }
+#endif
     return false;
 }
 
@@ -1349,7 +1339,7 @@ public:
     {
         connect();
         fileBool ok = ifile->isDirectory();
-        if (ok == notFound && !connected && connect())
+        if (ok == fileBool::notFound && !connected && connect())
             ok = ifile->isDirectory();
         return ok;
     }
@@ -1357,7 +1347,7 @@ public:
     {
         connect();
         fileBool ok = ifile->isFile();
-        if (ok == notFound && !connected && connect())
+        if (ok == fileBool::notFound && !connected && connect())
             ok = ifile->isFile();
         return ok;
     }
@@ -1365,7 +1355,7 @@ public:
     {
         connect();
         fileBool ok = ifile->isReadOnly();
-        if (ok == notFound && !connected && connect())
+        if (ok == fileBool::notFound && !connected && connect())
             ok = ifile->isFile();
         return ok;
     }
@@ -1783,26 +1773,7 @@ offset_t CFileIO::appendFile(IFile *file,offset_t pos,offset_t len)
 
 unsigned __int64 CFileIO::getStatistic(StatisticKind kind)
 {
-    switch (kind)
-    {
-    case StCycleDiskReadIOCycles:
-        return ioReadCycles.load();
-    case StCycleDiskWriteIOCycles:
-        return ioWriteCycles.load();
-    case StTimeDiskReadIO:
-        return cycle_to_nanosec(ioReadCycles.load());
-    case StTimeDiskWriteIO:
-        return cycle_to_nanosec(ioWriteCycles.load());
-    case StSizeDiskRead:
-        return ioReadBytes.load();
-    case StSizeDiskWrite:
-        return ioWriteBytes.load();
-    case StNumDiskReads:
-        return ioReads.load();
-    case StNumDiskWrites:
-        return ioWrites.load();
-    }
-    return 0;
+    return stats.getStatistic(kind);
 }
 
 #ifdef _WIN32
@@ -1810,7 +1781,7 @@ unsigned __int64 CFileIO::getStatistic(StatisticKind kind)
 //-- Windows implementation -------------------------------------------------
 
 CFileIO::CFileIO(HANDLE handle, IFOmode _openmode, IFSHmode _sharemode, IFEflags _extraFlags)
-    : ioReadCycles(0), ioWriteCycles(0), ioReadBytes(0), ioWriteBytes(0), ioReads(0), ioWrites(0), unflushedReadBytes(0), unflushedWriteBytes(0)
+    : unflushedReadBytes(0), unflushedWriteBytes(0)
 {
     assertex(handle != NULLFILE);
     throwOnError = false;
@@ -1876,9 +1847,9 @@ size32_t CFileIO::read(offset_t pos, size32_t len, void * data)
     setPos(pos);
     if (ReadFile(file,data,len,&numRead,NULL) == 0)
         throw makeOsException(GetLastError(),"CFileIO::read");
-    ioReadCycles.fetch_add(timer.elapsedCycles());
-    ioReadBytes.fetch_add(numRead);
-    ++ioReads;
+    stats.ioReadCycles.fetch_add(timer.elapsedCycles());
+    stats.ioReadBytes.fetch_add(numRead);
+    ++stats.ioReads;
     return (size32_t)numRead;
 }
 
@@ -1900,9 +1871,9 @@ size32_t CFileIO::write(offset_t pos, size32_t len, const void * data)
         throw makeOsException(GetLastError(),"CFileIO::write");
     if (numWritten != len)
         throw makeOsException(DISK_FULL_EXCEPTION_CODE,"CFileIO::write");
-    ioWriteCycles.fetch_add(timer.elapsedCycles());
-    ioWriteBytes.fetch_add(numWritten);
-    ++ioWrites;
+    stats.ioWriteCycles.fetch_add(timer.elapsedCycles());
+    stats.ioWriteBytes.fetch_add(numWritten);
+    ++stats.ioWrites;
     return (size32_t)numWritten;
 }
 
@@ -1921,7 +1892,7 @@ void CFileIO::setSize(offset_t pos)
 
 // More errorno checking TBD
 CFileIO::CFileIO(HANDLE handle, IFOmode _openmode, IFSHmode _sharemode, IFEflags _extraFlags)
-    : ioReadCycles(0), ioWriteCycles(0), ioReadBytes(0), ioWriteBytes(0), ioReads(0), ioWrites(0), unflushedReadBytes(0), unflushedWriteBytes(0)
+    : unflushedReadBytes(0), unflushedWriteBytes(0)
 {
     assertex(handle != NULLFILE);
     throwOnError = false;
@@ -2008,9 +1979,9 @@ size32_t CFileIO::read(offset_t pos, size32_t len, void * data)
 
     CCycleTimer timer;
     size32_t ret = checked_pread(file, data, len, pos);
-    ioReadCycles.fetch_add(timer.elapsedCycles());
-    ioReadBytes.fetch_add(ret);
-    ++ioReads;
+    stats.ioReadCycles.fetch_add(timer.elapsedCycles());
+    stats.ioReadBytes.fetch_add(ret);
+    ++stats.ioReads;
 
     if ( (extraFlags & IFEnocache) && (ret > 0) )
     {
@@ -2047,9 +2018,9 @@ size32_t CFileIO::write(offset_t pos, size32_t len, const void * data)
 {
     CCycleTimer timer;
     size32_t ret = pwrite(file,data,len,pos);
-    ioWriteCycles.fetch_add(timer.elapsedCycles());
-    ioWriteBytes.fetch_add(ret);
-    ++ioWrites;
+    stats.ioWriteCycles.fetch_add(timer.elapsedCycles());
+    stats.ioWriteBytes.fetch_add(ret);
+    ++stats.ioWrites;
 
     if (ret==(size32_t)-1)
         throw makeErrnoException(errno, "CFileIO::write");
@@ -2534,6 +2505,63 @@ size32_t CFileIOStream::write(size32_t len, const void * data)
 
 //---------------------------------------------------------------------------
 
+CNoSeekFileIOStream::CNoSeekFileIOStream(IFileIOStream * _stream) : stream(_stream)
+{
+}
+
+
+void CNoSeekFileIOStream::flush()
+{
+    stream->flush();
+}
+
+
+size32_t CNoSeekFileIOStream::read(size32_t len, void * data)
+{
+    return stream->read(len, data);
+}
+
+void CNoSeekFileIOStream::seek(offset_t pos, IFSmode origin)
+{
+    offset_t prevOffset = stream->tell();
+    offset_t nextOffset = 0;
+    switch (origin)
+    {
+    case IFScurrent:
+        nextOffset = prevOffset + pos;
+        break;
+    case IFSend:
+        nextOffset = stream->size() + pos;
+        break;
+    case IFSbegin:
+        nextOffset = pos;
+        break;
+    }
+    if (prevOffset != nextOffset)
+        throw makeStringExceptionV(0, "Seek on non-seekable CFileIOStream (from %" I64F "u to %" I64F "u)", prevOffset, nextOffset);
+
+    //No need to call stream->seek since it will have no effect
+}
+
+offset_t CNoSeekFileIOStream::size()
+{
+    return stream->size();
+}
+
+offset_t CNoSeekFileIOStream::tell()
+{
+    return stream->tell();
+}
+
+size32_t CNoSeekFileIOStream::write(size32_t len, const void * data)
+{
+    return stream->write(len, data);
+}
+
+
+
+//---------------------------------------------------------------------------
+
 
 class CBufferedFileIOStreamBase : public CBufferedIOStreamBase, implements IFileIOStream
 {
@@ -2900,9 +2928,9 @@ void renameFile(const char *target, const char *source, bool overwritetarget)
     OwnedIFile src = createIFile(source);
     if (!src)
         throw MakeStringException(-1, "renameFile: source '%s' not found", source);
-    if (!src->isFile())
+    if (src->isFile()!=fileBool::foundYes)
         throw MakeStringException(-1, "renameFile: source '%s' is not a valid file", source);
-    if (src->isReadOnly())
+    if (src->isReadOnly()!=fileBool::foundNo)
         throw MakeStringException(-1, "renameFile: source '%s' is readonly", source);
 
     OwnedIFile tgt = createIFile(target);
@@ -3534,7 +3562,7 @@ IDirectoryIterator * createDirectoryIterator(const char * path, const char * mas
     if (!path || !*path) // cur directory so no point in checking for remote etc.
         return new CWindowsDirectoryIterator(path, mask,sub,includedirs);
     OwnedIFile iFile = createIFile(path);
-    if (!iFile||(iFile->isDirectory()!=foundYes))
+    if (!iFile||(iFile->isDirectory()!=fileBool::foundYes))
         return new CNullDirectoryIterator;
     return iFile->directoryFiles(mask, sub, includedirs);
 }
@@ -3542,7 +3570,7 @@ IDirectoryIterator * createDirectoryIterator(const char * path, const char * mas
 IDirectoryIterator *CFile::directoryFiles(const char *mask,bool sub,bool includedirs)
 {
     if ((mask&&!*mask)||    // only NULL is wild
-        (isDirectory()!=foundYes))
+        (isDirectory()!=fileBool::foundYes))
         return new CNullDirectoryIterator;
     return new CWindowsDirectoryIterator(filename, mask,sub,includedirs);
 }
@@ -3723,7 +3751,7 @@ IDirectoryIterator * createDirectoryIterator(const char * path, const char * mas
     if (!path || !*path) // no point in checking for remote etc.
         return new CLinuxDirectoryIterator(path, mask,sub,includedirs);
     OwnedIFile iFile = createIFile(path);
-    if (!iFile||(iFile->isDirectory()!=foundYes))
+    if (!iFile||(iFile->isDirectory()!=fileBool::foundYes))
         return new CNullDirectoryIterator;
     return iFile->directoryFiles(mask, sub, includedirs);
 }
@@ -3731,7 +3759,7 @@ IDirectoryIterator * createDirectoryIterator(const char * path, const char * mas
 IDirectoryIterator *CFile::directoryFiles(const char *mask,bool sub,bool includedirs)
 {
     if ((mask&&!*mask)||    // only NULL is wild
-        (isDirectory()!=foundYes))
+        (isDirectory()!=fileBool::foundYes))
         return new CNullDirectoryIterator;
     return new CLinuxDirectoryIterator(filename, mask,sub,includedirs);
 }
@@ -4003,42 +4031,6 @@ IDirectoryDifferenceIterator *CFile::monitorDirectory(IDirectoryIterator *_prev,
 
 //---------------------------------------------------------------------------
 
-class FixedPasswordProvider : implements IPasswordProvider, public CInterface
-{
-public:
-    FixedPasswordProvider(const char * _username, const char * _password) { username.set(_username); password.set(_password); }
-    IMPLEMENT_IINTERFACE;
-
-    virtual bool getPassword(const IpAddress & ip, StringBuffer & _username, StringBuffer & _password)
-    {
-        _username.append(username.get());
-        _password.append(password.get());
-        return true;
-    }
-
-protected:
-    StringAttr      username;
-    StringAttr      password;
-};
-
-IPasswordProvider * queryPasswordProvider()
-{
-    return passwordProvider;
-}
-
-void setPasswordProvider(IPasswordProvider * provider)
-{
-    passwordProvider.set(provider);
-}
-
-void setDefaultUser(const char * username,const char *password)
-{
-    Owned<IPasswordProvider> provider = new FixedPasswordProvider(username, password);
-    setPasswordProvider(provider);
-}
-
-//---------------------------------------------------------------------------
-
 bool recursiveCreateDirectory(const char * path)
 {
     Owned<IFile> file = createIFile(path);
@@ -4060,7 +4052,7 @@ void recursiveRemoveDirectory(IFile *dir)
     ForEach(*files)
     {
         IFile *thisFile = &files->query();
-        if (thisFile->isDirectory()==foundYes)
+        if (thisFile->isDirectory()==fileBool::foundYes)
             recursiveRemoveDirectory(thisFile);
         else
         {
@@ -4074,7 +4066,7 @@ void recursiveRemoveDirectory(IFile *dir)
 void recursiveRemoveDirectory(const char *dir)
 {
     Owned<IFile> f = createIFile(dir);
-    if (f->isDirectory())
+    if (f->isDirectory()==fileBool::foundYes)
         recursiveRemoveDirectory(f);
 }
 
@@ -4200,7 +4192,10 @@ IFileIOStream * createIOStream(IFileIO * file)
     return new CFileIOStream(file);
 }
 
-
+IFileIOStream * createNoSeekIOStream(IFileIOStream * stream)
+{
+    return new CNoSeekFileIOStream(stream);
+}
 
 IFileIO * createIORange(IFileIO * io, offset_t header, offset_t length)
 {
@@ -4491,7 +4486,11 @@ StringBuffer & RemoteFilename::getLocalPath(StringBuffer & out) const
 
 StringBuffer & RemoteFilename::getRemotePath(StringBuffer & out) const
 {   // this creates a name that can be used by windows or linux
-    // note - no longer loses port
+
+    // Any filenames in the format protocol:// should not be converted to //ip:....
+    if (isUrl(tailpath))
+        return getLocalPath(out);
+
     char c=getPathSeparator();
     out.append(c).append(c);
     ep.getUrlStr(out);
@@ -5159,9 +5158,90 @@ StringBuffer &makePathUniversal(const char *path, StringBuffer &out)
     return out;
 }
 
+// A filename is a URL if it starts xxxx://
+bool isUrl(const char *path)
+{
+    if (!path||!*path)
+        return false;
+
+    const char * cur = path;
+    for (;;)
+    {
+        switch (*cur++)
+        {
+        case '/':
+        case '\\':
+        case '\0':
+            return false;
+        case ':':
+            return cur[0]=='/' && cur[1]=='/';
+        }
+    }
+}
+
+
+//Treat a filename as absolute if:
+//  a) The filename begins with a path separator character   e.g. /home/hpcc/blah    \Users\hpcc\blah
+//  b) If there is a colon before the first path separator   e.g. c:\Users\hpcc\blah   s3://mycontainer/myblob
+//
+// Do not match:
+//  A) regress::myfile::x::y
+//  B) local/mydir
+//  C) mylocal
+bool isAbsolutePath(const char *path)
+{
+    if (!path||!*path)
+        return false;
+    if (isPathSepChar(path[0]))
+        return true;
+    const char * cur = path;
+    bool hadColon = false;
+    for (;;)
+    {
+        switch (*cur++)
+        {
+        case '/':
+        case '\\':
+            return hadColon;
+        case '\0':
+            return false;
+        case ':':
+            hadColon = true;
+            break;
+        }
+    }
+}
+
+//Treat a filename as remote if:
+//  a) The filename begins \\ or //
+//  b) The filename begins xxx://
+//
+bool isRemotePath(const char *path)
+{
+    if (!path||!*path)
+        return false;
+    if (isPathSepChar(path[0]) && isPathSepChar(path[1]))
+        return true;
+
+    const char * cur = path;
+    for (;;)
+    {
+        switch (*cur++)
+        {
+        case '/':
+        case '\\':
+        case '\0':
+            return false;
+        case ':':
+            return cur[0]=='/' && cur[1]=='/';
+        }
+    }
+}
+
 StringBuffer &makeAbsolutePath(const char *relpath,StringBuffer &out, bool mustExist)
 {
-    if (isPathSepChar(relpath[0])&&(relpath[0]==relpath[1]))
+    // NOTE - this function also normalizes the supplied path to remove . and .. references
+    if (isRemotePath(relpath))
     {
         if (mustExist)
         {
@@ -5171,6 +5251,7 @@ StringBuffer &makeAbsolutePath(const char *relpath,StringBuffer &out, bool mustE
         }
         return out.append(relpath); // if remote then already should be absolute
     }
+
 #ifdef _WIN32
     char rPath[MAX_PATH];
     char *filepart;
@@ -5187,6 +5268,7 @@ StringBuffer &makeAbsolutePath(const char *relpath,StringBuffer &out, bool mustE
     }
     out.append(rPath);
 #else
+
     StringBuffer expanded;
     //Expand ~ on the front of a filename - useful for paths not passed on the command line
     //Note, it does not support the ~user/ version of the syntax
@@ -6517,7 +6599,7 @@ extern jlib_decl bool containsFileWildcard(const char * path)
 extern jlib_decl bool isDirectory(const char * path)
 {
     Owned<IFile> file = createIFile(path);
-    return file->isDirectory() == foundYes;
+    return file->isDirectory()==fileBool::foundYes;
 }
 
 // IFileIOCache
@@ -6736,7 +6818,7 @@ extern jlib_decl void removeSentinelFile(IFile * sentinelFile)
 {
     if (sentinelFile)
     {
-        if(sentinelFile->exists() && !sentinelFile->isDirectory())
+        if(sentinelFile->exists() && sentinelFile->isDirectory()!=fileBool::foundYes)
         {
             DBGLOG("Removing sentinel file %s", sentinelFile->queryFilename());
             try
@@ -6864,7 +6946,7 @@ public:
 
 IDirectoryIterator *getSortedDirectoryIterator(IFile *directory, SortDirectoryMode mode, bool rev, const char *mask, bool sub, bool includedirs)
 {
-    if (!directory || !directory->isDirectory())
+    if (!directory || directory->isDirectory()!=fileBool::foundYes)
         throw MakeStringException(-1, "Invalid IFile input in getSortedDirectoryIterator()");
 
     Owned<IDirectoryIterator> files = directory->directoryFiles(mask, sub, includedirs);
@@ -6880,5 +6962,39 @@ IDirectoryIterator *getSortedDirectoryIterator(const char *dirName, SortDirector
 
     Owned<IFile> dir = createIFile(dirName); 
     return getSortedDirectoryIterator(dir, mode, rev, mask, sub, includedirs);
+}
+
+//--------------------------------------------------------------------------------------------------------------------
+
+unsigned __int64 FileIOStats::getStatistic(StatisticKind kind)
+{
+    switch (kind)
+    {
+    case StCycleDiskReadIOCycles:
+        return ioReadCycles.load();
+    case StCycleDiskWriteIOCycles:
+        return ioWriteCycles.load();
+    case StTimeDiskReadIO:
+        return cycle_to_nanosec(ioReadCycles.load());
+    case StTimeDiskWriteIO:
+        return cycle_to_nanosec(ioWriteCycles.load());
+    case StSizeDiskRead:
+        return ioReadBytes.load();
+    case StSizeDiskWrite:
+        return ioWriteBytes.load();
+    case StNumDiskReads:
+        return ioReads.load();
+    case StNumDiskWrites:
+        return ioWrites.load();
+    }
+    return 0;
+}
+
+void FileIOStats::trace()
+{
+    if (ioReads)
+        printf("Reads: %u  Bytes: %u  TimeMs: %u\n", (unsigned)ioReads, (unsigned)ioReadBytes, (unsigned)cycle_to_millisec(ioReadCycles));
+    if (ioWrites)
+        printf("Writes: %u  Bytes: %u  TimeMs: %u\n", (unsigned)ioWrites, (unsigned)ioWriteBytes, (unsigned)cycle_to_millisec(ioWriteCycles));
 }
 

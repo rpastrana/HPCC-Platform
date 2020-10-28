@@ -258,6 +258,7 @@ public:
     virtual IStringIterator & getDebugValues(const char *prop) const;
     virtual int getDebugValueInt(const char * propname, int defVal) const;
     virtual __int64 getDebugValueInt64(const char * propname, __int64 defVal) const;
+    double getDebugValueReal(const char *propname, double defVal) const;
     virtual bool getDebugValueBool(const char * propname, bool defVal) const;
     virtual unsigned getExceptionCount() const;
     virtual IConstWUExceptionIterator & getExceptions() const;
@@ -277,6 +278,7 @@ public:
     virtual WUGraphState queryNodeState(const char *graphName, WUGraphIDType nodeId) const;
     virtual IWUGraphStats *updateStats(const char *graphName, StatisticCreatorType creatorType, const char * creator, unsigned _wfid, unsigned subgraph) const override;
     void clearGraphProgress() const;
+    virtual void import(IPropertyTree *wuTree, IPropertyTree *graphProgressTree) {}; //No GraphProgressTree in CLocalWorkUnit.
 
     virtual const char *queryJobName() const;
     virtual IConstWUPlugin * getPluginByName(const char * name) const;
@@ -349,10 +351,10 @@ public:
     virtual IStringVal & getAbortBy(IStringVal & str) const;
     virtual unsigned __int64 getAbortTimeStamp() const;
 
-    void clearExceptions();
+    void clearExceptions(const char *source=nullptr);
     void commit();
     IWUException *createException();
-    void addProcess(const char *type, const char *instance, unsigned pid, const char *log);
+    void addProcess(const char *type, const char *instance, unsigned pid, unsigned max, const char *pattern, bool singleLog, const char *log);
     void setAction(WUAction action);
     void setApplicationValue(const char * application, const char * propname, const char * value, bool overwrite);
     void setApplicationValueInt(const char * application, const char * propname, int value, bool overwrite);
@@ -576,6 +578,8 @@ protected:
     void loadLibraries() const;
     void loadClusters() const;
     void checkAgentRunning(WUState & state);
+    bool hasApplicationValue(const char * application, const char * propname) const;
+    bool resolveFilePrefix(StringBuffer & prefix, const char * queue) const;
 
     // Implemented by derived classes
     virtual IPropertyTree *getGraphProgressTree() const { return NULL; };
@@ -621,6 +625,8 @@ public:
     // interface IWorkUnitFactory - some are left for derived classes
 
     virtual IWorkUnit * createWorkUnit(const char * app, const char * user, ISecManager *secmgr, ISecUser *secuser);
+    virtual void importWorkUnit(const char *zapReportFileName, const char *zapReportPassword,
+        const char *importDir, const char *app, const char *user, ISecManager *secMgr, ISecUser *secUser);
     virtual bool deleteWorkUnit(const char * wuid, ISecManager *secmgr, ISecUser *secuser);
     virtual bool deleteWorkUnitEx(const char * wuid, bool throwException, ISecManager *secmgr, ISecUser *secuser);
     virtual IConstWorkUnit * openWorkUnit(const char * wuid, ISecManager *secmgr, ISecUser *secuser);
@@ -642,10 +648,11 @@ public:
     virtual unsigned numWorkUnits() = 0;
     virtual IConstWorkUnitIterator *getScheduledWorkUnits(ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
     virtual void descheduleAllWorkUnits(ISecManager *secmgr, ISecUser *secuser);
-    virtual IConstQuerySetQueryIterator * getQuerySetQueriesSorted(WUQuerySortField *sortorder, WUQuerySortField *filters, const void *filterbuf, unsigned startoffset, unsigned maxnum, __int64 *cachehint, unsigned *total, const MapStringTo<bool> *subset);
+    virtual IConstQuerySetQueryIterator * getQuerySetQueriesSorted(WUQuerySortField *sortorder, WUQuerySortField *filters, const void *filterbuf,
+        unsigned startoffset, unsigned maxnum, __int64 *cachehint, unsigned *total, const MapStringTo<bool> *subset, const MapStringTo<bool> *suspendedByCluster);
     virtual bool isAborting(const char *wuid) const;
     virtual void clearAborting(const char *wuid);
-    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, bool returnOnWaitState) = 0;
+    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled,  std::list<WUState> expectedStates) = 0;
 
     virtual StringArray &getUniqueValues(WUSortField field, const char *prefix, StringArray &result) const
     {

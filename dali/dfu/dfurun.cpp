@@ -718,7 +718,7 @@ public:
             RemoteFilename dirfn;
             dirfn.setPath(rfn.queryEndpoint(),dir.str());
             Owned<IFile> dirf = createIFile(dirfn);
-            if (!dirf||(dirf->isDirectory()!=foundYes)) {
+            if (!dirf||(dirf->isDirectory()!=fileBool::foundYes)) {
                 OERRLOG("MONITOR: %s is not a directory in DFU WUID %s",dir.str(),wu->queryId());
                 if (raiseexception)
                     throw MakeStringException(-1,"MONITOR: %s is not a directory in DFU WUID %s",dir.str(),wu->queryId());
@@ -1243,6 +1243,9 @@ public:
 
                     if (options->getSubfileCopy())
                         opttree->setPropBool("@compress",srcFile->isCompressed());
+
+                    if (options->getNoCommon())
+                        opttree->setPropBool("@noCommon", true);
 
                     if (foreigncopy)
                     {

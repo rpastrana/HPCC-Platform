@@ -140,7 +140,7 @@ void SubStringInfo::bindToFrom(HqlCppTranslator & translator, BuildCtx & ctx)
 
 //---------------------------------------------------------------------------
 
-WorkflowItem::WorkflowItem(IHqlExpression * _function) : wfid(999999999), function(_function), workflowOp(no_funcdef)
+WorkflowItem::WorkflowItem(IHqlExpression * _function) : wfid(999999999), workflowOp(no_funcdef), function(_function)
 {
     IHqlExpression * body = function->queryChild(0);
     assertex(body->getOperator() == no_outofline);
@@ -495,6 +495,7 @@ bool canRemoveStringCast(ITypeInfo * to, ITypeInfo * from)
                 //Data never calls a conversion function...
                 if ((srcset == tgtset) || (to->getTypeCode() == type_data) || (from->getTypeCode() == type_data))
                     return true;
+                return false;
             }
         case type_qstring:
             return false;
@@ -1546,7 +1547,6 @@ void HqlCppTranslator::cacheOptions()
 
     //Some compound flags, which provide defaults for various other options.
     bool paranoid = getDebugFlag("paranoid", false);
-    bool releaseMode = getDebugFlag("release", true);
 
     struct DebugOption 
     {
@@ -1850,6 +1850,7 @@ void HqlCppTranslator::cacheOptions()
         DebugOption(options.addDefaultBloom,"addDefaultBloom", true),
         DebugOption(options.newDiskReadMapping, "newDiskReadMapping", true),
         DebugOption(options.transformNestedSequential, "transformNestedSequential", true),
+        DebugOption(options.preserveWhenSequential, "preserveWhenSequential", true),
         DebugOption(options.forceAllProjectedDiskSerialized, "internalForceAllProjectedDiskSerialized", false),  // Delete in 8.0 once new code has been proved in anger
         DebugOption(options.newIndexReadMapping, "newIndexReadMapping", false), // Not yet enabled due to problems with merging mapped fields and roxie/thor integration
         DebugOption(options.checkDuplicateThreshold, "checkDuplicateThreshold", 0), // If non zero, create a warning if duplicates > this percentage increase
@@ -1858,6 +1859,8 @@ void HqlCppTranslator::cacheOptions()
         DebugOption(options.genericDiskReads, "genericDiskReads", false),
         DebugOption(options.generateActivityFormats, "generateActivityFormats", false),
         DebugOption(options.generateDiskFormats, "generateDiskFormats", false),
+        DebugOption(options.maxOptimizeSize, "maxOptimizeSize", 5),             // Remove the overhead from very small functions e.g. function prolog
+        DebugOption(options.minNoOptimizeSize, "minNoOptimizeSize", 10000),     // functions larger than this will take a long time to optimize, better to not try
     };
 
     //get options values from workunit
@@ -2299,7 +2302,7 @@ void HqlCppTranslator::exportMappings(IWorkUnit * wu) const
     errorProcessor->exportMappings(wu);
 }
 
-void HqlCppTranslator::ThrowStringException(int code,const char *format, ...) const
+void HqlCppTranslator::throwStringExceptionV(int code,const char *format, ...) const
 {
     IHqlExpression * location = queryActiveActivityLocation();
     if (errorProcessor && location)
@@ -2854,7 +2857,7 @@ void HqlCppTranslator::buildIncrementAssign(BuildCtx & ctx, IHqlExpression * tar
         }
     }
 
-    OwnedHqlExpr plus = createValue(no_add, LINK(target), castValue.getClear());
+    OwnedHqlExpr plus = createValue(no_add, LINK(type), LINK(target), castValue.getClear());
     buildAssign(condctx, target, plus);
 }
 
@@ -2886,7 +2889,7 @@ void HqlCppTranslator::buildIncrementAssign(BuildCtx & ctx, const CHqlBoundTarge
         }
     }
 
-    OwnedHqlExpr plus = createValue(no_add, target.getTranslatedExpr(), castValue.getClear());
+    OwnedHqlExpr plus = createValue(no_add, LINK(type), target.getTranslatedExpr(), castValue.getClear());
     buildExprAssign(ctx, target, plus);
 }
 
@@ -6048,6 +6051,23 @@ void HqlCppTranslator::doBuildCall(BuildCtx & ctx, const CHqlBoundTarget * tgt, 
         }
         returnByReference = true;
         break;
+    case type_decimal:
+        {
+            OwnedHqlExpr result;
+            if (tgt)
+            {
+                doneAssign = true;
+                result.set(tgt->expr);
+            }
+            else
+            {
+                result.setown(ctx.getTempDeclare(retType, NULL));
+            }
+            args.append(*createValue(no_reference, result->getType(), LINK(result)));
+            localBound.expr.set(result);
+            returnByReference = true;
+            break;
+        }
     case type_set:
         {
             translateSetReturn = !newFormatSet;
@@ -6358,7 +6378,13 @@ void HqlCppTranslator::doBuildCall(BuildCtx & ctx, const CHqlBoundTarget * tgt, 
 
     CHqlBoundExpr boundTimer, boundStart;
     if (external->hasAttribute(timeAtom))
-        buildStartTimer(ctx, boundTimer, boundStart, str(external->queryId()));
+    {
+        StringBuffer nameTemp;
+        const char * name = str(external->queryId());
+        if (getStringValue(nameTemp, queryAttributeChild(external, timeAtom, 0)).length())
+            name = nameTemp;
+        buildStartTimer(ctx, boundTimer, boundStart, name);
+    }
 
     //either copy the integral value across, or a var string to fixed string
     if (returnMustAssign)
@@ -9333,8 +9359,8 @@ void HqlCppTranslator::doBuildAssignHashElement(BuildCtx & ctx, HashCodeCreator 
             {
                 creator.beginCondition(ctx);
                 BuildCtx iterctx(ctx);
-                buildDatasetIterate(iterctx, elem, false);
-                doBuildAssignHashElement(iterctx, creator, elem->queryNormalizedSelector(), elem->queryRecord());
+                if (buildDatasetIterate(iterctx, elem, false))
+                    doBuildAssignHashElement(iterctx, creator, elem->queryNormalizedSelector(), elem->queryRecord());
                 creator.endCondition(iterctx);
                 return;
             }
@@ -10056,7 +10082,7 @@ bool HqlCppTranslator::doBuildExprInfiniteSubString(BuildCtx & ctx, SubStringInf
 
     OwnedHqlExpr length;
     if (start && !isZero(start))
-        length.setown(createValue(no_sub, info.boundTo.expr.getLink(), LINK(start)));
+        length.setown(createValue(no_sub, info.boundTo.getType(), info.boundTo.expr.getLink(), LINK(start)));
     else
         length.setown(info.boundTo.expr.getLink());
     tgt.length.setown(ensureExprType(length, sizetType));
@@ -10785,8 +10811,8 @@ void HqlCppTranslator::assignAndCast(BuildCtx & ctx, const CHqlBoundTarget & tar
                     callProcedure(ctx, strToQStrId, args);
                     break;
                 }
-                //fall through
             }
+            // fallthrough
         default:
             //Need to go via a temporary string.
             OwnedHqlExpr temp = pure.getTranslatedExpr();
@@ -11613,10 +11639,14 @@ void HqlCppTranslator::assignCastUnknownLength(BuildCtx & ctx, const CHqlBoundTa
                     break;
                 case type_string:
                 case type_data:
+                {
                     funcName = codepageToUtf8XId;
                     codepageParam = createConstant(from->queryCharset()->queryCodepageName());
-                    pure.expr.setown(createValue(no_typetransfer, makeStringType(from->getStringLen(), NULL, NULL), LINK(pure.expr)));
+                    ITypeInfo * type = makeStringType(to->getStringLen(), NULL, NULL);
+                    OwnedHqlExpr translated = createValue(no_typetransfer, type, pure.getTranslatedExpr());
+                    buildExpr(ctx, translated, pure);
                     break;
+                }
                 default:
                     CHqlBoundExpr recast;
                     ITypeInfo * type = makeStringType(to->getStringLen(), NULL, NULL);
@@ -11943,6 +11973,7 @@ void HqlCppTranslator::doBuildUserFunctionReturn(BuildCtx & ctx, ITypeInfo * typ
             doBuildUserFunctionReturn(subctx, type, branches->queryChild(1));
             break;
         }
+        // fallthrough
     default:
         {
             OwnedHqlExpr optimized = spotScalarCSE(value, NULL, queryOptions().spotCseInIfDatasetConditions);
@@ -12121,7 +12152,10 @@ void HqlCppTranslator::buildScriptFunctionDefinition(BuildCtx &ctx, IHqlExpressi
         createParam.append(",NULL");
     createParam.append(");");
     funcctx.addQuoted(createParam);
-    funcctx.addQuoted("EmbedContextBlock __b(__ctx);");
+    if (threadlocal)
+        funcctx.addQuoted("EmbedContextBlock __b(__ctx, ctx);");
+    else
+        funcctx.addQuoted("EmbedContextBlock __b(__ctx);");
     OwnedHqlExpr ctxVar = createVariable("__ctx", makeBoolType());
 
     HqlExprArray scriptArgs;

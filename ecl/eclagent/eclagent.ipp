@@ -30,7 +30,7 @@
 #include "workflow.hpp"
 #include "roxierow.hpp"
 #include "roxiedebug.hpp"
-#include <stdexcept> 
+#include <stdexcept>
 #include "thorplugin.hpp"
 #include "thorcommon.hpp"
 #include "enginecontext.hpp"
@@ -42,6 +42,8 @@
 class EclGraph;
 typedef unsigned __int64 graphid_t;
 typedef unsigned __int64 activityid_t;
+
+extern Owned<IPropertyTree> agentTopology;
 
 //=================================================================================
 
@@ -115,28 +117,28 @@ public:
     {
         return ctx->queryResolveFilesLocally();
     }
-    virtual bool queryRemoteWorkunit() 
-    { 
-        return ctx->queryRemoteWorkunit(); 
+    virtual bool queryRemoteWorkunit()
+    {
+        return ctx->queryRemoteWorkunit();
     }
-    virtual bool queryWriteResultsToStdout() 
-    { 
+    virtual bool queryWriteResultsToStdout()
+    {
         return ctx->queryWriteResultsToStdout();
-    }   
+    }
     virtual outputFmts queryOutputFmt()
-    { 
+    {
         return ctx->queryOutputFmt();
     }
     virtual VOID outputFormattedResult(const char *name, unsigned sequence, bool close)
-    { 
+    {
         return ctx->outputFormattedResult(name, sequence, close);
     }
     virtual unsigned __int64 queryStopAfter()
-    { 
+    {
         return ctx->queryStopAfter();
     }
-    virtual IOrderedOutputSerializer * queryOutputSerializer() 
-    { 
+    virtual IOrderedOutputSerializer * queryOutputSerializer()
+    {
         return ctx->queryOutputSerializer();
     }
     virtual void setWorkflowCondition(bool value)
@@ -162,10 +164,6 @@ public:
     virtual IWorkUnit *updateWorkUnit() const
     {
         return ctx->updateWorkUnit();
-    }
-    virtual void unlockWorkUnit()
-    {
-        ctx->unlockWorkUnit();
     }
     virtual ILocalOrDistributedFile *resolveLFN(const char *logicalName, const char *errorTxt, bool optional, bool noteRead, bool write, StringBuffer * expandedlfn, bool isPrivilegedUser)
     {
@@ -195,9 +193,9 @@ public:
     {
         return ctx->resolveName(in, out, outlen);
     }
-    virtual void logFileAccess(IDistributedFile * file, char const * component, char const * type)
+    virtual void logFileAccess(IDistributedFile * file, char const * component, char const * type, EclGraph & graph)
     {
-        ctx->logFileAccess(file, component, type);
+        ctx->logFileAccess(file, component, type, graph);
     }
     virtual void addWuException(const char * text, unsigned code, unsigned severity, char const * source)
     {
@@ -215,23 +213,26 @@ public:
     {
         return ctx->createGraphLoopResults();
     }
-    
+
     virtual const char *queryAllowedPipePrograms()
     {
         return ctx->queryAllowedPipePrograms();
     }
-    
+
     virtual IGroup *getHThorGroup(StringBuffer &name)
     {
         return ctx->getHThorGroup(name);
     }
-    
+
     virtual const char *queryWuid()
     {
         return ctx->queryWuid();
     }
 
-    virtual void updateWULogfile()                  { return ctx->updateWULogfile(); }
+    virtual void updateWULogfile(IWorkUnit *outputWU)
+    {
+        return ctx->updateWULogfile(outputWU);
+    }
 
     virtual RecordTranslationMode getLayoutTranslationMode() const override
     {
@@ -246,6 +247,10 @@ public:
     {
         ctx->addWuExceptionEx(text, code, severity, audience, source);
     }
+    virtual cost_type queryAgentMachineCost() const override
+    {
+        return ctx->queryAgentMachineCost();
+    };
 
 protected:
     IAgentContext * ctx;
@@ -277,6 +282,10 @@ public:
 
 protected:
     virtual void begin();
+
+    virtual bool getParallelFlag() const;
+    virtual unsigned getThreadNumFlag() const;
+
     virtual void end();
     virtual void schedulingStart();
     virtual bool schedulingPull();
@@ -324,9 +333,9 @@ class CHThorDebugContext : extends CBaseServerDebugContext
 {
     Owned<CHThorDebugSocketListener> listener;
     EclAgent *eclAgent;
-    
+
 public:
-    CHThorDebugContext(const IContextLogger &_logctx, IPropertyTree *_queryXGMML, EclAgent *_eclAgent); 
+    CHThorDebugContext(const IContextLogger &_logctx, IPropertyTree *_queryXGMML, EclAgent *_eclAgent);
     inline unsigned queryPort();
     inline EclAgent * getEclAgent() { return eclAgent; };
 
@@ -347,7 +356,6 @@ private:
     friend class EclAgentWorkflowMachine;
 
     Owned<EclAgentWorkflowMachine> workflow;
-    mutable Owned<IWorkUnit> wuWrite;
     Owned<IConstWorkUnit> wuRead;
     Owned<roxiemem::IRowManager> rowManager;
     StringAttr wuid;
@@ -365,7 +373,7 @@ private:
     bool writeResultsToStdout;
     bool useNewDiskReadActivity;
     Owned<IUserDescriptor> standAloneUDesc;
-    outputFmts outputFmt;
+    outputFmts outputFmt = ofSTD;
     unsigned __int64 stopAfter;
     mutable CriticalSection wusect;
     StringArray tempFiles;
@@ -379,17 +387,17 @@ private:
     unsigned int clusterWidth;
     Owned<IDistributedFileTransaction> superfiletransaction;
     mutable Owned<IRowAllocatorMetaActIdCache> allocatorMetaCache;
-    Owned<EclGraph> activeGraph;
+    CriticalSection activeGraphCritSec;
+    PointerArrayOf<EclGraph> activeGraphs;
     Owned<CHThorDebugContext> debugContext;
     Owned<IProbeManager> probeManager;
     StringAttr allowedPipeProgs;
     SafePluginMap *pluginMap;
-    IProperties *globals;
-    IPropertyTree *config;
     ILogMsgHandler *logMsgHandler;
     StringAttr agentTempDir;
     Owned<IOrderedOutputSerializer> outputSerializer;
     int retcode;
+    cost_type agentMachineCost = 0;
 
 private:
     void doSetResultString(type_t type, const char * stepname, unsigned sequence, int len, const char *val);
@@ -397,6 +405,7 @@ private:
     StringBuffer & getTempfileBase(StringBuffer & buff);
     const char *queryTempfilePath();
     void deleteTempFiles();
+    void restoreCluster(IWorkUnit *wu);
 
     bool checkPersistUptoDate(IRuntimeWorkflowItem & item, const char * logicalName, unsigned eclCRC, unsigned __int64 allCRC, bool isFile, StringBuffer & errText);
     bool isPersistUptoDate(Owned<IRemoteConnection> &persistLock, IRuntimeWorkflowItem & item, const char * logicalName, unsigned eclCRC, unsigned __int64 allCRC, bool isFile);
@@ -420,6 +429,9 @@ private:
     virtual bool getWorkunitResultFilename(StringBuffer & diskFilename, const char * wuid, const char * name, int seq);
     virtual IDebuggableContext *queryDebugContext() const { return debugContext; };
 
+    //protected by critical section
+    EclGraph * addGraph(const char * graphName);
+    void removeGraph(EclGraph * g);
     EclGraph * loadGraph(const char * graphName, IConstWorkUnit * wu, ILoadedDllEntry * dll, bool isLibrary);
     virtual bool forceNewDiskReadActivity() const { return useNewDiskReadActivity; }
 
@@ -429,11 +441,13 @@ private:
     public:
         Semaphore sem;
         bool stopping;
-        unsigned guillotinetimeout;
-        cAbortMonitor(EclAgent &_parent) : Thread("EclAgent Abort Monitor"), parent(_parent) { guillotinetimeout=0; stopping=false; }
+        unsigned guillotinetimeout = 0;
+        cost_type guillotineCost = 0;
+        cAbortMonitor(EclAgent &_parent) : Thread("EclAgent Abort Monitor"), parent(_parent) { guillotinetimeout=0; guillotineCost=0; stopping=false; }
         int  run()  { parent.abortMonitor(); return 0; }
         void stop() { stopping = true; sem.signal(); join(1000*10); }
         void setGuillotineTimeout(unsigned secs) { guillotinetimeout = secs; sem.signal(); }
+        void setGuillotineCost(cost_type cost) { guillotineCost = cost; }
         bool fireException(IException *e)
         {
             StringBuffer text;
@@ -446,7 +460,7 @@ private:
 public:
     IMPLEMENT_IINTERFACE;
 
-    EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bool _resetWorkflow, bool _noRetry, char const * _logname, const char *_allowedPipeProgs, IPropertyTree *_queryXML, IProperties *_globals, IPropertyTree *_config, ILogMsgHandler * _logMsgHandler);
+    EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bool _resetWorkflow, bool _noRetry, char const * _logname, const char *_allowedPipeProgs, IPropertyTree *_queryXML, ILogMsgHandler * _logMsgHandler);
     ~EclAgent();
 
     void setBlocked();
@@ -575,12 +589,11 @@ public:
     virtual void getLastFailMessage(size32_t & outLen, char * & outStr, const char * tag);
     virtual void getEventName(size32_t & outLen, char * & outStr);
     virtual void getEventExtra(size32_t & outLen, char * & outStr, const char * tag);
-    //virtual void logException(IEclException *e);  
+    //virtual void logException(IEclException *e);
     virtual char *resolveName(const char *in, char *out, unsigned outlen);
-    virtual void logFileAccess(IDistributedFile * file, char const * component, char const * type);
+    virtual void logFileAccess(IDistributedFile * file, char const * component, char const * type, EclGraph & graph);
     virtual ILocalOrDistributedFile  *resolveLFN(const char *logicalName, const char *errorTxt, bool optional, bool noteRead, bool write, StringBuffer * expandedlfn, bool isPrivilegedUser);
 
-    virtual void executeThorGraph(const char * graphName);
     virtual void executeGraph(const char * graphName, bool realThor, size32_t parentExtractSize, const void * parentExtract);
     virtual IHThorGraphResults * executeLibraryGraph(const char * libraryName, unsigned expectedInterfaceHash, unsigned activityId, const char * embeddedGraphName, const byte * parentExtract);
     virtual IThorChildGraph * resolveChildQuery(__int64 subgraphId, IHThorArg * colocal);
@@ -597,8 +610,8 @@ public:
 
     void addException(ErrorSeverity severity, const char * source, unsigned code, const char * text, const char * filename, unsigned lineno, unsigned column, bool failOnError, bool isAbort);
     void addExceptionEx(ErrorSeverity severity, MessageAudience aud, const char * source, unsigned code, const char * text, const char * filename, unsigned lineno, unsigned column, bool failOnError, bool isAbort);
-    void logException(IException *e);  
-    void logException(WorkflowException *e);  
+    void logException(IException *e);
+    void logException(WorkflowException *e);
     void logException(std::exception & e);
     void logException(ErrorSeverity severity, MessageAudience aud, unsigned code, const char * text, bool isAbort);
 
@@ -615,9 +628,8 @@ public:
     virtual unsigned getWorkflowId();
     virtual IConstWorkUnit *queryWorkUnit() const override;  // no link
     virtual IWorkUnit *updateWorkUnit() const; // links
-    virtual void unlockWorkUnit();      
     virtual void reloadWorkUnit();
-    void addTimings();
+    void addTimings(IWorkUnit *w);
 
 // ICodeContext
     virtual unsigned getGraphLoopCounter() const override { return 0; }
@@ -682,16 +694,21 @@ public:
     {
         return allowedPipeProgs.get();
     }
-    
+
     IGroup *getHThorGroup(StringBuffer &out);
-    
-    virtual void updateWULogfile();
+
+    virtual void updateWULogfile(IWorkUnit *w);
 
 // roxiemem::IRowAllocatorMetaActIdCacheCallback
     virtual IEngineRowAllocator *createAllocator(IRowAllocatorMetaActIdCache * cache, IOutputMetaData *meta, unsigned activityId, unsigned id, roxiemem::RoxieHeapFlags flags) const
     {
         return createRoxieRowAllocator(cache, *rowManager, meta, activityId, id, flags);
     }
+    virtual cost_type queryAgentMachineCost() const
+    {
+        return agentMachineCost;
+    }
+
 };
 
 //---------------------------------------------------------------------------
@@ -932,12 +949,12 @@ private:
 
         IOutputMetaData * queryOutputMeta() const { return in->queryOutputMeta(); }
 
-        void ready() 
+        void ready()
         {
             in->ready();
         }
-        
-        void stop() 
+
+        void stop()
         {
             in->stop();
         }
@@ -963,7 +980,7 @@ private:
                 return true;
             return false;
         }
-    
+
         const void *nextRow()
         {
             const void *ret = in->nextRow();
@@ -984,7 +1001,7 @@ private:
             }
             if (in)
                 in->updateProgress(progress);
-        }   
+        }
     };
 
     RedirectedAgentContext subgraphAgentContext;
@@ -1109,7 +1126,7 @@ class EclGraph : public CInterface
         }
 
         IEclGraphResults * resolveLocalQuery(__int64 activityId)
-        { 
+        {
             return container->resolveLocalQuery((unsigned)activityId);
         }
         void setContainer(EclGraph * _container)

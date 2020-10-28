@@ -244,7 +244,7 @@ void ViewFieldECLTransformer::transform(unsigned & lenTarget, char * & target, u
     Owned<IErrorReceiver> errorReporter = createThrowingErrorReceiver();
     OwnedHqlExpr call = createBoundFunction(errorReporter, function, actuals, NULL, true);
     OwnedHqlExpr castValue = ensureExprType(call, utf8Type);
-    OwnedHqlExpr folded = quickFoldExpression(castValue, NULL, 0);
+    OwnedHqlExpr folded = quickFoldExpression(castValue, 0);
     IValue * foldedValue = folded->queryValue();
     assertex(foldedValue);
     unsigned len = foldedValue->queryType()->getStringLen();
@@ -252,7 +252,7 @@ void ViewFieldECLTransformer::transform(unsigned & lenTarget, char * & target, u
     unsigned size = rtlUtf8Size(len, data);
     lenTarget = len;
     target = (char *)rtlMalloc(size);
-    memcpy(target, data, size);
+    memcpy_iflen(target, data, size);
 }
 
 void ViewFieldECLTransformer::transform(unsigned & lenTarget, char * & target, unsigned lenSource, const char * source)

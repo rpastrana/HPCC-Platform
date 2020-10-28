@@ -17,7 +17,7 @@
 #ifndef _EsdlBinding_HPP__
 #define _EsdlBinding_HPP__
 
-#include "esdl_svc_custom.hpp"
+#include "esdl_script.hpp"
 #include "esdl_def.hpp"
 #include "esdl_transformer.hpp"
 #include "esdl_def_helper.hpp"
@@ -80,8 +80,12 @@ private:
     Owned<ILoggingManager> m_oLoggingManager;
     bool m_bGenerateLocalTrxId;
     MapStringToMyClass<IEsdlCustomTransform> m_customRequestTransformMap;
-    Owned<CEsdlCustomTransform> m_serviceLevelRequestTransform;
+    Owned<IEsdlCustomTransform> m_serviceLevelRequestTransform;
     bool m_serviceLevelCrtFail = false;
+    using MethodAccessMap = MapStringTo<SecAccessFlags>;
+    using MethodAccessMaps = MapStringTo<Owned<MethodAccessMap> >;
+    MethodAccessMaps            m_methodAccessMaps;
+    StringBuffer                m_defaultFeatureAuth;
 
 #ifndef LINK_STATICALLY
     Owned<ILoadedDllEntry> javaPluginDll;
@@ -164,6 +168,8 @@ public:
     void addServiceLevelRequestTransform(IPropertyTree *customRequestTransform);
     void addMethodLevelRequestTransform(const char *method, IPropertyTree &methodCfg, IPropertyTree *customRequestTransform);
 
+    IEsdlScriptContext* checkCreateEsdlServiceScriptContext(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, IPropertyTree *tgtcfg);
+
     virtual void handleServiceRequest(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, Owned<IPropertyTree> &tgtcfg, Owned<IPropertyTree> &tgtctx, const char *ns, const char *schema_location, IPropertyTree *req, StringBuffer &out, StringBuffer &logdata, unsigned int flags);
     virtual void generateTransactionId(IEspContext & context, StringBuffer & trxid)=0;
     void generateTargetURL(IEspContext & context, IPropertyTree *srvinfo, StringBuffer & url, bool isproxy);
@@ -175,11 +181,12 @@ public:
     virtual void processHeaders(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, const char *ns, StringBuffer &req, StringBuffer &headers){};
     virtual void processRequest(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, const char *ns, StringBuffer &req) {};
     virtual void processResponse(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, const char *ns, StringBuffer &resp) {};
+    void prepareFinalRequest(IEspContext &context, IEsdlScriptContext *scriptContext, Owned<IPropertyTree> &tgtcfg, Owned<IPropertyTree> &tgtctx, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, bool isroxie, const char* ns, StringBuffer &reqcontent, StringBuffer &reqProcessed);
     virtual void createServersList(IEspContext &context, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, StringBuffer &servers) {};
-    virtual bool handleResultLogging(IEspContext &espcontext, IPropertyTree * reqcontext, IPropertyTree * request,  const char * rawreq, const char * rawresp, const char * finalresp, const char * logdata);
+    virtual bool handleResultLogging(IEspContext &espcontext, IEsdlScriptContext *scriptContext, IPropertyTree * reqcontext, IPropertyTree * request,  const char * rawreq, const char * rawresp, const char * finalresp, const char * logdata);
     void handleEchoTest(const char *mthName, IPropertyTree *req, StringBuffer &soapResp, ESPSerializationFormat format);
     void handlePingRequest(const char *srvName, StringBuffer &out, unsigned int flags);
-    virtual void handleFinalRequest(IEspContext &context, IEsdlCustomTransform *srvCrt, IEsdlCustomTransform *mthCrt, Owned<IPropertyTree> &tgtcfg, Owned<IPropertyTree> &tgtctx, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, const char *ns, StringBuffer& req, StringBuffer &out, bool isroxie, bool isproxy, StringBuffer &rawreq);
+    virtual void handleFinalRequest(IEspContext &context, IEsdlScriptContext *scriptContext, Owned<IPropertyTree> &tgtcfg, Owned<IPropertyTree> &tgtctx, IEsdlDefService &srvdef, IEsdlDefMethod &mthdef, const char *ns, StringBuffer& req, StringBuffer &out, bool isroxie, bool isproxy, StringBuffer &rawreq);
     void getSoapBody(StringBuffer& out,StringBuffer& soapresp);
     void getSoapError(StringBuffer& out,StringBuffer& soapresp,const char *,const char *);
 
@@ -237,7 +244,7 @@ public:
     IMPLEMENT_IINTERFACE;
 
     EsdlBindingImpl();
-    EsdlBindingImpl(IPropertyTree* cfg, const char *bindname=NULL, const char *procname=NULL);
+    EsdlBindingImpl(IPropertyTree* cfg, IPropertyTree *esdlArchive, const char *bindname=NULL, const char *procname=NULL);
 
     virtual ~EsdlBindingImpl()
     {
@@ -250,7 +257,7 @@ public:
 
     virtual void initEsdlServiceInfo(IEsdlDefService &srvdef);
 
-    virtual void addService(const char * name, const char * host, unsigned short port, IEspService & service);
+    void addService(IPropertyTree *esdlArchive, const char * name, const char * host, unsigned short port, IEspService & service);
 
     int onGetInstantQuery(IEspContext &context, CHttpRequest* request, CHttpResponse* response,    const char *serviceName, const char *methodName);
     int HandleSoapRequest(CHttpRequest* request, CHttpResponse* response);
@@ -366,6 +373,8 @@ private:
     void saveDESDLState();
     IPropertyTree * fetchESDLBinding(const char *process, const char *bindingName, const char * stateFileName);
     bool loadDefinitions(const char * espServiceName, Owned<IEsdlDefinition>& esdl, IPropertyTree * config, StringBuffer & loadedServiceName, const char * stateFileName);
+    bool loadLocalDefinitions(IPropertyTree *esdlArchive, const char * espServiceName, Owned<IEsdlDefinition>& esdl, IPropertyTree * config, StringBuffer & loadedServiceName);
+
 };
 
 #endif //_EsdlBinding_HPP__

@@ -26,6 +26,8 @@
 #include "sechandler.hpp"
 #include "espprotocol.hpp"
 #include "espsecurecontext.hpp"
+#include "ldapsecurity.ipp"
+#include "dasds.hpp"
 
 class CEspContext : public CInterface, implements IEspContext
 {
@@ -86,6 +88,7 @@ private:
     Owned<IEspSecureContext> m_secureContext;
 
     StringAttr   m_transactionID;
+    IHttpMessage* m_request;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -114,6 +117,8 @@ public:
     ~CEspContext()
     {
         flushTraceSummary();
+        if (m_txSummary)
+            m_txSummary->log(getTxSummaryLevel());
     }
     virtual void addOptions(unsigned opts){options|=opts;}
     virtual void removeOptions(unsigned opts){opts&=~opts;}
@@ -442,6 +447,16 @@ public:
         }
     }
 
+    virtual void ensureSuperUser(unsigned excCode, const char* excMsg)
+    {
+        CLdapSecManager* secmgr = dynamic_cast<CLdapSecManager*>(m_secmgr.get());
+        if (secmgr && !secmgr->isSuperUser(m_user.get()))
+        {
+            setAuthStatus(AUTH_STATUS_NOACCESS);
+            throw makeStringException(excCode, excMsg);
+        }
+    }
+
     void AuditMessage(AuditType type, const char *filterType, const char *title, const char *parms, ...) __attribute__((format(printf, 5, 6)));
     void AuditMessage(AuditType type, const char *filterType, const char *title);
 
@@ -490,34 +505,34 @@ public:
 
     virtual void addTraceSummaryValue(LogLevel logLevel, const char *name, const char *value)
     {
-        if (m_txSummary && (getTxSummaryLevel() >= logLevel))
-            m_txSummary->append(name, value);
+        if (m_txSummary && !isEmptyString(name))
+            m_txSummary->append(name, value, logLevel);
     }
 
     virtual void addTraceSummaryValue(LogLevel logLevel, const char *name, __int64 value)
     {
-        if (m_txSummary && (getTxSummaryLevel() >= logLevel))
-            m_txSummary->append(name, value);
+        if (m_txSummary && !isEmptyString(name))
+            m_txSummary->append(name, value, logLevel);
     }
 
     virtual void addTraceSummaryTimeStamp(LogLevel logLevel, const char *name)
     {
-        if (m_txSummary && (getTxSummaryLevel() >= logLevel) && name && *name)
-            m_txSummary->append(name, m_txSummary->getElapsedTime(), "ms");
+        if (m_txSummary && !isEmptyString(name))
+            m_txSummary->append(name, m_txSummary->getElapsedTime(), logLevel, "ms");
     }
     virtual void flushTraceSummary()
     {
         updateTraceSummaryHeader();
-        if (m_txSummary && (getTxSummaryLevel() >= LogMin))
+        if (m_txSummary)
         {
-            m_txSummary->set("auth", authStatus.get());
-            m_txSummary->append("total", m_processingTime, "ms");
+            m_txSummary->set("auth", authStatus.get(), LogMin);
+            m_txSummary->append("total", m_processingTime, LogMin, "ms");
         }
     }
     virtual void addTraceSummaryCumulativeTime(LogLevel logLevel, const char* name, unsigned __int64 time)
     {
-        if (m_txSummary && (getTxSummaryLevel() >= logLevel))
-            m_txSummary->updateTimer(name, time);
+        if (m_txSummary && !isEmptyString(name))
+            m_txSummary->updateTimer(name, time, logLevel);
     }
     virtual CumulativeTimer* queryTraceSummaryCumulativeTimer(const char* name)
     {
@@ -577,6 +592,14 @@ public:
     virtual const char * queryTransactionID()
     {
         return m_transactionID.get();
+    }
+    virtual void setRequest(IHttpMessage* req)
+    {
+        m_request = req;
+    }
+    virtual IHttpMessage* queryRequest()
+    {
+        return m_request;
     }
 };
 
@@ -661,12 +684,12 @@ bool CEspContext::isMethodAllowed(double version, const char* optional, const ch
 
 void CEspContext::updateTraceSummaryHeader()
 {
-    if (m_txSummary && (getTxSummaryLevel() >= LogMin))
+    if (m_txSummary)
     {
-        m_txSummary->set("activeReqs", m_active);
+        m_txSummary->set("activeReqs", m_active, LogMin);
         VStringBuffer user("%s%s%s", (queryUserId() ? queryUserId() : ""), (m_peer.length() ? "@" : ""), m_peer.str());
         if (!user.isEmpty())
-            m_txSummary->set("user", user.str());
+            m_txSummary->set("user", user.str(), LogMin);
 
         VStringBuffer reqSummary("%s", httpMethod.isEmpty() ? "" : httpMethod.get());
         if (!m_servName.isEmpty() || !servMethod.isEmpty())
@@ -685,11 +708,11 @@ void CEspContext::updateTraceSummaryHeader()
             reqSummary.append("v").append(m_clientVer);
         }
         if (!reqSummary.isEmpty())
-            m_txSummary->set("req", reqSummary.str());
+            m_txSummary->set("req", reqSummary.str(), LogMin);
         if (m_hasException)
         {
-            m_txSummary->set("excepttime", m_exceptionTime);
-            m_txSummary->set("exceptcode", m_exceptionCode);
+            m_txSummary->set("excepttime", m_exceptionTime, LogMin);
+            m_txSummary->set("exceptcode", m_exceptionCode, LogMin);
         }
     }
 }
@@ -995,4 +1018,29 @@ const char* getBuildLevel()
 IEspServer* queryEspServer()
 {
     return dynamic_cast<IEspServer*>(getESPContainer());
+}
+
+IRemoteConnection* getSDSConnectionWithRetry(const char* xpath, unsigned mode, unsigned timeoutMs)
+{
+    CTimeMon timer(timeoutMs);
+    unsigned remaining;
+    while (!timer.timedout(&remaining))
+    {
+        try
+        {
+            unsigned connTimeoutMs = remaining > SESSION_SDS_LOCK_TIMEOUT ? SESSION_SDS_LOCK_TIMEOUT : remaining;
+            Owned<IRemoteConnection> conn = querySDS().connect(xpath, myProcessSession(), mode, connTimeoutMs);
+            if (!conn)
+                throw MakeStringException(-1, "getSDSConnectionWithRetry() : unabled to establish connection to : %s", xpath);
+            return conn.getClear();
+        }
+        catch (ISDSException* e)
+        {
+            if (SDSExcpt_LockTimeout != e->errorCode())
+                throw;
+            IERRLOG(e, "getSDSConnectionWithRetry()");
+            e->Release();
+        }
+    }
+    return nullptr;
 }

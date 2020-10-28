@@ -549,7 +549,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     unsigned currentMatchIdx, currentJoinGroupSize, currentAdded, currentMatched;
     Owned<CJoinGroup> djg, doneJG;
     OwnedConstThorRow defaultRight;
-    unsigned portbase, node;
+    unsigned node;
     IArrayOf<IDelayedFile> fetchFiles;
     FPosTableEntry *localFPosToNodeMap; // maps fpos->local part #
     FPosTableEntry *globalFPosToNodeMap; // maps fpos->node for all parts of file. If file is remote, localFPosToNodeMap will have all parts
@@ -1637,7 +1637,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
 
             Owned<IFileIO> lazyFileIO = queryThor().queryFileCache().lookupIFileIO(*this, indexName, filePart);
             Owned<IDelayedFile> delayedFile = createDelayedFile(lazyFileIO);
-            Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *delayedFile, false, false);
+            Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *delayedFile, (unsigned) -1, false, false);
             keyIndexes.append(*keyIndex.getClear());
         }
     }
@@ -1645,7 +1645,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CKeyedJoinSlave(CGraphElementBase *_container) : CSlaveActivity(_container)
+    CKeyedJoinSlave(CGraphElementBase *_container) : CSlaveActivity(_container, keyedJoinActivityStatistics)
     {
 #ifdef TRACE_JOINGROUPS
         groupsPendsNoted = fetchReadBack = groupPendsEnded = doneGroupsDeQueued = wroteToFetchPipe = groupsComplete = 0;
@@ -1657,7 +1657,6 @@ public:
         tlkKeySet.setown(createKeyIndexSet());
         pool = NULL;
         currentMatchIdx = currentJoinGroupSize = currentAdded = currentMatched = 0;
-        portbase = 0;
         pendingGroups = 0;
         superWidth = 0;
         additionalStats = 0;
@@ -1689,8 +1688,6 @@ public:
         }
         ::Release(fetchHandler);
         ::Release(inputHelper);
-        if (portbase)
-            freePort(portbase, NUMSLAVEPORTS*3);
         ::Release(resultDistStream);
         defaultRight.clear();
         if (pool) delete pool;
@@ -1963,7 +1960,7 @@ public:
                     Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
                     StringBuffer name("TLK");
                     name.append('_').append(container.queryId()).append('_');
-                    tlkKeySet->addIndex(createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false)); // MORE - not the right crc
+                    tlkKeySet->addIndex(createKeyIndex(name.append(p).str(), 0, *iFileIO, (unsigned) -1, true, false)); // MORE - not the right crc
                 }
             }
             if (needsDiskRead)
@@ -2030,11 +2027,13 @@ public:
                 fetchHandler = new CKeyedFetchHandler(*this);
 
                 FPosTableEntry *fPosToNodeMap = globalFPosToNodeMap ? globalFPosToNodeMap : localFPosToNodeMap;
-                unsigned c;
-                for (c=0; c<filePartTotal; c++)
+                if (!REJECTLOG(MCthorDetailedDebugInfo))
                 {
-                    FPosTableEntry &e = fPosToNodeMap[c];
-                    ActPrintLog("Table[%d] : base=%" I64F "d, top=%" I64F "d, slave=%d", c, e.base, e.top, e.index);
+                    for (unsigned c=0; c<filePartTotal; c++)
+                    {
+                        FPosTableEntry &e = fPosToNodeMap[c];
+                        ::ActPrintLog(this, thorDetailedLogLevel, "Table[%d] : base=%" I64F "d, top=%" I64F "d, slave=%d", c, e.base, e.top, e.index);
+                    }
                 }
                 unsigned i=0;
                 for(; i<dataParts.ordinality(); i++)
@@ -2075,15 +2074,6 @@ public:
             resultDistStream = new CKeyLocalLookup(*this, helper->queryIndexRecordSize()->queryRecordAccessor(true));
         }
     }
-    virtual void kill() override
-    {
-        if (portbase)
-        {
-            freePort(portbase, NUMSLAVEPORTS);
-            portbase = 0;
-        }
-        PARENT::kill();
-    }
     virtual void abort() override
     {
         PARENT::abort();
@@ -2093,7 +2083,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         assertex(inputs.ordinality() == 1);
         PARENT::start();
 
@@ -2199,7 +2189,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon && !eos)
         {
             for (;;)
@@ -2430,11 +2420,18 @@ public:
         info.unknownRowsOutput = true;
     }
 
-    void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
+        constexpr StatisticKind mapping[] = { StNumIndexSeeks, StNumIndexScans, StNumIndexAccepted, StNumPostFiltered, StNumPreFiltered, StNumDiskSeeks, StNumDiskAccepted, StNumDiskRejected };
         ForEachItemIn(s, _statsArr)
-            mb.append(_statsArr.item(s));
+        {
+            unsigned __int64 v = _statsArr.item(s);
+            if (0 == v)
+                continue;
+            stats.setStatistic(mapping[s], v);
+        }
+
+        CSlaveActivity::serializeStats(mb);
     }
 
 friend class CKeyedFetchHandler;

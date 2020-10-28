@@ -38,8 +38,6 @@ typedef unsigned ruid_t;   // at 1000/sec recycle every 49 days
 typedef unsigned RecordLengthType;
 #define MAX_RECORD_LENGTH 0xffffffff
 
-extern UDPLIB_API bool useDynamicServers;
-
 class UDPLIB_API ServerIdentifier
 {
 private:
@@ -142,6 +140,7 @@ interface ISendManager : extends IInterface
 extern UDPLIB_API IReceiveManager *createReceiveManager(int server_flow_port, int data_port, int client_flow_port, int sniffer_port, const IpAddress &sniffer_multicast_ip, int queue_size, unsigned maxSlotsPerSender);
 extern UDPLIB_API ISendManager *createSendManager(int server_flow_port, int data_port, int client_flow_port, int sniffer_port, const IpAddress &sniffer_multicast_ip, int queue_size_pr_server, int queues_pr_server, TokenBucket *rateLimiter);
 
+extern UDPLIB_API void setAeronProperties(const IPropertyTree *config);
 extern UDPLIB_API IReceiveManager *createAeronReceiveManager(const SocketEndpoint &ep);
 extern UDPLIB_API ISendManager *createAeronSendManager(unsigned dataPort, unsigned numQueues, const IpAddress &myIP);
 

@@ -28,7 +28,9 @@ include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
 set (    SRCS 
          ${HPCC_SOURCE_DIR}/esp/scm/ws_smc.ecm
-         ${ESPSCM_GENERATED_DIR}/ws_smc_esp.cpp 
+         ${HPCC_SOURCE_DIR}/esp/scm/common.ecm
+         ${ESPSCM_GENERATED_DIR}/ws_smc_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/common_esp.cpp
          ${HPCC_SOURCE_DIR}/esp/clients/roxiecontrol.cpp
          ws_smcPlugin.cpp 
          ws_smcService.cpp 
@@ -50,7 +52,8 @@ include_directories (
          ./../../../common/remote 
          ./../../clients 
          ./../../../tools/swapnode 
-         ./../../../dali/base 
+         ./../../../dali/base
+         ./../../../dali/sasha
          ./../ws_workunits 
          ./../../bindings 
          ./../../smc/SMCLib 
@@ -58,6 +61,7 @@ include_directories (
          ./../../../system/security/LdapSecurity
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 if (USE_OPENLDAP)

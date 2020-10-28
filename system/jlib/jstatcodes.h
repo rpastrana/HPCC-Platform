@@ -92,6 +92,7 @@ enum StatisticMeasure
     SMeasureBool,                       // A boolean
     SMeasureId,                         // An Id for an element
     SMeasureFilename,                   // A filename
+    SMeasureCost,                       // Used to measure cost
     SMeasureMax,
 };
 
@@ -115,11 +116,11 @@ enum StatisticKind
 {
     StKindNone,
     StKindAll,
-  StWhenGraphStarted,                   // Deprecated use StWhenStarted
-  StWhenGraphFinished,                  // Deprecated use StWhenFinished
+    StWhenGraphStarted,                 // Deprecated use StWhenStarted
+    StWhenGraphFinished,                // Deprecated use StWhenFinished
     StWhenFirstRow,                     // When the first row is processed by slave activity
-  StWhenQueryStarted,                   // Deprecated use StWhenStarted
-  StWhenQueryFinished,                  // Deprecated use StWhenFinished
+    StWhenQueryStarted,                 // Deprecated use StWhenStarted
+    StWhenQueryFinished,                // Deprecated use StWhenFinished
     StWhenCreated,
     StWhenCompiled,
     StWhenWorkunitModified,             // Not sure this is very useful
@@ -229,6 +230,9 @@ enum StatisticKind
     StCycleTotalCycles,
     StSizeOsDiskRead,
     StSizeOsDiskWrite,
+    StTimeBlocked,
+    StCycleBlockedCycles,
+    StCostExecute,
     StMax,
 
     //For any quantity there is potentially the following variants.

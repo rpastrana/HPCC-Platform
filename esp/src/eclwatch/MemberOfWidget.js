@@ -1,8 +1,7 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
     "dojo/promise/all",
 
@@ -15,14 +14,15 @@ define([
 
     "hpcc/GridDetailsWidget",
     "src/ws_access",
-    "src/ws_account",
     "src/ESPUtil",
     "hpcc/TargetSelectWidget"
 
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, all,
-                registry, Button, ToolbarSeparator, Dialog,
-                selector,
-                GridDetailsWidget, WsAccess, WsAccount, ESPUtil, TargetSelectWidget) {
+], function (declare, lang, nlsHPCCMod, arrayUtil, all,
+    registry, Button, ToolbarSeparator, Dialog,
+    selector,
+    GridDetailsWidget, WsAccess, ESPUtil, TargetSelectWidget) {
+
+    var nlsHPCC = nlsHPCCMod.default;
     return declare("MemberOfWidget", [GridDetailsWidget], {
         i18n: nlsHPCC,
 
@@ -48,7 +48,7 @@ define([
                 username: params.username
             });
             this.dialog.addChild(this.memberDropDown);
-            
+
         },
 
         createGrid: function (domID) {
@@ -113,13 +113,13 @@ define([
             var context = this;
             WsAccess.UserGroupEdit({
                 request: {
-                    groupnames_i1:context.memberDropDown.get("value"),
-                    username:context.params.username,
+                    groupnames_i1: context.memberDropDown.get("value"),
+                    username: context.params.username,
                     action: "Add"
                 }
             }).then(function (response) {
-               context.dialog.hide();
-               context._onRefresh();
+                context.dialog.hide();
+                context._onRefresh();
             });
         },
 
@@ -132,12 +132,12 @@ define([
                     promises.push(WsAccess.UserGroupEdit({
                         request: {
                             groupnames_i6: row.name,
-                            username:context.params.username,
+                            username: context.params.username,
                             action: "Delete"
                         }
                     }));
                 });
-                all(promises).then(function() {
+                all(promises).then(function () {
                     context._onRefresh();
                 });
             }

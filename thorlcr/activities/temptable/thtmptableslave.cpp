@@ -52,7 +52,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         __uint64 numRows = helper->numRows();
         // local when generated from a child query (the range is per node, don't split)
@@ -63,9 +63,9 @@ public:
             __uint64 nodeid = queryCodeContext()->getNodeNum();
             startRow = (nodeid * numRows) / nodes;
             maxRow = ((nodeid + 1) * numRows) / nodes;
-            ActPrintLog("InlineSLAVE: numRows = %" I64F "d, nodes = %" I64F
-                        "d, nodeid = %" I64F "d, start = %" I64F "d, max = %" I64F "d",
-                        numRows, nodes, nodeid, startRow, maxRow);
+            ::ActPrintLog(this, thorDetailedLogLevel, "InlineSLAVE: numRows = %" I64F "d, nodes = %" I64F
+                         "d, nodeid = %" I64F "d, start = %" I64F "d, max = %" I64F "d",
+                         numRows, nodes, nodeid, startRow, maxRow);
         }
         else
         {
@@ -80,7 +80,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon)
             return NULL;
         while (currentRow < maxRow) {

@@ -67,13 +67,6 @@ static IHqlExpression * cachedLocalSequenceNumber;
 static IHqlExpression * cachedStoredSequenceNumber;
 static IHqlExpression * cachedOmittedValueExpr;
 
-static void initBoolAttr(IAtom * name, IHqlExpression * x[2])
-{
-    x[0] = createExprAttribute(name, createConstant(false));
-    x[1] = createExprAttribute(name, createConstant(true));
-}
-
-
 MODULE_INIT(INIT_PRIORITY_STANDARD)
 {
     sizetType = makeIntType(sizeof(size32_t), false);
@@ -719,6 +712,45 @@ IHqlExpression * queryStripCasts(IHqlExpression * expr)
     return expr;
 }
 
+unsigned queryNumAnnotations(IHqlExpression * expr)
+{
+    unsigned num = 0;
+    for (;;)
+    {
+        IHqlExpression * body = expr->queryBody(true);
+        if (expr == body)
+            return num;
+        expr = body;
+        num++;
+    }
+}
+
+void dumpSymbols(IHqlExpression * expr)
+{
+    for (;;)
+    {
+        IHqlExpression * body = expr->queryBody(true);
+        if (expr == body)
+            return;
+        if (body->getAnnotationKind() == annotate_symbol)
+            printf("%s\n", str(body->queryName()));
+        expr = body;
+    }
+}
+
+bool hasSymbol(IHqlExpression * expr, IAtom * search)
+{
+    for (;;)
+    {
+        IHqlExpression * body = expr->queryBody(true);
+        if (expr == body)
+            return false;
+        if (body->queryName() == search)
+            return true;
+        expr = body;
+    }
+}
+
 
 //---------------------------------------------------------------------------------------------
 
@@ -1177,7 +1209,7 @@ IHqlExpression * JoinOrderSpotter::doFindJoinSortOrders(IHqlExpression * conditi
             if (lmatch)
             {
                 if (rmatch)
-                    return createValue(no_and, lmatch, rmatch);
+                    return createValue(no_and, makeBoolType(), lmatch, rmatch);
                 else
                     return lmatch;
             }
@@ -1231,7 +1263,7 @@ IHqlExpression * JoinOrderSpotter::doFindJoinSortOrders(IHqlExpression * conditi
                 IHqlExpression * common = findCommonExpression(lowerStrip,upperStrip);
                 if (common)
                 {
-                    joinOrder.slidingMatches.append(*createValue(no_between, makeBoolType(), LINK(leftStrip), LINK(lowerStrip), LINK(upperStrip), createExprAttribute(commonAtom, LINK(common))));
+                    joinOrder.slidingMatches.append(*createValue(no_between, makeBoolType(), { LINK(leftStrip), LINK(lowerStrip), LINK(upperStrip), createExprAttribute(commonAtom, LINK(common)) }));
                     return NULL;
                 }
             }
@@ -1340,7 +1372,7 @@ void JoinOrderSpotter::findImplicitBetween(IHqlExpression * condition, HqlExprAr
                         IHqlExpression * common = findCommonExpression(lowerStrip,upperStrip);
                         if (common)
                         {
-                            slidingMatches.append(*createValue(no_between, makeBoolType(), LINK(leftStrip), LINK(lowerStrip), LINK(upperStrip), createExprAttribute(commonAtom, LINK(common))));
+                            slidingMatches.append(*createValue(no_between, makeBoolType(), { LINK(leftStrip), LINK(lowerStrip), LINK(upperStrip), createExprAttribute(commonAtom, LINK(common)) }));
                             matched.append(*condition);
                             matched.append(cur);
                             pending.zap(cur);
@@ -1567,7 +1599,7 @@ IHqlExpression * createImpureOwn(IHqlExpression * expr)
 IHqlExpression * getNormalizedFilename(IHqlExpression * filename)
 {
     NullErrorReceiver errorProcessor;
-    OwnedHqlExpr folded = foldHqlExpression(errorProcessor, filename, NULL, HFOloseannotations);
+    OwnedHqlExpr folded = foldHqlExpression(errorProcessor, filename, HFOloseannotations);
     return normalizeFilenameExpr(folded);
 }
 
@@ -1688,8 +1720,8 @@ DedupInfoExtractor::DedupInfoExtractor(IHqlExpression * expr)
                     equalities.append(*mapped.getClear());
                     break;
                 }
-                //fall through
             }
+            //fallthrough
         default:
             if (containsSelector(cur, left) || containsSelector(cur, right))
                 conds.append(*LINK(cur));
@@ -1808,13 +1840,13 @@ IHqlExpression * createIf(IHqlExpression * cond, IHqlExpression * left, IHqlExpr
 {
     assertex(right);
     if (left->isDataset() || right->isDataset())
-        return createDataset(no_if, cond, createComma(left, right));
+        return createDataset(no_if, { cond, left, right });
 
     if (left->isDictionary() || right->isDictionary())
-        return createDictionary(no_if, cond, createComma(left, right));
+        return createDictionary(no_if, { cond, left, right });
 
     if (left->isDatarow() || right->isDatarow())
-        return createRow(no_if, cond, createComma(left, right));
+        return createRow(no_if, { cond, left, right });
 
     ITypeInfo * leftType = left->queryType();
     ITypeInfo * rightType = right->queryType();
@@ -3628,7 +3660,6 @@ bool isValidXmlRecord(IHqlExpression * expr)
 static void expandHintValue(StringBuffer & s, IHqlExpression * expr)
 {
     node_operator op = expr->getOperator();
-    node_operator childOp = no_none;
     switch (op)
     {
     case no_constant:
@@ -4311,14 +4342,14 @@ IHqlExpression * createGetResultFromSetResult(IHqlExpression * setResult, ITypeI
     switch (valueType->getTypeCode())
     {
     case type_table:
-        return createDataset(no_getresult, LINK(queryOriginalRecord(valueType)), createComma(LINK(seqAttr), LINK(aliasAttr)));
+        return createDataset(no_getresult, { LINK(queryOriginalRecord(valueType)), LINK(seqAttr), LINK(aliasAttr) });
     case type_groupedtable:
-        return createDataset(no_getresult, LINK(queryOriginalRecord(valueType)), createComma(LINK(seqAttr), createAttribute(groupedAtom), LINK(aliasAttr)));
+        return createDataset(no_getresult, { LINK(queryOriginalRecord(valueType)), LINK(seqAttr), createAttribute(groupedAtom), LINK(aliasAttr) });
     case type_dictionary:
-        return createDictionary(no_workunit_dataset, LINK(queryOriginalRecord(valueType)), createComma(LINK(seqAttr), LINK(aliasAttr)));
+        return createDictionary(no_workunit_dataset, { LINK(queryOriginalRecord(valueType)), LINK(seqAttr), LINK(aliasAttr) });
     case type_row:
     case type_record:
-         return createRow(no_getresult, LINK(queryOriginalRecord(valueType)), createComma(LINK(seqAttr), LINK(aliasAttr)));
+         return createRow(no_getresult, { LINK(queryOriginalRecord(valueType)), LINK(seqAttr), LINK(aliasAttr) });
     }
 
     return createValue(no_getresult, valueType.getLink(), LINK(seqAttr), LINK(aliasAttr));
@@ -5165,12 +5196,12 @@ IHqlExpression * ModuleExpander::createExpanded(IHqlExpression * scopeExpr, IHql
                 if (value->isDictionary())
                 {
                     value.setown(createDataset(no_datasetfromdictionary, value.getClear()));
-                    value.setown(createDataset(no_selectfields, value.getClear(), createValue(no_null)));
+                    value.setown(createDataset(no_selectfields, value.getClear(), createValue(no_null, makeNullType())));
                     op = no_output;
                 }
                 else if (value->isDataset())
                 {
-                    value.setown(createDataset(no_selectfields, LINK(value), createValue(no_null)));
+                    value.setown(createDataset(no_selectfields, LINK(value), createValue(no_null, makeNullType())));
                     op = no_output;
                 }
                 else if (value->isDatarow())
@@ -5783,8 +5814,8 @@ bool SplitDatasetAttributeTransformer::split(SharedHqlExpr & dataset, SharedHqlE
         {
             OwnedHqlExpr field = createField(unnamedId, value->getType(), NULL);
             OwnedHqlExpr transform = createTransformForField(no_transform, field, value);
-            OwnedHqlExpr combine = createDatasetF(no_combine, LINK(&newDatasets.item(0)), LINK(&newDatasets.item(1)), LINK(transform), LINK(selSeq), NULL);
-            OwnedHqlExpr first = createRowF(no_selectnth, LINK(combine), getSizetConstant(1), createAttribute(noBoundCheckAtom), NULL);
+            OwnedHqlExpr combine = createDataset(no_combine, { LINK(&newDatasets.item(0)), LINK(&newDatasets.item(1)), LINK(transform), LINK(selSeq) });
+            OwnedHqlExpr first = createRow(no_selectnth, { LINK(combine), getSizetConstant(1), createAttribute(noBoundCheckAtom) });
             dataset.setown(createDatasetFromRow(first.getClear()));
             attribute.setown(createSelectExpr(LINK(dataset->queryNormalizedSelector()), LINK(field)));
             break;
@@ -5803,6 +5834,8 @@ static bool splitDatasetAttribute(SharedHqlExpr & dataset, SharedHqlExpr & attri
     SplitDatasetAttributeTransformer transformer;
     return transformer.split(dataset, attribute, queryNonAliased(expr));
 #else
+    //The following code only matches a subset of the possible expressions.  This can mean that some parts of the expression
+    //are replaced, and other parts are not - leading to some extract expressions accessing a row in two different ways!
     IHqlExpression * left = expr->queryChild(0);
     node_operator op = expr->getOperator();
     switch (op)
@@ -6678,7 +6711,7 @@ void TempTableTransformer::createTempTableAssign(HqlExprArray & assigns, IHqlExp
                             HqlExprArray children;
                             children.append(*LINK(src));
                             children.append(*LINK(record));
-                            OwnedHqlExpr tempTable = createValue(no_temptable, children);
+                            OwnedHqlExpr tempTable = createDataset(no_temptable, children);
 //                          castValue.setown(transform(tempTable));
                             castValue.set(tempTable);
                         }
@@ -6689,7 +6722,7 @@ void TempTableTransformer::createTempTableAssign(HqlExprArray & assigns, IHqlExp
                                 transforms.append(*createTempTableTransform(src->queryChild(idx), record));
 
                             HqlExprArray children;
-                            children.append(*createValue(no_transformlist, transforms));
+                            children.append(*createValue(no_transformlist, makeNullType(), transforms));
                             children.append(*LINK(record));
                             castValue.setown(createDataset(no_inlinetable, children));
                         }
@@ -6811,7 +6844,7 @@ void TempTableTransformer::createTempTableAssign(HqlExprArray & assigns, IHqlExp
         {
             OwnedHqlExpr cond = replaceSelfRefSelector(expr->queryChild(0), selector);
             OwnedHqlExpr mapped = mapper.transformRoot(cond);
-            mapped.setown(foldHqlExpression(errorProcessor, mapped, NULL, HFOfoldimpure|HFOforcefold));
+            mapped.setown(foldHqlExpression(errorProcessor, mapped, HFOfoldimpure|HFOforcefold));
             IValue * mappedValue = mapped->queryValue();
 
             if (included)
@@ -7362,8 +7395,10 @@ void LibraryInputMapper::expandParameter(IHqlExpression * expr, unsigned & nextP
         ForEachItemIn(i, symbols)
         {
             IHqlExpression & cur = symbols.item(i);
-            IIdAtom * nestedName = createMangledName(expr, &cur);
+            if (!isSupportedParameterType(cur))
+                continue;
 
+            IIdAtom * nestedName = createMangledName(expr, &cur);
             //default values are handled elsewhere - lost from the mapped values here.
             HqlExprArray attrs;
             OwnedHqlExpr renamed = createParameter(nestedName, nextParameter++, cur.getType(), attrs);
@@ -7459,6 +7494,9 @@ IHqlExpression * LibraryInputMapper::mapRealToLogical(const HqlExprArray & input
         ForEachItemIn(i, symbols)
         {
             IHqlExpression & cur = symbols.item(i);
+            if (!isSupportedParameterType(cur))
+                continue;
+
             IHqlExpression * param = resolveParameter(createMangledName(expr, &cur));
             OwnedHqlExpr mapped = mapRealToLogical(inputExprs, param, libraryId);
 
@@ -7500,8 +7538,10 @@ void LibraryInputMapper::mapLogicalToReal(HqlExprArray & mapped, IHqlExpression 
         ForEachItemIn(i, symbols)
         {
             IHqlExpression & cur = symbols.item(i);
+            if (!isSupportedParameterType(cur))
+                continue;
+
             IHqlExpression * param = resolveParameter(createMangledName(expr, &cur));
-            
             OwnedHqlExpr childValue = valueScope->lookupSymbol(cur.queryId(), LSFpublic, lookupCtx);
             mapLogicalToReal(mapped, param, childValue);
         }
@@ -7512,6 +7552,24 @@ void LibraryInputMapper::mapLogicalToReal(HqlExprArray & mapped, IHqlExpression 
         unsigned match = realParameters.find(*expr);
         assertex(match != NotFound);
         mapped.replace(*LINK(value), match);
+    }
+}
+
+bool LibraryInputMapper::isSupportedParameterType(IHqlExpression & param) const
+{
+    //Exclude any scope members that cannot be mapped to an expression
+    switch (param.queryType()->getTypeCode())
+    {
+    case type_record:
+    case type_transform:
+    case type_void:
+    case type_null:
+    case type_pattern:
+    case type_rule:
+    case type_token:
+        return false;
+    default:
+        return true;
     }
 }
 
@@ -9099,7 +9157,7 @@ extern HQL_API bool allParametersHaveDefaults(IHqlExpression * function)
     return true;
 }
 
-extern HQL_API bool expandMissingDefaultsAsStoreds(HqlExprArray & args, IHqlExpression * function)
+extern HQL_API bool expandParametersAsStoreds(HqlExprArray & args, IHqlExpression * function)
 {
     assertex(function->isFunction());
     IHqlExpression * formals = queryFunctionParameters(function);
@@ -9109,21 +9167,16 @@ extern HQL_API bool expandMissingDefaultsAsStoreds(HqlExprArray & args, IHqlExpr
         ForEachChild(idx, formals)
         {
             IHqlExpression *formal = formals->queryChild(idx);
-            IHqlExpression * defvalue = queryDefaultValue(defaults, idx);
-            if (defvalue)
-            {
-                args.append(*LINK(defvalue));
-            }
-            else
-            {
-                OwnedHqlExpr nullValue = createNullExpr(formal->queryType());
-                OwnedHqlExpr storedName = createConstant(str(formal->queryName()));
-                OwnedHqlExpr stored = createValue(no_stored, makeVoidType(), storedName.getClear());
-                HqlExprArray colonArgs;
-                colonArgs.append(*LINK(nullValue));
-                colonArgs.append(*LINK(stored));
-                args.append(*createWrapper(no_colon, formal->queryType(), colonArgs));
-            }
+            Linked<IHqlExpression> defvalue = queryDefaultValue(defaults, idx);
+            if (!defvalue)
+                defvalue.setown(createNullExpr(formal->queryType()));
+
+            OwnedHqlExpr storedName = createConstant(str(formal->queryId()));
+            OwnedHqlExpr stored = createValue(no_stored, makeVoidType(), storedName.getClear());
+            HqlExprArray colonArgs;
+            colonArgs.append(*LINK(defvalue));
+            colonArgs.append(*LINK(stored));
+            args.append(*createWrapper(no_colon, formal->queryType(), colonArgs));
         }
     }
     catch (IException * e)
@@ -9740,7 +9793,7 @@ static IHqlExpression * transformAttributeToQuery(IHqlExpression * expr, HqlLook
         HqlExprArray actuals;
         if (!allParametersHaveDefaults(expr))
         {
-            if (!expandMissingDefaultsAsStoreds(actuals, expr))
+            if (!expandParametersAsStoreds(actuals, expr))
             {
                 //For each parameter that doesn't have a default, create a stored variable of the appropriate type
                 //with a null value as the default value, and use that.
@@ -10286,6 +10339,18 @@ static IFieldFilter * createIfBlockFilter(IRtlFieldTypeDeserializer &deserialize
     return extractor.createSingleFieldFilter(deserializer);
 }
 
+static void cleanupFields(unsigned num, const RtlFieldInfo * * fieldsArray)
+{
+    for (unsigned i = 0; i < num; i++)
+    {
+        const RtlFieldInfo * child = fieldsArray[i];
+
+        if (!isVirtualInitializer(child->initializer))
+            free((void *)child->initializer);
+        delete child;
+    }
+    delete [] fieldsArray;
+}
 
 unsigned buildRtlRecordFields(IRtlFieldTypeDeserializer &deserializer, unsigned &idx, const RtlFieldInfo * * fieldsArray, IHqlExpression *record, IHqlExpression *rowRecord)
 {
@@ -10308,7 +10373,7 @@ unsigned buildRtlRecordFields(IRtlFieldTypeDeserializer &deserializer, unsigned 
         {
         case no_ifblock:
         {
-            OwnedHqlExpr key = createValue(no_comma, LINK(rowRecord), LINK(field));
+            OwnedHqlExpr key = createValue(no_comma, makeVoidType(), LINK(rowRecord), LINK(field));
             const RtlTypeInfo * type = deserializer.lookupType(key);
             if (!type)
             {
@@ -10320,10 +10385,18 @@ unsigned buildRtlRecordFields(IRtlFieldTypeDeserializer &deserializer, unsigned 
                 unsigned numFields = getFlatFieldCount(record);
                 info.fieldsArray = new const RtlFieldInfo * [numFields+1];
                 unsigned idx = 0;
-                info.fieldType |= buildRtlRecordFields(deserializer, idx, info.fieldsArray, record, record);
-                info.fieldsArray[idx] = nullptr;
-
-                info.filter = createIfBlockFilter(deserializer, rowRecord, field);
+                try
+                {
+                    info.fieldType |= buildRtlRecordFields(deserializer, idx, info.fieldsArray, record, record);
+                    info.fieldsArray[idx] = nullptr;
+                    info.filter = createIfBlockFilter(deserializer, rowRecord, field);
+                }
+                catch (...)
+                {
+                    //Clean up all the fields that have been added (idx is incremented by buildRtlRecordFields)
+                    cleanupFields(idx, info.fieldsArray);
+                    throw;
+                }
 
                 type = deserializer.addType(info, key);
             }
@@ -10456,7 +10529,15 @@ const RtlTypeInfo *buildRtlType(IRtlFieldTypeDeserializer &deserializer, ITypeIn
             unsigned numFields = getFlatFieldCount(record);
             info.fieldsArray = new const RtlFieldInfo * [numFields+1];
             unsigned idx = 0;
-            info.fieldType |= buildRtlRecordFields(deserializer, idx, info.fieldsArray, record, record);
+            try
+            {
+                info.fieldType |= buildRtlRecordFields(deserializer, idx, info.fieldsArray, record, record);
+            }
+            catch (...)
+            {
+                cleanupFields(idx, info.fieldsArray);
+                throw;
+            }
             info.fieldsArray[idx] = nullptr;
             break;
         }

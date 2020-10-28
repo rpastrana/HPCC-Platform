@@ -25,8 +25,10 @@
 #include <daclient.hpp>
 #include <dasess.hpp>
 #include <danqs.hpp>
-#include <workunit.hpp>
-#include <wujobq.hpp>
+
+#include "environment.hpp"
+#include "workunit.hpp"
+#include "wujobq.hpp"
 #include "eventqueue.hpp"
 
 static unsigned traceLevel;
@@ -217,7 +219,7 @@ int main(int argc, const char *argv[])
         OWARNLOG("No Dali server list specified - assuming local");
         daliServers = ".";
     }
-    Owned<IGroup> serverGroup = createIGroup(daliServers, DALI_SERVER_PORT);
+    Owned<IGroup> serverGroup = createIGroupRetry(daliServers, DALI_SERVER_PORT);
     try
     {
         initClientProcess(serverGroup, DCR_EclScheduler);

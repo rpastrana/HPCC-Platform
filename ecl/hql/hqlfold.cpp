@@ -547,17 +547,6 @@ static IHqlExpression * optimizeCompare(IHqlExpression * expr)
     return NULL;
 }
 
-static bool isSimpleComparisonArg(IHqlExpression * expr)
-{
-    switch (expr->getOperator())
-    {
-    case no_constant:
-    case no_getresult:
-        return true;
-    }
-    return false;
-}
-
 //---------------------------------------------------------------------------
 
 /*********************************************************
@@ -686,7 +675,7 @@ bool checkExternFoldable(IHqlExpression* expr, unsigned foldOptions, StringBuffe
     return true;
 }
 
-void *loadExternalEntryPoint(IHqlExpression* expr, unsigned foldOptions, ITemplateContext *templateContext, const char *library, const char *entrypoint, HINSTANCE &hDLL)
+void *loadExternalEntryPoint(IHqlExpression* expr, unsigned foldOptions, const char *library, const char *entrypoint, HINSTANCE &hDLL)
 {
     IHqlExpression * funcdef = expr->queryExternalDefinition();
     IHqlExpression *body = funcdef->queryChild(0);
@@ -720,7 +709,7 @@ void *loadExternalEntryPoint(IHqlExpression* expr, unsigned foldOptions, ITempla
 extern __int64 foldExternalCallStub(void * fh, double * doubleresult, size_t len, void * params);
 #endif
 
-IValue * doFoldExternalCall(IHqlExpression* expr, unsigned foldOptions, ITemplateContext *templateContext, const char *library, const char *entrypoint, void *fh)
+IValue * doFoldExternalCall(IHqlExpression* expr, unsigned foldOptions, const char *library, const char *entrypoint, void *fh)
 {
     // NOTE - on OSX there are compiler bugs that prevent exceptions thrown from within this function from properly unwinding.
     // Hence anything that can throw an exception should be pre-checked in one of the functions above.
@@ -732,9 +721,6 @@ IValue * doFoldExternalCall(IHqlExpression* expr, unsigned foldOptions, ITemplat
     // the called function
     FuncCallStack fstack(getBoolAttribute(body, passParameterMetaAtom, false), DEFAULTSTACKSIZE);
     
-    if(body->hasAttribute(templateAtom))
-        fstack.pushPtr(templateContext);
-
     //if these were allowed to be optional - then the following code would be needed
     if(body->hasAttribute(contextAtom) || body->hasAttribute(globalContextAtom))
         fstack.pushPtr(NULL);
@@ -943,7 +929,7 @@ IValue * doFoldExternalCall(IHqlExpression* expr, unsigned foldOptions, ITemplat
  #ifdef _ARCH_X86_64_
         assertex((len & 15) == 0);  // We need to make sure we add an EVEN number of words to stack, so that it is 16-byte aligned before the callq
 
-        __int64 dummy1, dummy2,dummy3,dummy4;
+        __int64 dummy1, dummy3,dummy4;
 
         void * floatstack = fstack.getFloatMem(); 
         if (floatstack) { // sets xmm0-7
@@ -1356,7 +1342,7 @@ IValue * doFoldExternalCall(IHqlExpression* expr, unsigned foldOptions, ITemplat
     return result;
 }
 
-IValue * foldExternalCall(IHqlExpression* expr, unsigned foldOptions, ITemplateContext *templateContext)
+IValue * foldExternalCall(IHqlExpression* expr, unsigned foldOptions)
 {
     StringBuffer library;
     StringBuffer entry;
@@ -1364,13 +1350,13 @@ IValue * foldExternalCall(IHqlExpression* expr, unsigned foldOptions, ITemplateC
         return NULL;
     // NOTE - we do not call FreeSharedObject(hDLL) - the embedded language folding requires that the dll stay loaded, and it's also more efficient for other cases
     HINSTANCE hDll;
-    void *funcptr = loadExternalEntryPoint(expr, foldOptions, templateContext, library.str(), entry.str(), hDll);
+    void *funcptr = loadExternalEntryPoint(expr, foldOptions, library.str(), entry.str(), hDll);
     if (!funcptr)
     {
-        UERRLOG("Failed to load function %s", entry.str());
+        DBGLOG("Failed to load function %s", entry.str());
         return NULL;
     }
-    return doFoldExternalCall(expr, foldOptions, templateContext, library.str(), entry.str(), funcptr);
+    return doFoldExternalCall(expr, foldOptions, library.str(), entry.str(), funcptr);
 }
 
 //------------------------------------------------------------------------------------------
@@ -1620,7 +1606,7 @@ IHqlExpression *deserializeConstantSet(ITypeInfo *type, bool isAll, size32_t len
     }
 }
 
-IHqlExpression * foldEmbeddedCall(IHqlExpression* expr, unsigned foldOptions, ITemplateContext *templateContext)
+IHqlExpression * foldEmbeddedCall(IHqlExpression* expr, unsigned foldOptions)
 {
     if (!checkEmbeddedFoldable(expr, foldOptions))
         return NULL;
@@ -1660,7 +1646,7 @@ IHqlExpression * foldEmbeddedCall(IHqlExpression* expr, unsigned foldOptions, IT
     IHqlExpression *languageAttr = body->queryAttribute(languageAtom);
     HqlExprArray noParams;
     OwnedHqlExpr langLoadCall = createTranslatedExternalCall(NULL, languageAttr->queryChild(0), noParams);
-    Owned<IValue> plugin = foldExternalCall(langLoadCall, foldOptions, templateContext);
+    Owned<IValue> plugin = foldExternalCall(langLoadCall, foldOptions);
     if (plugin == nullptr)
         return NULL;
     // Slightly odd code - the getEmbedContext function returns a linked object or a singleton depending on a flag
@@ -2430,7 +2416,7 @@ static IHqlExpression * foldHashXX(IHqlExpression * expr)
 
 //---------------------------------------------------------------------------
 
-IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOptions, ITemplateContext * templateContext)
+IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOptions)
 {
     DBZaction onZero = (foldOptions & HFOforcefold) ? DBZfail : DBZnone;
     node_operator op = expr->getOperator();
@@ -2447,7 +2433,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
                     return LINK(child);
                 IHqlExpression * opt = expr->queryAttribute(extendAtom);
                 IHqlExpression * selectors = expr->queryAttribute(_selectors_Atom);
-                return createValue(no_assertwild, makeBoolType(), createValue(no_all), LINK(selectors), LINK(opt));
+                return createValue(no_assertwild, makeBoolType(), createValue(no_all, makeNullType()), LINK(selectors), LINK(opt));
             }
             break;
         }
@@ -3330,7 +3316,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
                             {
                                 IHqlExpression * result = (IHqlExpression *)&caseResults.item(i);
                                 IValue * castRes = result->queryValue()->castTo(newType);
-                                IHqlExpression * newMapping = createValue(no_mapto, LINK(child->queryChild(i+1)->queryChild(0)), createConstant(castRes));
+                                IHqlExpression * newMapping = createValue(no_mapto, LINK(newType), LINK(child->queryChild(i+1)->queryChild(0)), createConstant(castRes));
                                 newCaseMaps.append(*newMapping);
                             }
                             newCaseMaps.append(*createConstant(defVal->castTo(newType)));
@@ -3393,7 +3379,6 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
             if (childValue)
             {
                 Linked<ITypeInfo> exprType = expr->queryType();
-                ITypeInfo * childType = child->queryType();
                 size32_t childSize = childValue->getSize();
                 const void * rawvalue = childValue->queryValue();
                 unsigned newSize = exprType->getSize();
@@ -3504,7 +3489,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
                                 IHqlExpression * val2 = (IHqlExpression*)&caseInput2.item(k);
                                 if (val1->queryValue()->compare(val2->queryValue()) == 0)
                                 {
-                                    IHqlExpression * newMapping = createValue(no_mapto, LINK(leftExpr->queryChild(i+1)->queryChild(0)), LINK(expr->queryChild(k+1)->queryChild(1)));
+                                    IHqlExpression * newMapping = createValue(no_mapto, expr->getType(), LINK(leftExpr->queryChild(i+1)->queryChild(0)), LINK(expr->queryChild(k+1)->queryChild(1)));
                                     newCaseMaps.append(*newMapping);
                                     found = true;
                                     break;
@@ -3512,7 +3497,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
                             }
                             if (inRes && !found)
                             {
-                                IHqlExpression * newMapping = createValue(no_mapto, LINK(leftExpr->queryChild(i+1)->queryChild(0)), LINK(defCase1));
+                                IHqlExpression * newMapping = createValue(no_mapto, expr->getType(), LINK(leftExpr->queryChild(i+1)->queryChild(0)), LINK(defCase1));
                                 newCaseMaps.append(*newMapping);
                             }
                         }
@@ -3657,7 +3642,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
                             if (alreadyDone.find(*value) == NotFound)
                             {
                                 alreadyDone.append(*value);
-                                args2.append(*createValue(no_mapto, LINK(value), LINK(mapValue)));
+                                args2.append(*createValue(no_mapto, mapValue->getType(), LINK(value), LINK(mapValue)));
                             }
                         }
                     }
@@ -3795,7 +3780,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
         }
     case no_externalcall:
         {   //external function folding. 
-            IValue * result = foldExternalCall(expr, foldOptions, templateContext);
+            IValue * result = foldExternalCall(expr, foldOptions);
             if (result) 
                 return createConstant(result);
             break;
@@ -3811,7 +3796,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
             IHqlExpression * body = def->queryChild(0);
             if (body->getOperator() == no_outofline && body->queryChild(0)->getOperator()==no_embedbody)
             {
-                IHqlExpression * result = foldEmbeddedCall(expr, foldOptions, templateContext);
+                IHqlExpression * result = foldEmbeddedCall(expr, foldOptions);
                 if (result)
                     return result;
                 break;
@@ -3985,7 +3970,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
             IHqlExpression * child = expr->queryChild(0);
             node_operator childOp = child->getOperator();
             // Can't optimize count of a dictionary in general, since the input dataset may contain duplicates which will be removed.
-            switch (child->getOperator())
+            switch (childOp)
             {
             case no_null:
                 return createConstant(0);
@@ -3996,7 +3981,7 @@ IHqlExpression * foldConstantOperator(IHqlExpression * expr, unsigned foldOption
         {
             IHqlExpression * child = expr->queryChild(0);
             node_operator childOp = child->getOperator();
-            switch (child->getOperator())
+            switch (childOp)
             {
             case no_null:
                 return createConstant(false);
@@ -4578,10 +4563,10 @@ IHqlExpression * NullFolderMixin::foldNullDataset(IHqlExpression * expr)
                 return ret.getClear();
             }
 
-#if 0
             //This is pretty unlikely, and may introduce an ambiguity in LEFT (if selector sequences aren't unique)
             if (cvtRightProject && !isGrouped(expr))
             {
+#if 0
                 IHqlExpression * selSeq = querySelSeq(expr);
                 OwnedHqlExpr left = createSelector(no_left, child, selSeq);
                 OwnedHqlExpr null = createRow(no_newrow, createNullExpr(left));
@@ -4597,8 +4582,8 @@ IHqlExpression * NullFolderMixin::foldNullDataset(IHqlExpression * expr)
                 OwnedHqlExpr ret = createDataset(no_hqlproject, args);
                 DBGLOG("Folder: Replace JOIN(<empty>, ds) with PROJECT");
                 return ret.getClear();
-            }
 #endif
+            }
             break;
         }
     case no_merge:
@@ -4952,7 +4937,7 @@ IHqlExpression * NullFolderMixin::queryOptimizeAggregateInline(IHqlExpression * 
     HqlExprArray args;
     args.append(*createAssign(LINK(assign->queryChild(0)), LINK(value)));
     OwnedHqlExpr newTransform = createValue(no_transform, transform->getType(), args);
-    OwnedHqlExpr values = createValue(no_transformlist, newTransform.getClear());
+    OwnedHqlExpr values = createValue(no_transformlist, makeNullType(), newTransform.getClear());
     return createDataset(no_inlinetable, values.getClear(), LINK(expr->queryRecord()));
 }
 
@@ -4981,8 +4966,11 @@ static IHqlExpression * getLowerCaseConstant(IHqlExpression * expr)
         return LINK(expr);
     }
 
-    const void * data = value->queryValue();
     unsigned size = type->getSize();
+    if (size == 0)
+        return LINK(expr);
+
+    const void * data = value->queryValue();
     unsigned stringLen = type->getStringLen();
 
     MemoryAttr lower(size);
@@ -5391,7 +5379,7 @@ IHqlExpression * CExprFolderTransformer::doFoldTransformed(IHqlExpression * unfo
     if ((unfolded != body) && !expr->isAnnotation() && !expr->queryValue())
         expr.setown(unfolded->cloneAllAnnotations(expr));
 #else
-    OwnedHqlExpr expr = foldConstantOperator(unfolded, foldOptions, templateContext);
+    OwnedHqlExpr expr = foldConstantOperator(unfolded, foldOptions);
 #endif
 
     node_operator op = expr->getOperator();
@@ -5906,8 +5894,8 @@ FolderTransformInfo::~FolderTransformInfo()
 }
 
 static HqlTransformerInfo cExprFolderTransformerInfo("CExprFolderTransformer");
-CExprFolderTransformer::CExprFolderTransformer(IErrorReceiver & _errorProcessor, ITemplateContext * _templateContext, unsigned _options)
-: NewHqlTransformer(cExprFolderTransformerInfo), templateContext(_templateContext), errorProcessor(_errorProcessor)
+CExprFolderTransformer::CExprFolderTransformer(IErrorReceiver & _errorProcessor, unsigned _options)
+: NewHqlTransformer(cExprFolderTransformerInfo), errorProcessor(_errorProcessor)
 {
     foldOptions = _options;
 }
@@ -6839,9 +6827,8 @@ HqlConstantPercolator * CExprFolderTransformer::gatherConstants(IHqlExpression *
             IHqlExpression * rhs = expr->queryChild(2);
             if (!rhs)
                 break;
-
-            //fall through
         }
+        //fallthrough
     case no_addfiles:
     case no_regroup:
     case no_nonempty:
@@ -7092,7 +7079,7 @@ IHqlExpression * foldHqlExpression(IHqlExpression * expr)
     return foldHqlExpression(errorProcessor, expr);
 }
 
-IHqlExpression * foldHqlExpression(IErrorReceiver & errorProcessor, IHqlExpression * expr, ITemplateContext *templateContext, unsigned foldOptions)
+IHqlExpression * foldHqlExpression(IErrorReceiver & errorProcessor, IHqlExpression * expr, unsigned foldOptions)
 {
     if (!expr)
         return NULL;
@@ -7113,7 +7100,7 @@ IHqlExpression * foldHqlExpression(IErrorReceiver & errorProcessor, IHqlExpressi
         break;
     }
 
-    CExprFolderTransformer folder(errorProcessor, templateContext, foldOptions);
+    CExprFolderTransformer folder(errorProcessor, foldOptions);
 
 #if 0
     dbglogExpr(expr);
@@ -7133,7 +7120,7 @@ IHqlExpression * foldScopedHqlExpression(IErrorReceiver & errorProcessor, IHqlEx
     if (!expr)
         return NULL;
 
-    CExprFolderTransformer folder(errorProcessor, NULL, foldOptions);
+    CExprFolderTransformer folder(errorProcessor, foldOptions);
 
     if (dataset)
         folder.setScope(dataset);
@@ -7146,7 +7133,7 @@ IHqlExpression * foldScopedHqlExpression(IErrorReceiver & errorProcessor, IHqlEx
 
 void foldHqlExpression(IErrorReceiver & errorProcessor, HqlExprArray & tgt, HqlExprArray & src, unsigned foldOptions)
 {
-    CExprFolderTransformer folder(errorProcessor, NULL, foldOptions);
+    CExprFolderTransformer folder(errorProcessor, foldOptions);
     folder.transformRoot(src, tgt);
 }
 
@@ -7251,8 +7238,8 @@ static HqlTransformerInfo quickConstantTransformerInfo("QuickConstantTransformer
 class QuickConstantTransformer : public QuickHqlTransformer
 {
 public:
-    QuickConstantTransformer(ITemplateContext * _templateContext, unsigned _foldOptions) : 
-      QuickHqlTransformer(quickConstantTransformerInfo, NULL), templateContext(_templateContext), foldOptions(_foldOptions) {}
+    QuickConstantTransformer(unsigned _foldOptions) :
+      QuickHqlTransformer(quickConstantTransformerInfo, NULL), foldOptions(_foldOptions) {}
 
     virtual IHqlExpression * createTransformedBody(IHqlExpression * expr)
     {
@@ -7305,23 +7292,22 @@ public:
         }
 
         OwnedHqlExpr transformed = QuickHqlTransformer::createTransformedBody(expr);
-        return foldConstantOperator(transformed, foldOptions, templateContext);
+        return foldConstantOperator(transformed, foldOptions);
     }
 
 protected:
-    ITemplateContext *templateContext;
     unsigned foldOptions;
 };
 
-extern HQLFOLD_API IHqlExpression * quickFoldExpression(IHqlExpression * expr, ITemplateContext *context, unsigned options)
+extern HQLFOLD_API IHqlExpression * quickFoldExpression(IHqlExpression * expr, unsigned options)
 {
-    QuickConstantTransformer transformer(context, options);
+    QuickConstantTransformer transformer(options);
     return transformer.transform(expr);
 }
 
-extern HQLFOLD_API void quickFoldExpressions(HqlExprArray & target, const HqlExprArray & source, ITemplateContext *context, unsigned options)
+extern HQLFOLD_API void quickFoldExpressions(HqlExprArray & target, const HqlExprArray & source, unsigned options)
 {
-    QuickConstantTransformer transformer(context, options);
+    QuickConstantTransformer transformer(options);
     ForEachItemIn(i, source)
         target.append(*transformer.transform(&source.item(i)));
 }

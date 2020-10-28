@@ -26,11 +26,13 @@ project( SMCLib )
 
 include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
-set (    SRCS 
+set (    SRCS
+         ${HPCC_SOURCE_DIR}/dali/sasha/sacmd.cpp
          ${ESPSCM_GENERATED_DIR}/ws_topology_esp.cpp 
          LogicFileWrapper.cpp 
          TpWrapper.cpp 
-         WUXMLInfo.cpp 
+         WUXMLInfo.cpp
+         InfoCacheReader.cpp
     )
 
 include_directories ( 
@@ -49,11 +51,13 @@ include_directories (
          ./../../../common/workunit 
          ./../../../common/remote 
          ./../../clients 
-         ./../../../dali/base 
+         ./../../../dali/base
+         ./../../../dali/sasha
          ./../../clients/LoggingClient 
          ./../../bindings 
          ./../../bindings/SOAP/xpp 
          ./.. 
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DSMCLIB_EXPORTS )

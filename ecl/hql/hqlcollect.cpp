@@ -57,7 +57,7 @@ public:
 class CEclSource : public CInterfaceOf<IEclSource>
 {
 public:
-    CEclSource(IIdAtom * _eclId, EclSourceType _type) : eclId(_eclId), type(_type) { }
+    CEclSource(IIdAtom * _eclId, EclSourceType _type) : type(_type), eclId(_eclId)  { }
 
 //interface IEclSource
     virtual IProperties * getProperties() { return NULL; }
@@ -293,9 +293,9 @@ bool FileSystemFile::checkValid()
     if (!eclId)
         return false;
 
+    const char * filename = file->queryFilename();
     if (type == ESTplugin)
     {
-        const char * filename = file->queryFilename();
         try
         {
             if (pluginSO.load(filename, false, false))     // don't clash getECLPluginDefinition symbol
@@ -326,7 +326,6 @@ bool FileSystemFile::checkValid()
                     }
                     else
                     {
-                        DBGLOG("Plugin %s exports getECLPluginDefinition but does not export ECL - not loading", filename);
                         return false;
                     }
                 }
@@ -349,6 +348,8 @@ bool FileSystemFile::checkValid()
         }
     }
 
+    if (type == ESTlibrary)
+        DBGLOG("Loading library %s", filename);
     return true;
 }
 
@@ -391,7 +392,7 @@ void FileSystemDirectory::addFile(IFile &file, bool allowPlugins)
     if (tail && tail[0]!='.')
     {
         Owned<CEclSource> newSource;
-        if (file.isFile() == foundYes)
+        if (file.isFile() == fileBool::foundYes)
         {
             EclSourceType type = getEclSourceType(tail);
             if (type && ((type != ESTplugin) || allowPlugins))
@@ -403,7 +404,7 @@ void FileSystemDirectory::addFile(IFile &file, bool allowPlugins)
                     newSource.setown(newFile.getClear());
             }
         }
-        else if (file.isDirectory() == foundYes)
+        else if (file.isDirectory() == fileBool::foundYes)
         {
             newSource.setown(new FileSystemDirectory(deriveEclName(tail), &file));
         }
@@ -496,12 +497,12 @@ void FileSystemEclCollection::processFilePath(IErrorReceiver * errs, const char 
         {
             addPathSepChar(absolutePath).append(dirTail);
             Owned<IFile> file = createIFile(absolutePath);
-            if (file->isDirectory() == foundYes)
+            if (file->isDirectory() == fileBool::foundYes)
             {
                 Owned<IDirectoryIterator> dir = file->directoryFiles(NULL, false, true);
                 root.expandDirectoryTree(dir, allowPlugins);
             }
-            else if (file->isFile() == foundYes)
+            else if (file->isFile() == fileBool::foundYes)
             {
                 root.addFile(*file, allowPlugins);
             }

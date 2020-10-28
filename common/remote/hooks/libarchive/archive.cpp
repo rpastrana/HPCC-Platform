@@ -39,10 +39,11 @@
  * Installs hooks into createIFile, spotting filenames of the form /my/directory/myfile.zip/{password}/path/within/archive
  */
 
+//Require a trailing / on zip files - use /. for the root - otherwise zip files always get expanded when they are read.
 #ifdef _WIN32
-#define ARCHIVE_SIGNATURE "[.]{zip|tar|tar[.]gz|tgz}{$|/|\\\\}"
+#define ARCHIVE_SIGNATURE "[.]{zip|tar|tar[.]gz|tgz}{/|\\\\}"
 #else
-#define ARCHIVE_SIGNATURE "[.]{zip|tar|tar[.]gz|tgz}{$|/}"
+#define ARCHIVE_SIGNATURE "[.]{zip|tar|tar[.]gz|tgz}/"
 #endif
 
 static RegExpr *signature;
@@ -173,6 +174,8 @@ public:
         // object and scan through until we find the matching file, in order to extract it.
         StringAttr container, option, relpath;
         splitArchivedFileName(_fullName, container, option, relpath);
+        if (!relpath)
+            relpath.set("");
         curPos = 0;
         lastPos = 0;
         curBuffSize = 0;
@@ -333,20 +336,20 @@ public:
     virtual fileBool isDirectory()
     {
         if (!entry)
-            return notFound;
-        return entry->isDir() ? foundYes : foundNo;
+            return fileBool::notFound;
+        return entry->isDir() ? fileBool::foundYes : fileBool::foundNo;
     }
     virtual fileBool isFile()
     {
         if (!entry)
-            return notFound;
-        return entry->isDir() ? foundNo : foundYes;
+            return fileBool::notFound;
+        return entry->isDir() ? fileBool::foundNo : fileBool::foundYes;
     }
     virtual fileBool isReadOnly()
     {
         if (!entry)
-            return notFound;
-        return foundYes;
+            return fileBool::notFound;
+        return fileBool::foundYes;
     }
     virtual IFileIO * open(IFOmode mode, IFEflags extraFlags=IFEnone)
     {
@@ -376,7 +379,7 @@ public:
 // Directory functions
     virtual IDirectoryIterator *directoryFiles(const char *mask, bool sub, bool includeDirs)
     {
-        if (isDirectory() != foundYes || (mask && !*mask))   // Empty mask string means matches nothing - NULL means matches everything
+        if (isDirectory() != fileBool::foundYes || (mask && !*mask))   // Empty mask string means matches nothing - NULL means matches everything
             return createNullDirectoryIterator();
         else
         {
@@ -387,7 +390,7 @@ public:
     }
     virtual bool getInfo(bool &_isdir,offset_t &_size,CDateTime &_modtime)
     {
-        _isdir = isDirectory()==foundYes;
+        _isdir = isDirectory()==fileBool::foundYes;
         _size = size();
         _modtime.clear(); // MORE could probably do better
         return true; // MORE should this be false if not existing?
@@ -474,7 +477,7 @@ public:
     virtual bool isDir()
     {
         assertex(curFile);
-        return curFile->isDirectory();
+        return curFile->isDirectory()==fileBool::foundYes;
     }
     virtual __int64 getFileSize()
     {
@@ -643,11 +646,11 @@ MODULE_EXIT()
     if (archiveFileHook)
     {
         removeContainedFileHook(archiveFileHook);
+        ::Release(archiveFileHook);
         archiveFileHook = NULL;
     }
     delete signature;
     delete lock;
     lock = NULL;
     signature = NULL;
-    ::Release(archiveFileHook);
 }

@@ -26,6 +26,7 @@
 #include "jmisc.hpp"
 #include "hqlerrors.hpp"
 #include "hql.hpp"
+#include "build-config.h"
 #include "hqlgram.hpp"
 #include "eclrtl.hpp"
 
@@ -101,7 +102,10 @@ int HqlLex::lookupIdentifierToken(attribute & returnToken, HqlLex * lexer, Lexer
         return UNKNOWN_ID;
     }
 
+    node_operator op = expr->getOperator();
     IHqlExpression * deprecated = queryMetaAttribute(deprecatedAtom, expr);
+    if (!deprecated && (op == no_funcdef))
+        deprecated = expr->queryChild(0)->queryAttribute(deprecatedAtom);
     if (deprecated)
     {
         IHqlExpression * alternative = deprecated->queryChild(0);
@@ -130,7 +134,6 @@ int HqlLex::lookupIdentifierToken(attribute & returnToken, HqlLex * lexer, Lexer
     }
 
     returnToken.setExpr(expr);
-    node_operator op = expr->getOperator();
     int token = UNKNOWN_ID;
     bool isFunction = expr->isFunction();
     ITypeInfo * exprType = expr->queryType();
@@ -883,6 +886,7 @@ PENALTY             { RETURNSYM(PENALTY); }
 PERSIST             { RETURNSYM(PERSIST); }
 PHYSICALFILENAME    { RETURNSYM(PHYSICALFILENAME); }
 PIPE                { RETURNSYM(PIPE); }
+PLANE               { RETURNSYM(PLANE); }
 __PLATFORM__        { RETURNSYM(__PLATFORM__); }
 POWER               { RETURNSYM(POWER); }
 PREFETCH            { RETURNSYM(PREFETCH); }
@@ -896,6 +900,7 @@ PROXYADDRESS        { RETURNSYM(PROXYADDRESS); }
 PULL                { RETURNSYM(PULL); }
 PULLED              { RETURNSYM(PULLED); }
 QUANTILE            { RETURNSYM(QUANTILE); }
+QUEUE               { RETURNSYM(QUEUE); }
 QUOTE               { RETURNSYM(QUOTE); }
 RANGE               { RETURNSYM(RANGE); }
 RANK                { RETURNSYM(RANK); }

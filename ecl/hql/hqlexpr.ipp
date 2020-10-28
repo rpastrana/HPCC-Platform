@@ -361,7 +361,7 @@ protected:
     inline bool pure() const { return (infoFlags & HEFimpure) == 0; }
     virtual unsigned getCachedEclCRC() override;
 
-    void appendOperands(IHqlExpression * arg0, ...);
+    void appendSingleOperand(IHqlExpression * arg0);
     void setOperands(HqlExprArray & ownedOperands);
     void onAppendOperand(IHqlExpression & child, unsigned whichOperand);
     inline void doAppendOperand(IHqlExpression & child)
@@ -421,7 +421,7 @@ class HQL_API CHqlExpressionWithType : public CHqlExpressionWithTables
     friend HQL_API IHqlExpression *createOpenValue(node_operator op, ITypeInfo *type);
 public:
     static CHqlExpression *makeExpression(node_operator op, ITypeInfo *type, HqlExprArray &operands);
-    static CHqlExpression *makeExpression(node_operator op, ITypeInfo *type, ...);
+    static CHqlExpression *makeExpression(node_operator op, ITypeInfo *type, const std::initializer_list<IHqlExpression *> &operands, bool expandCommas = false);
 
     virtual ITypeInfo *queryType() const override;
     virtual ITypeInfo *getType() override;
@@ -446,7 +446,7 @@ protected:
     IIdAtom * id;
 
 protected:
-    CHqlNamedExpression(node_operator _op, ITypeInfo *_type, IIdAtom * _id, ...);
+    CHqlNamedExpression(node_operator _op, ITypeInfo *_type, IIdAtom * _id);
     CHqlNamedExpression(node_operator _op, ITypeInfo *_type, IIdAtom * _id, HqlExprArray & _ownedOperands);
 
     virtual void sethash() override;
@@ -1155,6 +1155,7 @@ public:
     virtual ISourcePath * querySourcePath() const override { throwUnexpected(); }
     virtual bool hasBaseClass(IHqlExpression * searchBase) override;
     virtual bool allBasesFullyBound() const override { return false; } // Assume the worst
+    virtual bool isEquivalentScope(const IHqlScope & other) const override { return this == &other; }
 
     virtual void ensureSymbolsDefined(HqlLookupContext & ctx) override { }
 
@@ -1163,6 +1164,7 @@ public:
     virtual int getPropInt(IAtom * a, int def) const override { return def; }
     virtual bool getProp(IAtom * a, StringBuffer &ret) const override { return false; }
 
+    using CHqlDelayedCall::clone;
     virtual IHqlScope * clone(HqlExprArray & children, HqlExprArray & symbols) override { throwUnexpected(); }
 
     virtual IHqlScope * queryConcreteScope() override;
@@ -1216,6 +1218,7 @@ public:
     virtual const char * queryFullName() const override  { return fullName; }
     virtual IIdAtom * queryFullContainerId() const override { return containerId; }
     virtual ISourcePath * querySourcePath() const override { return text ? text->querySourcePath() : NULL; }
+    virtual bool isEquivalentScope(const IHqlScope & other) const override { return this == &other; }
 
     virtual void ensureSymbolsDefined(HqlLookupContext & ctx) override { }
     virtual bool isImplicit() const override { return false; }
@@ -1389,26 +1392,13 @@ public:
     virtual bool allBasesFullyBound() const override;
     virtual bool isImplicit() const override;
     virtual bool isPlugin() const override;
+    virtual bool isEquivalentScope(const IHqlScope & other) const override;
     virtual IHqlScope * queryConcreteScope() override { return this; }
 
 protected:
     CriticalSection cs;
     HqlScopeArray mergedScopes;
     bool mergedAll;
-};
-
-//Used in the parser to allow symbols to be looked up in a list of multiple independent scopes.
-class CHqlMultiParentScope : public CHqlScope
-{
-protected:
-    ICopyArray parents;
-
-public:
-    CHqlMultiParentScope(IIdAtom *, ...);
-
-    virtual IHqlExpression *lookupSymbol(IIdAtom * searchName, unsigned lookupFlags, HqlLookupContext & ctx) override;
-    virtual IHqlScope * queryConcreteScope() override { return this; }
-    virtual bool allBasesFullyBound() const override { return true; }
 };
 
 //MORE: I'm not 100% sure why this is different from a CLocalScope... it should be merged
@@ -1627,6 +1617,7 @@ public:
     virtual ISourcePath * querySourcePath() const override { return NULL; }
     virtual bool hasBaseClass(IHqlExpression * searchBase) override;
     virtual bool allBasesFullyBound() const override { return false; }
+    virtual bool isEquivalentScope(const IHqlScope & other) const override { return this == &other; }
 
     virtual IHqlScope * clone(HqlExprArray & children, HqlExprArray & symbols) override;
     virtual IHqlScope * queryConcreteScope() override;

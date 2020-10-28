@@ -24,10 +24,10 @@
 
 #include "../fetch/thfetchcommon.hpp"
 #include "../hashdistrib/thhashdistrib.ipp"
+#include "thkeyedjoincommon.hpp"
 #include "thkeyedjoin.ipp"
 #include "jhtree.hpp"
 
-static const std::array<StatisticKind, 8> progressKinds{ StNumIndexSeeks, StNumIndexScans, StNumIndexAccepted, StNumPostFiltered, StNumPreFiltered, StNumDiskSeeks, StNumDiskAccepted, StNumDiskRejected };
 
 class CKeyedJoinMaster : public CMasterActivity
 {
@@ -36,8 +36,6 @@ class CKeyedJoinMaster : public CMasterActivity
     MemoryBuffer initMb;
     unsigned numTags = 0;
     std::vector<mptag_t> tags;
-    ProgressInfoArray progressInfoArr;
-
     bool local = false;
     bool remoteKeyedLookup = false;
     bool remoteKeyedFetch = false;
@@ -46,7 +44,6 @@ class CKeyedJoinMaster : public CMasterActivity
     // CMap contains mappings and lists of parts for each slave
     class CMap
     {
-        static const unsigned partMask = 0x00ffffff;
     public:
         std::vector<unsigned> allParts;
         std::vector<std::vector<unsigned>> slavePartMap; // vector of slave parts (IPartDescriptor's slavePartMap[<slave>] serialized to each slave)
@@ -152,7 +149,7 @@ class CKeyedJoinMaster : public CMasterActivity
                         for (unsigned c=0; c<part->numCopies(); c++)
                         {
                             INode *partNode = part->queryNode(c);
-                            unsigned partCopy = p | (c << 24);
+                            unsigned partCopy = p | (c << partBits);
                             unsigned start=nextGroupStartPos;
                             unsigned gn=start;
                             do
@@ -160,29 +157,43 @@ class CKeyedJoinMaster : public CMasterActivity
                                 INode &groupNode = dfsGroup.queryNode(gn);
                                 if ((partNode->equals(&groupNode)))
                                 {
-                                    /* NB: If there's >1 slave per node (e.g. slavesPerNode>1) then there are multiple matching node's in the dfsGroup
-                                     * Which means a copy of a part may already be assigned to a cluster slave map. This check avoid handling it again if it has.
-                                     */
-                                    if (!partsOnSlaves->testSet(groupSize*p+gn))
+                                    RemoteFilename rfn;
+                                    part->getFilename(c, rfn);
+                                    Owned<IFile> file = createIFile(rfn);
+                                    if (file->exists()) // skip if copy doesn't exist
                                     {
-                                        std::vector<unsigned> &slaveParts = querySlaveParts(gn);
-                                        if (NotFound == mappedPos)
+                                        /* NB: If there's >1 slave per node (e.g. slavesPerNode>1) then there are multiple matching node's in the dfsGroup
+                                        * Which means a copy of a part may already be assigned to a cluster slave map. This check avoid handling it again if it has.
+                                        */
+                                        if (!partsOnSlaves->testSet(groupSize*p+gn))
                                         {
-                                            /* NB: to avoid all parts being mapped to same remote slave process (significant if slavesPerNode>1)
-                                             * or (conditionally) all accessible locals being added to all slaves (which may have detrimental effect on key node caching)
-                                             * inc. group start pos for beginning of next search.
-                                             */
-                                            slaveParts.push_back(partCopy);
-                                            if (activity.queryContainer().queryJob().queryChannelsPerSlave()>1)
-                                                mappedPos = gn % queryNodeClusterWidth();
-                                            else
-                                                mappedPos = gn;
-                                            nextGroupStartPos = gn+1;
-                                            if (nextGroupStartPos == groupSize)
-                                                nextGroupStartPos = 0;
+                                            std::vector<unsigned> &slaveParts = querySlaveParts(gn);
+                                            if (NotFound == mappedPos)
+                                            {
+                                                /* NB: to avoid all parts being mapped to same remote slave process (significant if slavesPerNode>1)
+                                                * or (conditionally) all accessible locals being added to all slaves (which may have detrimental effect on key node caching)
+                                                * inc. group start pos for beginning of next search.
+                                                */
+                                                slaveParts.push_back(partCopy);
+                                                if (activity.queryContainer().queryJob().queryChannelsPerSlave()>1)
+                                                    mappedPos = gn % queryNodeClusterWidth();
+                                                else
+                                                    mappedPos = gn;
+                                                nextGroupStartPos = gn+1;
+                                                if (nextGroupStartPos == groupSize)
+                                                    nextGroupStartPos = 0;
+
+                                                /* NB: normally if the part is within the cluster, the copy will be 0 (i.e. primary)
+                                                * But it's possible that a non-primary copy from another logical cluster is local to
+                                                * this cluster, in which case, must capture which copy it is here in the map, so the
+                                                * slaves can send the requests to the correct slave and tell it to deal with the
+                                                * correct copy.
+                                                */
+                                                mappedPos |= (c << slaveBits); // encode which copy into mappedPos
+                                            }
+                                            else if (allLocal) // all slaves get all locally accessible parts
+                                                slaveParts.push_back(partCopy);
                                         }
-                                        else if (allLocal) // all slaves get all locally accessible parts
-                                            slaveParts.push_back(partCopy);
                                     }
                                 }
                                 gn++;
@@ -236,14 +247,10 @@ class CKeyedJoinMaster : public CMasterActivity
 
 
 public:
-    CKeyedJoinMaster(CMasterGraphElement *info) : CMasterActivity(info)
+    CKeyedJoinMaster(CMasterGraphElement *info) : CMasterActivity(info, keyedJoinActivityStatistics)
     {
         helper = (IHThorKeyedJoinArg *) queryHelper();
-        unsigned numStats = helper->diskAccessRequired() ? 8 : 5; // see progressKinds array
-        for (unsigned s=0; s<numStats; s++)
-            progressInfoArr.append(*new ProgressInfo(queryJob()));
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
-
         // NB: force options are there to force all parts to be remote, even if local to slave (handled on slave)
         remoteKeyedLookup = getOptBool(THOROPT_REMOTE_KEYED_LOOKUP, true);
         if (getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUP))
@@ -397,6 +404,30 @@ public:
                 if (totalIndexParts)
                 {
                     indexMap.map(*this, indexFile, keyHasTlk, getOptBool("allLocalIndexParts"));
+                    if (remoteKeyedLookup && !getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUP))
+                    {
+                        /* heuristic to determine how many nodes in this cluster, have had parts
+                         * mapped for remote lookup.
+                         * If <50%, then turn off remoteKeyedLookup, and process directly
+                         * This scenario can happen, when the index has been written to an overlapping but smaller cluster,
+                         * or if a narrow index has been copied to this cluster (e.g a 1-way hthor index).
+                         */ 
+                        unsigned nodesWithMappedParts = 0;
+                        unsigned groupSize = queryDfsGroup().ordinality();
+                        for (unsigned s=0; s<groupSize; s++)
+                        {
+                            std::vector<unsigned> &parts = indexMap.querySlaveParts(s);
+                            if (parts.size())
+                                nodesWithMappedParts++;
+                        }
+                        if ((nodesWithMappedParts * 2) < groupSize) // i.e. if less than 50% nodes have any parts mapped
+                        {
+                            remoteKeyedLookup = false;
+                            remoteKeyedFetch = false;
+                            ActPrintLog("Remote keyed lookups disabled, because too few nodes mapped to service requests of narrow key [cluster nodes=%u, key width=%u, nodes mapped=%u]", groupSize, indexFile->numParts(), nodesWithMappedParts);
+                        }
+                    }
+
                     initMb.append(numTags);
                     for (auto &tag: tags)
                         initMb.append(tag);
@@ -500,28 +531,6 @@ public:
                 if (remoteKeyedFetch)
                     dataMap.serializePartMap(dst);
             }
-        }
-    }
-    virtual void deserializeStats(unsigned node, MemoryBuffer &mb)
-    {
-        CMasterActivity::deserializeStats(node, mb);
-        ForEachItemIn(p, progressInfoArr)
-        {
-            unsigned __int64 st;
-            mb.read(st);
-            progressInfoArr.item(p).set(node, st);
-        }
-    }
-    virtual void getEdgeStats(IStatisticGatherer & stats, unsigned idx)
-    {
-        //This should be an activity stats
-        CMasterActivity::getEdgeStats(stats, idx);
-        assertex(0 == idx);
-        ForEachItemIn(p, progressInfoArr)
-        {
-            ProgressInfo &progress = progressInfoArr.item(p);
-            progress.processInfo();
-            stats.addStatistic(progressKinds[p], progress.queryTotal());
         }
     }
 };

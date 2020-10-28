@@ -1373,7 +1373,7 @@ size32_t CSafeSocket::write(const void *buf, size32_t size, bool takeOwnership)
     }
 }
 
-bool CSafeSocket::readBlock(MemoryBuffer &ret, unsigned timeout, unsigned maxBlockSize)
+bool CSafeSocket::readBlocktms(MemoryBuffer &ret, unsigned timeoutms, unsigned maxBlockSize)
 {
     // MORE - this is still not good enough as we could get someone else's block if there are multiple input datasets
     CriticalBlock c(crit);
@@ -1383,7 +1383,7 @@ bool CSafeSocket::readBlock(MemoryBuffer &ret, unsigned timeout, unsigned maxBlo
         unsigned len;
         try
         {
-            sock->read(&len, sizeof (len), sizeof (len), bytesRead, timeout);
+            sock->readtms(&len, sizeof (len), sizeof (len), bytesRead, timeoutms);
         }
         catch (IJSOCK_Exception *E)
         {
@@ -1403,7 +1403,7 @@ bool CSafeSocket::readBlock(MemoryBuffer &ret, unsigned timeout, unsigned maxBlo
         if (len)
         {
             unsigned bytesRead;
-            sock->read(ret.reserveTruncate(len), len, len, bytesRead, timeout);
+            sock->readtms(ret.reserveTruncate(len), len, len, bytesRead, timeoutms);
         }
         return len != 0;
     }
@@ -1454,7 +1454,7 @@ void parseHttpParameterString(IProperties *p, const char *str)
     }
 }
 
-bool CSafeSocket::readBlock(StringBuffer &ret, unsigned timeout, HttpHelper *pHttpHelper, bool &continuationNeeded, bool &isStatus, unsigned maxBlockSize)
+bool CSafeSocket::readBlocktms(StringBuffer &ret, unsigned timeoutms, HttpHelper *pHttpHelper, bool &continuationNeeded, bool &isStatus, unsigned maxBlockSize)
 {
     continuationNeeded = false;
     isStatus = false;
@@ -1465,7 +1465,7 @@ bool CSafeSocket::readBlock(StringBuffer &ret, unsigned timeout, HttpHelper *pHt
         unsigned len = 0;
         try
         {
-            sock->read(&len, sizeof (len), sizeof (len), bytesRead, timeout);
+            sock->readtms(&len, sizeof (len), sizeof (len), bytesRead, timeoutms);
             if (bytesRead==0) //graceful timeout
                 return false;
         }
@@ -1494,7 +1494,7 @@ bool CSafeSocket::readBlock(StringBuffer &ret, unsigned timeout, HttpHelper *pHt
         {
 #define MAX_HTTP_HEADERSIZE 16000 //arbitrary per line limit, most web servers are lower, but REST queries can be complex..
             char header[MAX_HTTP_HEADERSIZE + 1]; // allow room for \0
-            sock->read(header, 1, MAX_HTTP_HEADERSIZE, bytesRead, timeout);
+            sock->readtms(header, 1, MAX_HTTP_HEADERSIZE, bytesRead, timeoutms);
             header[bytesRead] = 0;
             char *payload = strstr(header, "\r\n\r\n");
             if (payload)
@@ -1558,7 +1558,7 @@ bool CSafeSocket::readBlock(StringBuffer &ret, unsigned timeout, HttpHelper *pHt
         }
 
         if (left)
-            sock->read(buf + (len - left), left, left, bytesRead, timeout);
+            sock->readtms(buf + (len - left), left, left, bytesRead, timeoutms);
 
         if (len && pHttpHelper)
         {
@@ -2354,9 +2354,9 @@ void FlushingJsonBuffer::startScalar(const char *resultName, unsigned sequence, 
     startBlock();
     if (!isBlocked)
     {
+        StringBuffer seqName;
         if (!simpleTag)
         {
-            StringBuffer seqName;
             if (!resultName || !*resultName)
                 resultName = seqName.appendf("Result_%d", sequence+1).str();
             appendJSONName(s, resultName).append('{');
@@ -2393,8 +2393,13 @@ void FlushingJsonBuffer::setScalarUInt(const char *resultName, unsigned sequence
 ClusterWriteHandler::ClusterWriteHandler(char const * _logicalName, char const * _activityType)
     : logicalName(_logicalName), activityType(_activityType)
 {
-    makePhysicalPartName(logicalName.get(), 1, 1, physicalName, false);
-    splitFilename(physicalName, &physicalDir, &physicalDir, &physicalBase, &physicalBase);
+}
+
+void ClusterWriteHandler::getPhysicalName(StringBuffer & name, const char * cluster) const
+{
+    Owned<IStoragePlane> plane = getStoragePlane(cluster, false);
+    const char * prefix = plane ? plane->queryPrefix() : nullptr;
+    makePhysicalPartName(logicalName.get(), 1, 1, name, 0, DFD_OSdefault, prefix);
 }
 
 void ClusterWriteHandler::addCluster(char const * cluster)
@@ -2402,6 +2407,17 @@ void ClusterWriteHandler::addCluster(char const * cluster)
     Owned<IGroup> group = queryNamedGroupStore().lookup(cluster);
     if (!group)
         throw MakeStringException(0, "Unknown cluster %s while writing file %s", cluster, logicalName.get());
+
+#ifdef _CONTAINERIZED
+    //MORE: Allow multiple clutsers once the DFU information removes the full path from the file entry
+    //When that is done, the local cluster test will ideally look at the pane information to see if it is a local mount.
+    //Will require including some of the bare-metal code once bare-metal storage planes are supported
+    if (localCluster)
+        throw MakeStringException(0, "Container mode does not yet support output to multiple clusters while writing file %s)",
+                logicalName.get());
+    localClusterName.set(cluster);
+    localCluster.set(group);
+#else
     if (group->isMember())
     {
         if (localCluster)
@@ -2422,12 +2438,17 @@ void ClusterWriteHandler::addCluster(char const * cluster)
         remoteNodes.append(*group.getClear());
         remoteClusters.append(cluster);
     }
+#endif
 }
 
 void ClusterWriteHandler::getLocalPhysicalFilename(StringAttr & out) const
 {
     if(localCluster.get())
+    {
+        StringBuffer physicalName;
+        getPhysicalName(physicalName, localClusterName);
         out.set(physicalName.str());
+    }
     else
         getTempFilename(out);
     PROGLOG("%s(CLUSTER) for logical filename %s writing to local file %s", activityType.get(), logicalName.get(), out.get());
@@ -2435,6 +2456,12 @@ void ClusterWriteHandler::getLocalPhysicalFilename(StringAttr & out) const
 
 void ClusterWriteHandler::splitPhysicalFilename(StringBuffer & dir, StringBuffer & base) const
 {
+#ifdef _CONTAINERIZED
+    assertex(localClusterName.length());
+#endif
+    StringBuffer physicalName, physicalDir, physicalBase;
+    getPhysicalName(physicalName, localClusterName);
+    splitFilename(physicalName, &physicalDir, &physicalDir, &physicalBase, &physicalBase);
     dir.append(physicalDir);
     base.append(physicalBase);
 }
@@ -2447,6 +2474,13 @@ void ClusterWriteHandler::getTempFilename(StringAttr & out) const
 
 void ClusterWriteHandler::copyPhysical(IFile * source, bool noCopy) const
 {
+#ifdef _CONTAINERIZED
+    assertex(localClusterName.length());
+#endif
+    StringBuffer physicalName, physicalDir, physicalBase;
+    getPhysicalName(physicalName, localClusterName);
+    splitFilename(physicalName, &physicalDir, &physicalDir, &physicalBase, &physicalBase);
+
     RemoteFilename rdn, rfn;
     rdn.setLocalPath(physicalDir.str());
     rfn.setLocalPath(physicalName.str());

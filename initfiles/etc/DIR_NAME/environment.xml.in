@@ -264,7 +264,9 @@
               txSummaryResourceReq="false"
               maxBacklogQueueSize="200"
               maxConcurrentThreads="0"
+              maxLogFileSize="0"
               maxRequestEntityLength="8000000"
+              minCompressLength="1000"
               name="myesp"
               perfReportDelay="60"
               portalurl="${PORTALURL}">
@@ -419,6 +421,11 @@
                          path="CodeSignAccess"
                          resource="CodeSignAccess"
                          service="ws_codesign"/>
+    <AuthenticateFeature authenticate="Yes"
+                         description="Access to ws Decoupled Log service"
+                         path="WsDecoupledLogAccess"
+                         resource="WsDecoupledLogAccess"
+                         service="ws_decoupledlogging"/>
     <Authenticate access="Read"
                   description="Root access to SMC service"
                   path="/"
@@ -525,6 +532,7 @@
    <Category dir="$ENV{DESTDIR}${EXEC_PREFIX}/lib/[NAME]/[INST]" name="run"/>
    <Category dir="$ENV{DESTDIR}${CONFIG_PREFIX}/[NAME]/[INST]" name="conf"/>
    <Category dir="$ENV{DESTDIR}${EXEC_PREFIX}/lib/[NAME]/[INST]/temp" name="temp"/>
+   <Category dir="$ENV{DESTDIR}${EXEC_PREFIX}/lib/[NAME]/hpcc-data/[COMPONENT]" name="dali"/>
    <Category dir="$ENV{DESTDIR}${EXEC_PREFIX}/lib/[NAME]/hpcc-data/[COMPONENT]" name="data"/>
    <Category dir="$ENV{DESTDIR}${EXEC_PREFIX}/lib/[NAME]/hpcc-data2/[COMPONENT]" name="data2"/>
    <Category dir="$ENV{DESTDIR}${EXEC_PREFIX}/lib/[NAME]/hpcc-data3/[COMPONENT]" name="data3"/>
@@ -623,6 +631,7 @@
              port="8877"/>
   </SashaServerProcess>
   <EspService ActivityInfoCacheSeconds="10"
+              ActivityInfoCacheAutoRebuildSeconds="120"
               allowNewRoxieOnDemandQuery="false"
               AWUsCacheTimeout="15"
               build="_"
@@ -744,6 +753,10 @@
                          path="CodeSignAccess"
                          resource="CodeSignAccess"
                          service="ws_codesign"/>
+    <AuthenticateFeature description="Access to ws Decoupled Log service"
+                         path="WsDecoupledLogAccess"
+                         resource="WsDecoupledLogAccess"
+                         service="ws_decoupledlogging"/>
     <ProcessFilters>
      <Platform name="Windows">
       <ProcessFilter name="any">
@@ -1128,6 +1141,10 @@
                           path="CodeSignAccess"
                           resource="CodeSignAccess"
                           service="ws_codesign"/>
+     <AuthenticateFeature description="Access to ws Decoupled Log service"
+                          path="WsDecoupledLogAccess"
+                          resource="WsDecoupledLogAccess"
+                          service="ws_decoupledlogging"/>
      <ProcessFilters>
       <Platform name="Windows">
        <ProcessFilter name="any">

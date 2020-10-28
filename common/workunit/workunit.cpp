@@ -15,6 +15,9 @@
     limitations under the License.
 ############################################################################## */
 
+#include <string>
+#include <unordered_set>
+
 #include "jlib.hpp"
 #include "workunit.hpp"
 #include "jprop.hpp"
@@ -48,9 +51,16 @@
 
 #include "wuerror.hpp"
 #include "wujobq.hpp"
+#ifndef _CONTAINERIZED
 #include "environment.hpp"
+#endif
+#include "daqueue.hpp"
 #include "workunit.ipp"
 #include "digisign.hpp"
+
+#include <list>
+#include <string>
+#include <algorithm>
 
 using namespace cryptohelper;
 
@@ -202,10 +212,7 @@ void CWuGraphStats::beforeDispose()
     tag.append("sg").append(id);
 
     //Replace the particular subgraph statistics added by this creator
-    StringBuffer qualified(tag);
-    qualified.append("[@creator='").append(creator).append("']");
-    progress->removeProp(qualified);
-    IPropertyTree * subgraph = progress->addPropTree(tag);
+    IPropertyTree * subgraph = progress->setPropTree(tag);
     subgraph->setProp("@c", queryCreatorTypeName(creatorType));
     subgraph->setProp("@creator", creator);
     subgraph->setPropInt("@minActivity", minActivity);
@@ -398,7 +405,7 @@ public:
     }
     virtual const char * queryScope() const
     {
-        return scope;
+        return scope ? scope : "";
     }
     virtual IStringVal & getFormattedValue(IStringVal & str) const
     {
@@ -1100,7 +1107,8 @@ public:
 
     virtual const char * queryScope() const  override
     {
-        return notes.item(baseIndex).queryScope();
+        const char * scope = notes.item(baseIndex).queryScope();
+        return scope ? scope : "";
     }
 
     virtual StatisticScopeType getScopeType() const override
@@ -2274,24 +2282,38 @@ protected:
                     activeScopes.append(scope);
             }
 
-            if (include)
+            if (include && !filter.includeScope(scope))
+                include = false;
+
+            if (include && filter.requiredStats.size())
             {
-                if (!filter.includeScope(scope))
-                    include = false;
-                else if (filter.requiredStats.size())
+                //MORE: This would be cleaner as a member of filter - but it needs access to the stats.
+                for (unsigned iReq=0; iReq < filter.requiredStats.size(); iReq++)
                 {
-                    //MORE: This would be cleaner as a member of filter - but it needs access to the stats.
-                    for (unsigned iReq=0; iReq < filter.requiredStats.size(); iReq++)
+                    const StatisticValueFilter & cur = filter.requiredStats[iReq];
+                    unsigned __int64 value;
+                    if (getStat(cur.queryKind(), value))
                     {
-                        const StatisticValueFilter & cur = filter.requiredStats[iReq];
-                        unsigned __int64 value;
-                        if (getStat(cur.queryKind(), value))
-                        {
-                            if (!cur.matches(value))
-                                include = false;
-                        }
-                        else
+                        if (!cur.matches(value))
                             include = false;
+                    }
+                    else
+                        include = false;
+                }
+            }
+
+            if (include && filter.requiredAttrs.size())
+            {
+                //MORE: This would be cleaner as a member of filter - but it needs access to the stats.
+                StringBuffer temp;
+                for (unsigned iReq=0; iReq < filter.requiredAttrs.size(); iReq++)
+                {
+                    const AttributeValueFilter & cur = filter.requiredAttrs[iReq];
+                    const char * value = queryAttribute(cur.queryKind(), temp.clear());
+                    if (!value || !cur.matches(value))
+                    {
+                        include = false;
+                        break;
                     }
                 }
             }
@@ -2479,8 +2501,75 @@ protected:
     IArrayOf<StatisticAggregator> aggregators;
 };
 
+// Aggregate costs excluding all hThor costs
+// Note: the only reason that this class is required is that it is not possible to determine the creator
+//       of a scope when iterating with IConstWUScopeIterator.  (When this functionlity becomes available,
+//       consider filtering within aggregateCost and eliminating this class.)
+class CostAggregatorExcludeHThor : public CInterfaceOf<IWuScopeVisitor>
+{
+public:
+    virtual void noteStatistic(StatisticKind kind, unsigned __int64 value, IConstWUStatistic & extra) override
+    {
+        if (extra.getCreatorType() != SCThthor)
+            totalCost += value;
+    }
+    virtual void noteAttribute(WuAttr attr, const char * value) override { throwUnexpected(); }
+    virtual void noteHint(const char * kind, const char * value) override { throwUnexpected(); }
+    virtual void noteException(IConstWUException & exception) { throwUnexpected(); }
+    virtual cost_type getTotalCost() const { return totalCost; }
+protected:
+    cost_type totalCost = 0;
+};
 
-//To calculate aggregates, create a scope iterator, and an instance of a StatisticAggregator, and play the attributes through the interface
+// Aggregrate Thor or hThor costs
+cost_type aggregateCost(const IConstWorkUnit * wu, const char *scope, bool excludeHThor)
+{
+    // depth 1: workflow, depth 2: graph, depth 3: subgraph
+    WuScopeFilter filter;
+    if (scope && *scope) // All costs under specified scope (used to calculate all costs for a workflow)
+    {
+        filter.addScope(scope);
+        filter.setIncludeNesting(3);
+        filter.addOutputStatistic(StCostExecute);
+        filter.addRequiredStat(StCostExecute);
+    }
+    else
+        filter.addFilter("stat[CostExecute],depth[1..3],nested[0],where[CostExecute]");
+    filter.addSource("global");
+    filter.finishedFilter();
+    Owned<IConstWUScopeIterator> it = &wu->getScopeIterator(filter);
+    // Note: use of CostAggregatorExcludeHThor will be a slower, so use only when necessary
+    if (excludeHThor)
+    {
+        CostAggregatorExcludeHThor aggregator;
+        for (it->first(); it->isValid(); )
+        {
+            it->playProperties(aggregator);
+            stat_type value;
+            if (it->getStat(StCostExecute, value))
+                it->nextSibling();
+            else
+                it->next();
+        }
+        return aggregator.getTotalCost();
+    }
+    else
+    {
+        cost_type totalCost = 0;
+        for (it->first(); it->isValid(); )
+        {
+            stat_type value = 0.0;
+            if (it->getStat(StCostExecute, value))
+            {
+                totalCost += value;
+                it->nextSibling();
+            }
+            else
+                it->next();
+        }
+        return totalCost;
+    }
+}
 
 //---------------------------------------------------------------------------------------------------------------------
 
@@ -2573,6 +2662,15 @@ static unsigned readValue(const char * start, const char * type)
     return value;
 }
 
+StringBuffer & AttributeValueFilter::describe(StringBuffer & out) const
+{
+    out.append(queryWuAttributeName(attr));
+    if (value)
+        out.append("=").append(value);
+    return out;
+}
+
+
 /*
 Scope service matching Syntax:  * indicates
 Which items are matched:
@@ -2626,6 +2724,7 @@ WuScopeFilter::WuScopeFilter(const char * filter)
 
 WuScopeFilter & WuScopeFilter::addFilter(const char * filter)
 {
+    checkModifiable();
     if (!filter)
         return *this;
 
@@ -2731,6 +2830,7 @@ WuScopeFilter & WuScopeFilter::addFilter(const char * filter)
 
 WuScopeFilter & WuScopeFilter::addScope(const char * scope)
 {
+    checkModifiable();
     if (scope)
     {
         validateScope(scope);
@@ -2739,8 +2839,16 @@ WuScopeFilter & WuScopeFilter::addScope(const char * scope)
     return *this;
 }
 
+WuScopeFilter & WuScopeFilter::addScopeType(StatisticScopeType scopeType)
+{
+    checkModifiable();
+    scopeFilter.addScopeType(scopeType);
+    return *this;
+}
+
 WuScopeFilter & WuScopeFilter::addScopeType(const char * scopeType)
 {
+    checkModifiable();
     if (scopeType)
     {
         StatisticScopeType sst = queryScopeType(scopeType, SSTmax);
@@ -2754,6 +2862,7 @@ WuScopeFilter & WuScopeFilter::addScopeType(const char * scopeType)
 
 WuScopeFilter & WuScopeFilter::addId(const char * id)
 {
+    checkModifiable();
     validateScopeId(id);
     scopeFilter.addId(id);
     return *this;
@@ -2761,6 +2870,7 @@ WuScopeFilter & WuScopeFilter::addId(const char * id)
 
 WuScopeFilter & WuScopeFilter::addOutput(const char * prop)
 {
+    checkModifiable();
     WuAttr attr = queryWuAttribute(prop, WaNone);
     if (attr != WaNone)
     {
@@ -2779,6 +2889,7 @@ WuScopeFilter & WuScopeFilter::addOutput(const char * prop)
 
 WuScopeFilter & WuScopeFilter::addOutputStatistic(const char * prop)
 {
+    checkModifiable();
     if (!prop)
         return *this;
 
@@ -2791,6 +2902,7 @@ WuScopeFilter & WuScopeFilter::addOutputStatistic(const char * prop)
 
 WuScopeFilter & WuScopeFilter::addOutputStatistic(StatisticKind stat)
 {
+    checkModifiable();
     if (stat != StKindNone)
     {
         if (stat != StKindAll)
@@ -2806,6 +2918,7 @@ WuScopeFilter & WuScopeFilter::addOutputStatistic(StatisticKind stat)
 
 WuScopeFilter & WuScopeFilter::addOutputAttribute(const char * prop)
 {
+    checkModifiable();
     if (!prop)
         return *this;
 
@@ -2818,6 +2931,7 @@ WuScopeFilter & WuScopeFilter::addOutputAttribute(const char * prop)
 
 WuScopeFilter & WuScopeFilter::addOutputAttribute(WuAttr attr)
 {
+    checkModifiable();
     if (attr != WaNone)
     {
         if (attr != WaAll)
@@ -2834,6 +2948,7 @@ WuScopeFilter & WuScopeFilter::addOutputAttribute(WuAttr attr)
 
 WuScopeFilter & WuScopeFilter::addOutputHint(const char * prop)
 {
+    checkModifiable();
     if (strieq(prop, "none"))
     {
         desiredHints.kill();
@@ -2852,18 +2967,21 @@ WuScopeFilter & WuScopeFilter::addOutputHint(const char * prop)
 
 WuScopeFilter & WuScopeFilter::setIncludeMatch(bool value)
 {
+    checkModifiable();
     include.matchedScope = value;
     return *this;
 }
 
 WuScopeFilter & WuScopeFilter::setIncludeNesting(unsigned depth)
 {
+    checkModifiable();
     include.nestedDepth = depth;
     return *this;
 }
 
 WuScopeFilter & WuScopeFilter::setIncludeScopeType(const char * scopeType)
 {
+    checkModifiable();
     if (scopeType)
     {
         StatisticScopeType sst = queryScopeType(scopeType, SSTmax);
@@ -2877,6 +2995,7 @@ WuScopeFilter & WuScopeFilter::setIncludeScopeType(const char * scopeType)
 
 WuScopeFilter & WuScopeFilter::setMeasure(const char * measure)
 {
+    checkModifiable();
     if (measure)
     {
         desiredMeasure = queryMeasure(measure, SMeasureNone);
@@ -2889,6 +3008,7 @@ WuScopeFilter & WuScopeFilter::setMeasure(const char * measure)
 
 WuScopeFilter & WuScopeFilter::addOutputProperties(WuPropertyTypes mask)
 {
+    checkModifiable();
     if (properties == PTnone)
         properties = mask;
     else
@@ -2898,13 +3018,22 @@ WuScopeFilter & WuScopeFilter::addOutputProperties(WuPropertyTypes mask)
 
 WuScopeFilter & WuScopeFilter::addRequiredStat(StatisticKind statKind, stat_type lowValue, stat_type highValue)
 {
+    checkModifiable();
     requiredStats.emplace_back(statKind, lowValue, highValue);
     return *this;
 }
 
 WuScopeFilter & WuScopeFilter::addRequiredStat(StatisticKind statKind)
 {
+    checkModifiable();
     requiredStats.emplace_back(statKind, 0, MaxStatisticValue);
+    return *this;
+}
+
+WuScopeFilter & WuScopeFilter::addRequiredAttr(WuAttr attr, const char * value)
+{
+    checkModifiable();
+    requiredAttrs.emplace_back(attr, value);
     return *this;
 }
 
@@ -2915,19 +3044,32 @@ WuScopeFilter & WuScopeFilter::addRequiredStat(StatisticKind statKind)
 
 void WuScopeFilter::addRequiredStat(const char * filter)
 {
+    checkModifiable();
     const char * stat = filter;
     const char * cur = stat;
     while (isalpha(*cur))
         cur++;
 
     StringBuffer statisticName(cur-stat, stat);
-    StatisticKind statKind = queryStatisticKind(statisticName, StKindNone);
-    if (statKind == StKindNone)
-        throw makeStringExceptionV(0, "Unknown statistic name '%s'", statisticName.str());
-
     //Skip any spaces before a comparison operator.
     while (*cur && isspace(*cur))
         cur++;
+
+    StatisticKind statKind = queryStatisticKind(statisticName, StKindNone);
+    if (statKind == StKindNone)
+    {
+        WuAttr attr = queryWuAttribute(statisticName, WaNone);
+        if (attr == WaNone)
+            throw makeStringExceptionV(0, "Unknown property name '%s'", statisticName.str());
+
+        if (*cur == '=')
+            requiredAttrs.emplace_back(attr, cur+1);
+        else if (*cur == '\0')
+            requiredAttrs.emplace_back(attr, nullptr);
+        else
+            throw makeStringExceptionV(0, "Unknown attribute comparison '%s'", cur);
+        return;
+    }
 
     //Save the operator, and skip over any non digits.
     const char * op = cur;
@@ -3001,6 +3143,7 @@ void WuScopeFilter::addRequiredStat(const char * filter)
 
 WuScopeFilter & WuScopeFilter::addSource(const char * source)
 {
+    checkModifiable();
     WuScopeSourceFlags mask = querySource(source);
     if (mask == SSFunknown)
         throw makeStringExceptionV(0, "Unexpected source '%s'", source);
@@ -3013,6 +3156,7 @@ WuScopeFilter & WuScopeFilter::addSource(const char * source)
 
 WuScopeFilter & WuScopeFilter::setDepth(unsigned low, unsigned high)
 {
+    checkModifiable();
     scopeFilter.setDepth(low, high);
     return *this;
 }
@@ -3032,14 +3176,19 @@ bool WuScopeFilter::matchOnly(StatisticScopeType scopeType) const
     return false;
 }
 
+void WuScopeFilter::reportModifyTooLate()
+{
+    throw makeStringException(WUERR_ModifyFilterAfterFinalize, "Attempting to modify WuScopefilter after finish() has been called");
+}
+
 
 //Called once the filter has been updated to optimize the filter
 void WuScopeFilter::finishedFilter()
 {
-    scopeFilter.finishedFilter();
+    if (optimized)
+        throw makeStringException(WUERR_FinalizeAfterFinalize, "Calling finishedFilter() more than once");
 
-    assertex(!optimized);
-    optimized = true;
+    scopeFilter.finishedFilter();
 
     if ((include.nestedDepth == 0) && !include.matchedScope)
         include.nestedDepth = UINT_MAX;
@@ -3057,11 +3206,11 @@ void WuScopeFilter::finishedFilter()
         if (!(properties & PTscope))
         {
             //Global stats and graph stats only contain stats => remove if not interested in them
-            if (!(properties & PTstatistics))
+            if (!(properties & PTstatistics) && (requiredStats.size() == 0))
                 sourceFlags &= ~(SSFsearchGlobalStats|SSFsearchGraphStats);
 
             //graph, workflow only contains attributes and hints => remove if not interested
-            if (!(properties & (PTattributes|PThints)))
+            if (!(properties & (PTattributes|PThints)) && (requiredAttrs.size() == 0))
                 sourceFlags &= ~(SSFsearchGraph|SSFsearchWorkflow);
         }
 
@@ -3143,6 +3292,8 @@ void WuScopeFilter::finishedFilter()
     {
         sourceFlags &= ~(SSFsearchGraph|SSFsearchWorkflow);
     }
+
+    optimized = true;
 }
 
 
@@ -3205,7 +3356,7 @@ ScopeCompare WuScopeFilter::compareMatchScopes(const char * scope) const
 StringBuffer & WuScopeFilter::describe(StringBuffer & out) const
 {
     scopeFilter.describe(out);
-    if (requiredStats.size())
+    if (requiredStats.size() || requiredAttrs.size())
     {
         out.append(",where[");
         bool first = false;
@@ -3214,6 +3365,13 @@ StringBuffer & WuScopeFilter::describe(StringBuffer & out) const
             if (!first)
                 out.append(",");
             stat.describe(out);
+            first = false;
+        }
+        for (const auto & attr : requiredAttrs)
+        {
+            if (!first)
+                out.append(",");
+            attr.describe(out);
             first = false;
         }
         out.append("]");
@@ -3754,6 +3912,21 @@ public:
     {
         return new CDaliWuGraphStats(getWritableProgressConnection(graphName, _wfid), creatorType, creator, _wfid, graphName, subgraph);
     }
+    virtual void import(IPropertyTree *wuTree, IPropertyTree *graphProgressTree)
+    {
+        connection->queryRoot()->setPropTree(nullptr, LINK(wuTree));
+        loadPTree(connection->getRoot());
+
+        if (!graphProgressTree)
+            return;
+
+        VStringBuffer xpath("/GraphProgress/%s", queryWuid());
+        Owned<IRemoteConnection> progressConn = querySDS().connect(xpath, myProcessSession(), RTM_LOCK_WRITE|RTM_CREATE, SDS_LOCK_TIMEOUT);
+        if (!progressConn)
+            throw MakeStringException(0, "Failed to access %s.", xpath.str());
+
+        progressConn->queryRoot()->setPropTree(nullptr, LINK(graphProgressTree));
+    }
 
 protected:
     IRemoteConnection *getProgressConnection() const
@@ -3828,7 +4001,7 @@ public:
     virtual bool aborting() const
             { return c->aborting(); }
     virtual void forceReload()
-            { UNIMPLEMENTED; }
+            { }
     virtual WUAction getAction() const
             { return c->getAction(); }
     virtual const char *queryActionDesc() const
@@ -3837,7 +4010,7 @@ public:
             { return c->getApplicationValue(application, propname, str); }
     virtual int getApplicationValueInt(const char * application, const char * propname, int defVal) const
             { return c->getApplicationValueInt(application, propname, defVal); }
-    virtual IConstWUAppValueIterator & getApplicationValues() const 
+    virtual IConstWUAppValueIterator & getApplicationValues() const
             { return c->getApplicationValues(); }
     virtual bool hasWorkflow() const
             { return c->hasWorkflow(); }
@@ -3875,11 +4048,13 @@ public:
             { return c->getDebugValueInt(propname, defVal); }
     virtual __int64 getDebugValueInt64(const char * propname, __int64 defVal) const
             { return c->getDebugValueInt64(propname, defVal); }
+    virtual double getDebugValueReal(const char * propname, double defVal) const
+            { return c->getDebugValueReal(propname, defVal); }
     virtual bool getDebugValueBool(const char * propname, bool defVal) const
             { return c->getDebugValueBool(propname, defVal); }
-    virtual IStringIterator & getDebugValues() const 
+    virtual IStringIterator & getDebugValues() const
             { return c->getDebugValues(NULL); }
-    virtual IStringIterator & getDebugValues(const char *prop) const 
+    virtual IStringIterator & getDebugValues(const char *prop) const
             { return c->getDebugValues(prop); }
     virtual unsigned getExceptionCount() const
             { return c->getExceptionCount(); }
@@ -3958,7 +4133,7 @@ public:
     virtual bool getStatistic(stat_type & value, const char * scope, StatisticKind kind) const override
             { return c->getStatistic(value, scope, kind); }
     virtual IStringVal & getSnapshot(IStringVal & str) const
-            { return c->getSnapshot(str); } 
+            { return c->getSnapshot(str); }
     virtual const char *queryUser() const
             { return c->queryUser(); }
     virtual ErrorSeverity getWarningSeverity(unsigned code, ErrorSeverity defaultSeverity) const
@@ -4041,16 +4216,18 @@ public:
             { return c->getAbortBy(str); }
     virtual unsigned __int64 getAbortTimeStamp() const
             { return c->getAbortTimeStamp(); }
+    virtual void import(IPropertyTree *wuTree, IPropertyTree *graphProgressTree)
+            { return c->import(wuTree, graphProgressTree); }
 
 
-    virtual void clearExceptions()
-            { c->clearExceptions(); }
+    virtual void clearExceptions(const char *source=nullptr)
+            { c->clearExceptions(source); }
     virtual void commit()
             { c->commit(); }
     virtual IWUException * createException()
             { return c->createException(); }
-    virtual void addProcess(const char *type, const char *instance, unsigned pid, const char *log)
-            { c->addProcess(type, instance, pid, log); }
+    virtual void addProcess(const char *type, const char *instance, unsigned pid, unsigned max, const char *pattern, bool singleLog, const char *log)
+            { c->addProcess(type, instance, pid, max, pattern, singleLog, log); }
     virtual void protect(bool protectMode)
             { c->protect(protectMode); }
     virtual void setAction(WUAction action)
@@ -4290,7 +4467,7 @@ class CLocalWUWebServicesInfo : implements IWUWebServicesInfo, public CInterface
     mutable CriticalSection crit;
 
 private:
-    
+
 public:
     IMPLEMENT_IINTERFACE;
     CLocalWUWebServicesInfo(IPropertyTree *p);
@@ -4301,7 +4478,7 @@ public:
     virtual IStringVal& getInfo(const char *name, IStringVal &str) const;
     virtual IStringVal& getText(const char *name, IStringVal &str) const;
     virtual unsigned getWebServicesCRC() const;
- 
+
     virtual void        setModuleName(const char *);
     virtual void        setAttributeName(const char *);
     virtual void        setDefaultName(const char *);
@@ -4368,7 +4545,7 @@ public:
     virtual void        setResultFetchSize(unsigned rows);      // 0 means file-loaded
     virtual void        setResultTotalRowCount(__int64 rows);   // -1 means unknown
     virtual void        setResultRowCount(__int64 rows);
-    virtual void        setResultDataset(const char *ecl, const char *defs);        
+    virtual void        setResultDataset(const char *ecl, const char *defs);
     virtual void        setResultLogicalName(const char *logicalName);
     virtual void        setResultKeyField(const char * name);
     virtual void        setResultRequestedRows(unsigned req);
@@ -4570,20 +4747,6 @@ private:
 
 //==========================================================================================
 
-class CStringArrayIterator : implements IStringIterator, public CInterface
-{
-    unsigned idx;
-    StringArray strings;
-public:
-    IMPLEMENT_IINTERFACE;
-    CStringArrayIterator() { idx = 0; };
-    void append(const char *str) { strings.append(str); }
-    virtual bool first() { idx = 0; return strings.isItem(idx); }
-    virtual bool next() { idx ++; return strings.isItem(idx); }
-    virtual bool isValid() { return strings.isItem(idx); }
-    virtual IStringVal & str(IStringVal &s) { s.set(strings.item(idx)); return s; }
-};
-
 class CCachedJobNameIterator : implements IStringIterator, public CInterface
 {
     Owned<IPropertyTreeIterator> it;
@@ -4594,16 +4757,6 @@ public:
     virtual bool next() { return it->next(); }
     virtual bool isValid() { return it->isValid(); }
     virtual IStringVal & str(IStringVal &s) { s.set(it->query().queryName()+1); return s; }
-};
-
-class CEmptyStringIterator : implements IStringIterator, public CInterface
-{
-public:
-    IMPLEMENT_IINTERFACE;
-    virtual bool first() { return false; }
-    virtual bool next() { return false; }
-    virtual bool isValid() { return false; }
-    virtual IStringVal & str(IStringVal &s) { s.clear(); return s; }
 };
 
 EnumMapping workunitSortFields[] =
@@ -4617,13 +4770,7 @@ EnumMapping workunitSortFields[] =
    { WUSFwuid, "@" },
    { WUSFecl, "Query/ShortText" },
    { WUSFfileread, "FilesRead/File/@name" },
-   { WUSFtotalthortime, "@totalThorTime|"
-                        "Statistics/Statistic[@c='summary'][@creator='thor'][@kind='TimeElapsed']/@value|"
-                        "Statistics/Statistic[@c='summary'][@creator='hthor'][@kind='TimeElapsed']/@value|"
-                        "Statistics/Statistic[@c='summary'][@creator='roxie'][@kind='TimeElapsed']/@value|"
-                        "Statistics/Statistic[@desc='Total thor time']/@value|"
-                        "Timings/Timing[@name='Total thor time']/@duration"                                 //Use Statistics first. If not found, use Timings
-   },
+   { WUSFtotalthortime, "@totalThorTime" },
    { WUSFwuidhigh, "@" },
    { WUSFwildwuid, "@" },
    { WUSFappvalue, "Application" },
@@ -4672,7 +4819,7 @@ public:
         PROGLOG("WU removeDll %s", name.get());
         queryDllServer().removeDll(name, true, true); // <name>, removeDlls=true, removeDirectory=true
     }
-};      
+};
 
 class asyncRemoveRemoteFileWorkItem: public CInterface, implements IWorkQueueItem // class only used in asyncRemoveFile
 {
@@ -5060,6 +5207,165 @@ bool CWorkUnitFactory::restoreWorkUnit(const char *base, const char *wuid, bool 
     return true;
 }
 
+void CWorkUnitFactory::importWorkUnit(const char *zapReportFileName, const char *zapReportPassword,
+    const char *importDir, const char *app, const char *user, ISecManager *secMgr, ISecUser *secUser)
+{
+    class CImportWorkUnitHelper
+    {
+        StringAttr zapReportFileName, zapReportPassword, importDir, user, wuid, fromWUID, scope;
+        StringBuffer unzipDir;
+        Owned<IPTree> wuTree, graphProgressTree;
+
+        bool findZAPFile(const char *mask, bool optional, StringBuffer &fileName)
+        {
+            Owned<IFile> d = createIFile(unzipDir);
+            if (!d->exists())
+                throw MakeStringException(WUERR_InvalidUserInput, "%s not found.", unzipDir.str());
+
+            Owned<IDirectoryIterator> di = d->directoryFiles(mask, false, false);
+            if (!di->first())
+            {
+                if (optional)
+                    return false;
+                throw MakeStringException(WUERR_InvalidUserInput, "Failed to find %s in %s.", mask, unzipDir.str());
+            }
+
+            fileName.set(unzipDir).append(PATHSEPSTR);
+            di->getName(fileName);
+            if (di->next())
+                throw MakeStringException(WUERR_InvalidUserInput, "More than 1 %s files found in %s.", mask, unzipDir.str());
+            return true;
+        }
+        IPTree *readWUXMLFile(const char *pattern, bool optional)
+        {
+            StringBuffer fileName;
+            if (!findZAPFile(pattern, optional, fileName))
+                return nullptr;
+
+            Owned<IPTree> tree = createPTreeFromXMLFile(fileName);
+            if (!tree)
+                throw MakeStringException(WUERR_InvalidUserInput, "Failed to retrieve %s.", pattern);
+
+            Owned<IFile> f = createIFile(fileName);
+            f->remove();
+            return tree.getClear();
+        }
+        void updateWUQueryAssociatedFilesAttrs(const char *localIP)
+        {
+            ICopyArrayOf<IPropertyTree> fileTreesToRemove;
+            IPropertyTree *queryAssociatedTreeRoot = wuTree->queryPropTree("Query/Associated");
+            Owned<IPropertyTreeIterator> itr = queryAssociatedTreeRoot->getElements("File");
+            ForEach (*itr)
+            {
+                IPropertyTree &fileTree = itr->query();
+                const char *fileName = fileTree.queryProp("@filename");
+
+                StringBuffer fileNameWithPath(unzipDir);
+                fileNameWithPath.append(PATHSEPSTR).append(pathTail(fileName));
+                if (checkFileExists(fileNameWithPath)) //Check if the ZAP report contains this file.
+                {
+                    fileTree.setProp("@ip", localIP);
+                    fileTree.setProp("@filename", fileNameWithPath);
+                }
+                else
+                    fileTreesToRemove.append(fileTree);
+            }
+            ForEachItemIn(r, fileTreesToRemove)
+                queryAssociatedTreeRoot->removeTree(&fileTreesToRemove.item(r));
+        }
+        void getWUAttributes(IWorkUnit *workunit)
+        {
+            wuid.set(workunit->queryWuid());
+            scope.set(workunit->queryWuScope());
+        }
+        IPTree *queryWUPTree() const
+        {
+            return wuTree;
+        }
+        IPTree *queryGraphProgressPTree() const
+        {
+            return graphProgressTree;
+        }
+        void setUNZIPDir()
+        {   //Set a unique unzip folder inside the component's data folder
+            unzipDir.append(importDir).append(PATHSEPSTR).append(wuid.get());
+        }
+        void unzipZAPReport()
+        {
+            Owned<IFile> unzipFolder = createIFile(unzipDir);
+            if (!unzipFolder->exists())
+                unzipFolder->createDirectory();
+            else
+            {//This should not happen. Just in case.
+                throw MakeStringException(WUERR_CannotImportWorkunit, "Workunit %s had been created twice and passed to import()..", wuid.get());
+            }
+
+            //Unzip ZAP Report
+            VStringBuffer zipCommand("unzip %s -d %s", zapReportFileName.get(), unzipDir.str());
+            if (!isEmptyString(zapReportPassword))
+                zipCommand.appendf(" -P %s", zapReportPassword.get());
+            DWORD runcode;
+            bool success = invoke_program(zipCommand.str(), runcode, true);
+            if (!success)
+                throw MakeStringException(WUERR_CannotImportWorkunit, "Failed in execution : %s.", zipCommand.str());
+            if (runcode != 0)
+                throw MakeStringException(WUERR_CannotImportWorkunit, "Failed in execution : %s, error(%" I64F "i)", zipCommand.str(), (unsigned __int64) runcode);
+        }
+        void buildPTreesFromZAPReport()
+        {
+            wuTree.setown(readWUXMLFile("ZAPReport_W*.xml", false));
+            fromWUID.set(wuTree->queryName());
+            wuTree->setProp("@scope", scope);
+
+            //update QueryAssociatedFiles in WU XML;
+            updateWUQueryAssociatedFilesAttrs(GetCachedHostName());
+
+            graphProgressTree.setown(readWUXMLFile("ZAPReport_*.graphprogress", true));
+        }
+        void updateJobName(IWorkUnit *workunit)
+        {
+            StringBuffer newJobName;
+            const char *jobName = workunit->queryJobName();
+            if (isEmptyString(jobName))
+                newJobName.appendf("IMPORTED from %s", fromWUID.get());
+            else
+                newJobName.appendf("IMPORTED: %s", jobName);
+            workunit->setJobName(newJobName);
+        }
+        void setImportDebugAttribute(IWorkUnit *workunit)
+        {
+            StringBuffer attr, importDateTime;
+            CDateTime dt;
+            dt.setNow();
+            dt.getString(importDateTime);
+
+            attr.append("FromWUID=").append(fromWUID).append(",");
+            attr.append("ImportDT=").append(importDateTime).append(",");
+            attr.append("ZAPReport=").append(pathTail(zapReportFileName));
+            workunit->setDebugValue("imported", attr, true);
+        }
+    public:
+        CImportWorkUnitHelper(const char *_zapReportFileName, const char *_zapReportPassword, const char *_importDir, const char *_user)
+            : zapReportFileName(_zapReportFileName), zapReportPassword(_zapReportPassword), importDir(_importDir), user(_user) { };
+
+        void import(IWorkUnit *workunit)
+        {
+            getWUAttributes(workunit);
+            setUNZIPDir();
+            unzipZAPReport();
+            buildPTreesFromZAPReport();
+            workunit->import(queryWUPTree(), queryGraphProgressPTree());
+            setImportDebugAttribute(workunit);
+            updateJobName(workunit);
+
+            removeFileTraceIfFail(zapReportFileName);
+        }
+    };
+
+    Owned<IWorkUnit> newWU = createWorkUnit(app, user, secMgr, secUser);
+    CImportWorkUnitHelper helper(zapReportFileName, zapReportPassword, importDir, user);
+    helper.import(newWU);
+}
 
 int CWorkUnitFactory::setTracingLevel(int newLevel)
 {
@@ -5101,16 +5407,17 @@ IConstQuerySetQueryIterator* CWorkUnitFactory::getQuerySetQueriesSorted( WUQuery
                                             unsigned maxnum,
                                             __int64 *cachehint,
                                             unsigned *total,
-                                            const MapStringTo<bool> *_subset)
+                                            const MapStringTo<bool> *_subset,
+                                            const MapStringTo<bool> *_suspendedQueriesByCluster)
 {
     struct PostFilters
     {
         WUQueryFilterBoolean activatedFilter;
-        WUQueryFilterBoolean suspendedByUserFilter;
+        WUQueryFilterSuspended suspendedFilter;
         PostFilters()
         {
             activatedFilter = WUQFSAll;
-            suspendedByUserFilter = WUQFSAll;
+            suspendedFilter = WUQFAllQueries;
         };
     } postFilters;
 
@@ -5122,10 +5429,21 @@ IConstQuerySetQueryIterator* CWorkUnitFactory::getQuerySetQueriesSorted( WUQuery
         PostFilters postFilters;
         StringArray unknownAttributes;
         const MapStringTo<bool> *subset;
+        const MapStringTo<bool> *suspendedQueriesByCluster;
 
         void populateQueryTree(const IPropertyTree* querySetTree, IPropertyTree* queryTree)
         {
             const char* querySetId = querySetTree->queryProp("@id");
+
+            std::unordered_set<std::string> aliasSet;
+            Owned<IPropertyTreeIterator> aliasIter = querySetTree->getElements("Alias");
+            ForEach(*aliasIter)
+            {
+                const char *id = aliasIter->query().queryProp("@id");
+                if (!isEmptyString(id))
+                    aliasSet.insert(id);
+            }
+
             VStringBuffer path("Query%s", xPath.get());
             Owned<IPropertyTreeIterator> iter = querySetTree->getElements(path.str());
             ForEach(*iter)
@@ -5142,18 +5460,37 @@ IConstQuerySetQueryIterator* CWorkUnitFactory::getQuerySetQueriesSorted( WUQuery
                         if (!subset->getValue(match))
                             continue;
                     }
-                    VStringBuffer aliasXPath("Alias[@id='%s']", queryId);
-                    IPropertyTree *alias = querySetTree->queryPropTree(aliasXPath.str());
-                    if (alias)
+                    if (aliasSet.find(queryId) != aliasSet.end())
                         activated = true;
                 }
                 if (activated && (postFilters.activatedFilter == WUQFSNo))
                     continue;
                 if (!activated && (postFilters.activatedFilter == WUQFSYes))
                     continue;
-                if ((postFilters.suspendedByUserFilter == WUQFSNo) && query.hasProp(getEnumText(WUQSFSuspendedByUser,querySortFields)))
-                    continue;
-                if ((postFilters.suspendedByUserFilter == WUQFSYes) && !query.hasProp(getEnumText(WUQSFSuspendedByUser,querySortFields)))
+
+                bool isSuspendedByUser = query.hasProp(getEnumText(WUQSFSuspendedByUser,querySortFields));
+                bool skip = false;
+                switch(postFilters.suspendedFilter)
+                {
+                case WUQFSUSPDNo:
+                    if (isSuspendedByUser || checkSuspendedByCluster(querySetId, queryId))
+                        skip = true;
+                    break;
+                case WUQFSUSPDYes:
+                    if (!isSuspendedByUser && !checkSuspendedByCluster(querySetId, queryId))
+                        skip = true;
+                    break;
+                case WUQFSUSPDByUser:
+                    if (!isSuspendedByUser)
+                        skip = true;
+                    break;
+                case WUQFSUSPDByFirstNode:
+                case WUQFSUSPDByAnyNode:
+                    if (!checkSuspendedByCluster(querySetId, queryId))
+                        skip = true;
+                    break;
+                }
+                if (skip)
                     continue;
 
                 IPropertyTree *queryWithSetId = queryTree->addPropTree("Query", createPTreeFromIPT(&query));
@@ -5169,25 +5506,35 @@ IConstQuerySetQueryIterator* CWorkUnitFactory::getQuerySetQueriesSorted( WUQuery
             Owned<IRemoteConnection> conn = querySDS().connect(querySetXPath.str(), myProcessSession(), 0, SDS_LOCK_TIMEOUT);
             if (!conn)
                 return NULL;
-
+            IPropertyTree *root = conn->queryRoot()->queryBranch(nullptr);
             if (querySet.isEmpty())
             {
-                Owned<IPropertyTreeIterator> querySetIter = conn->queryRoot()->getElements("*");
+                Owned<IPropertyTreeIterator> querySetIter = root->getElements("*");
                 ForEach(*querySetIter)
                     populateQueryTree(&querySetIter->query(), queryTree);
             }
             else
-                populateQueryTree(conn->queryRoot(), queryTree);
+                populateQueryTree(root, queryTree);
             return conn.getClear();
+        }
+        bool checkSuspendedByCluster(const char *querySetId, const char *queryId)
+        {
+            if (!suspendedQueriesByCluster)
+                return false;
+
+            VStringBuffer match("%s/%s", querySetId, queryId);
+            bool *found = suspendedQueriesByCluster->getValue(match);
+            return (found && *found);
         }
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-        CQuerySetQueriesPager(const char* _querySet, const char* _xPath, const char *_sortOrder, PostFilters& _postFilters, StringArray& _unknownAttributes, const MapStringTo<bool> *_subset)
-            : querySet(_querySet), xPath(_xPath), sortOrder(_sortOrder), subset(_subset)
+        CQuerySetQueriesPager(const char* _querySet, const char* _xPath, const char *_sortOrder, PostFilters& _postFilters,
+            StringArray& _unknownAttributes, const MapStringTo<bool> *_subset, const MapStringTo<bool> *_suspendedQueriesByCluster)
+            : querySet(_querySet), xPath(_xPath), sortOrder(_sortOrder), subset(_subset), suspendedQueriesByCluster(_suspendedQueriesByCluster)
         {
             postFilters.activatedFilter = _postFilters.activatedFilter;
-            postFilters.suspendedByUserFilter = _postFilters.suspendedByUserFilter;
+            postFilters.suspendedFilter = _postFilters.suspendedFilter;
             ForEachItemIn(x, _unknownAttributes)
                 unknownAttributes.append(_unknownAttributes.item(x));
         }
@@ -5223,8 +5570,8 @@ IConstQuerySetQueryIterator* CWorkUnitFactory::getQuerySetQueriesSorted( WUQuery
                 xPath.append('[').append(getEnumText(subfmt,querySortFields)).append("<=").append(fv).append("]");
             else if (subfmt==WUQSFActivited)
                 postFilters.activatedFilter = (WUQueryFilterBoolean) atoi(fv);
-            else if (subfmt==WUQSFSuspendedByUser)
-                postFilters.suspendedByUserFilter = (WUQueryFilterBoolean) atoi(fv);
+            else if (subfmt==WUQSFSuspendedFilter)
+                postFilters.suspendedFilter = (WUQueryFilterSuspended) atoi(fv);
             else if (!fv || !*fv)
                 unknownAttributes.append(getEnumText(subfmt,querySortFields));
             else {
@@ -5255,7 +5602,8 @@ IConstQuerySetQueryIterator* CWorkUnitFactory::getQuerySetQueriesSorted( WUQuery
         }
     }
     IArrayOf<IPropertyTree> results;
-    Owned<IElementsPager> elementsPager = new CQuerySetQueriesPager(querySet.get(), xPath.str(), so.length()?so.str():NULL, postFilters, unknownAttributes, _subset);
+    Owned<IElementsPager> elementsPager = new CQuerySetQueriesPager(querySet.get(), xPath.str(), so.length()?so.str():NULL,
+        postFilters, unknownAttributes, _subset, _suspendedQueriesByCluster);
     Owned<IRemoteConnection> conn=getElementsPaged(elementsPager,startoffset,maxnum,NULL,"",cachehint,results,total,NULL);
     return new CConstQuerySetQueryIterator(results);
 }
@@ -5312,7 +5660,7 @@ void CWorkUnitFactory::reportAbnormalTermination(const char *wuid, WUState &stat
     wu->setState(state);
     Owned<IWUException> e = wu->createException();
     e->setExceptionCode(isEcl ? 1001 : 1000);
-    e->setExceptionMessage(isEcl ? "EclServer terminated unexpectedly" : "Workunit terminated unexpectedly");
+    e->setExceptionMessage(isEcl ? "EclCC terminated unexpectedly" : "Workunit terminated unexpectedly");
 }
 
 static CriticalSection deleteDllLock;
@@ -5704,6 +6052,12 @@ public:
                         query.append("=?~\"").append(fv).append('\"');
                     query.append("]");
                 }
+                else if (subfmt==WUSFtotalthortime)
+                {
+                    query.append("[@totalThorTime>=\"");
+                    formatTimeCollatable(query, milliToNano(atoi(fv)), false);
+                    query.append("\"]");
+                }
                 else if (!*fv)
                 {
                     unknownAttributes.append(getEnumText(subfmt,workunitSortFields));
@@ -5750,7 +6104,7 @@ public:
         return new CConstWUArrayIterator(results);
     }
 
-    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, bool returnOnWaitState)
+    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, std::list<WUState> expectedStates)
     {
         WUState ret = WUStateUnknown;
         StringBuffer wuRoot;
@@ -5759,6 +6113,9 @@ public:
         if (timeout == 0) //no need to subscribe
         {
             ret = (WUState) getEnum(conn->queryRoot(), "@state", states);
+            auto it = std::find(expectedStates.begin(), expectedStates.end(), ret);
+            if (it != expectedStates.end())
+                return ret;
             switch (ret)
             {
             case WUStateCompiled:
@@ -5770,9 +6127,6 @@ public:
             case WUStateFailed:
             case WUStateAborted:
                 return ret;
-            case WUStateWait:
-                if(returnOnWaitState)
-                    return ret;
             default:
                 break;
             }
@@ -5789,6 +6143,9 @@ public:
             for (;;)
             {
                 ret = (WUState) getEnum(conn->queryRoot(), "@state", states);
+                auto it = std::find(expectedStates.begin(), expectedStates.end(), ret);
+                if (it != expectedStates.end())
+                    return ret;
                 switch (ret)
                 {
                 case WUStateCompiled:
@@ -5801,10 +6158,6 @@ public:
                 case WUStateAborted:
                     return ret;
                 case WUStateWait:
-                    if(returnOnWaitState)
-                    {
-                        return ret;
-                    }
                     break;
                 case WUStateCompiling:
                 case WUStateRunning:
@@ -5919,33 +6272,33 @@ extern WORKUNIT_API IConstWorkUnitIterator *createSecureConstWUIterator(IPropert
 
 
 static CriticalSection factoryCrit;
-static Owned<IWorkUnitFactory> factory;
+static Owned<IWorkUnitFactory> globalFactory;
 
 void CDaliWorkUnitFactory::clientShutdown()
 {
     CriticalBlock b(factoryCrit);
-    factory.clear();
+    globalFactory.clear();
 }
 
 void clientShutdownWorkUnit()
 {
     CriticalBlock b(factoryCrit);
-    factory.clear();
+    globalFactory.clear();
 }
 
 
 extern WORKUNIT_API void setWorkUnitFactory(IWorkUnitFactory * _factory)
 {
     CriticalBlock b(factoryCrit);
-    factory.setown(_factory);
+    globalFactory.setown(_factory);
 }
 
 extern WORKUNIT_API IWorkUnitFactory * getWorkUnitFactory()
 {
-    if (!factory)
+    if (!globalFactory)
     {
         CriticalBlock b(factoryCrit);
-        if (!factory)   // NOTE - this "double test" paradigm is not guaranteed threadsafe on modern systems/compilers - I think in this instance that is harmless even in the (extremely) unlikely event that it resulted in the setown being called twice.
+        if (!globalFactory)   // NOTE - this "double test" paradigm is not guaranteed threadsafe on modern systems/compilers - I think in this instance that is harmless even in the (extremely) unlikely event that it resulted in the setown being called twice.
         {
             const char *forceEnv = getenv("FORCE_DALI_WORKUNITS");
             bool forceDali = forceEnv && !strieq(forceEnv, "off") && !strieq(forceEnv, "0");
@@ -5968,23 +6321,23 @@ extern WORKUNIT_API IWorkUnitFactory * getWorkUnitFactory()
                 }
             }
             if (pluginInfo && !forceDali)
-                factory.setown( (IWorkUnitFactory *) loadPlugin(pluginInfo));
+                globalFactory.setown( (IWorkUnitFactory *) loadPlugin(pluginInfo));
             else
-                factory.setown(new CDaliWorkUnitFactory());
+                globalFactory.setown(new CDaliWorkUnitFactory());
         }
     }
-    return factory.getLink();
+    return globalFactory.getLink();
 }
 
 extern WORKUNIT_API IWorkUnitFactory * getDaliWorkUnitFactory()
 {
-    if (!factory)
+    if (!globalFactory)
     {
         CriticalBlock b(factoryCrit);
-        if (!factory)   // NOTE - this "double test" paradigm is not guaranteed threadsafe on modern systems/compilers - I think in this instance that is harmless even in the (extremely) unlikely event that it resulted in the setown being called twice.
-            factory.setown(new CDaliWorkUnitFactory());
+        if (!globalFactory)   // NOTE - this "double test" paradigm is not guaranteed threadsafe on modern systems/compilers - I think in this instance that is harmless even in the (extremely) unlikely event that it resulted in the setown being called twice.
+            globalFactory.setown(new CDaliWorkUnitFactory());
     }
-    return factory.getLink();
+    return globalFactory.getLink();
 }
 
 // A SecureWorkUnitFactory allows the security params to be supplied once to the factory rather than being supplied to each call.
@@ -6068,6 +6421,11 @@ public:
     {
         return baseFactory->restoreWorkUnit(base, wuid, restoreAssociated);
     }
+    virtual void importWorkUnit(const char *zapReportFileName, const char *zapReportPassword,
+        const char *importDir, const char *app, const char *user, ISecManager *secMgr, ISecUser *secUser)
+    {
+        baseFactory->importWorkUnit(zapReportFileName, zapReportPassword, importDir, app, user, secMgr, secUser);
+    }
     virtual IWorkUnit * getGlobalWorkUnit(ISecManager *secMgr, ISecUser *secUser)
     {
         if (!secMgr) secMgr = defaultSecMgr.get();
@@ -6120,10 +6478,11 @@ public:
                                                 unsigned maxnum,
                                                 __int64 *cachehint,
                                                 unsigned *total,
-                                                const MapStringTo<bool> *subset)
+                                                const MapStringTo<bool> *subset,
+                                                const MapStringTo<bool> *suspendedByCluster)
     {
         // MORE - why no security?
-        return baseFactory->getQuerySetQueriesSorted(sortorder,filters,filterbuf,startoffset,maxnum,cachehint,total,subset);
+        return baseFactory->getQuerySetQueriesSorted(sortorder,filters,filterbuf,startoffset,maxnum,cachehint,total,subset,suspendedByCluster);
     }
 
     virtual unsigned numWorkUnits()
@@ -6140,9 +6499,9 @@ public:
     {
         baseFactory->clearAborting(wuid);
     }
-    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, bool returnOnWaitState)
+    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, std::list<WUState> expectedStates)
     {
-        return baseFactory->waitForWorkUnit(wuid, timeout, compiled, returnOnWaitState);
+        return baseFactory->waitForWorkUnit(wuid, timeout, compiled, expectedStates);
     }
     virtual WUAction waitForWorkUnitAction(const char * wuid, WUAction original)
     {
@@ -6335,7 +6694,7 @@ void CLocalWorkUnit::cleanupAndDelete(bool deldll, bool deleteOwned, const Strin
                 }
             }
         }
-        factory->clearAborting(queryWuid());
+        globalFactory->clearAborting(queryWuid());
         deleteTempFiles(NULL, deleteOwned, true); // all, any remaining.
     }
     catch(IException *E)
@@ -6344,9 +6703,9 @@ void CLocalWorkUnit::cleanupAndDelete(bool deldll, bool deleteOwned, const Strin
         LOG(MCexception(E, MSGCLS_warning), E, s.append("Exception during cleanupAndDelete: ").append(p->queryName()).str());
         E->Release();
     }
-    catch (...) 
-    { 
-        WARNLOG("Unknown exception during cleanupAndDelete: %s", p->queryName()); 
+    catch (...)
+    {
+        WARNLOG("Unknown exception during cleanupAndDelete: %s", p->queryName());
     }
 }
 
@@ -6363,7 +6722,7 @@ IJlibDateTime & CLocalWorkUnit::getTimeScheduled(IJlibDateTime &val) const
     p->getProp("@timescheduled",str);
     if(str.length())
         val.setGmtString(str.str());
-    return val; 
+    return val;
 }
 
 bool modifyAndWriteWorkUnitXML(char const * wuid, StringBuffer & buf, StringBuffer & extra, IFileIO * fileio)
@@ -6427,7 +6786,7 @@ bool CLocalWorkUnit::archiveWorkUnit(const char *base, bool del, bool ignoredlle
         {
             if (getState()==WUStateUnknown)
                 setState(WUStateArchived);  // to allow delete
-            cleanupAndDelete(false,deleteOwned);    // no query, may as well delete 
+            cleanupAndDelete(false,deleteOwned);    // no query, may as well delete
         }
         return false;
     }
@@ -6627,7 +6986,13 @@ unsigned CLocalWorkUnit::getDebugAgentListenerPort() const
 unsigned CLocalWorkUnit::getTotalThorTime() const
 {
     CriticalBlock block(crit);
-    return (unsigned)nanoToMilli(extractTimeCollatable(p->queryProp("@totalThorTime"), false));
+    if (p->hasProp("@totalThorTime"))
+        return (unsigned)nanoToMilli(extractTimeCollatable(p->queryProp("@totalThorTime"), false));
+
+    const WuScopeFilter filter("stype[graph],nested[0],stat[TimeElapsed]");
+    StatsAggregation summary;
+    aggregateStatistic(summary, (IConstWorkUnit *)this, filter, StTimeElapsed);
+    return (unsigned)nanoToMilli(summary.getSum());
 }
 
 void CLocalWorkUnit::setDebugAgentListenerPort(unsigned port)
@@ -6681,7 +7046,8 @@ bool CLocalWorkUnit::setDistributedAccessToken(const char * user)
     }
     else
     {
-        WARNLOG("Cannot sign Distributed Access Token, digisign signing not configured");
+        if (workUnitTraceLevel > 1)
+            WARNLOG("Cannot sign Distributed Access Token, digisign signing not configured");
         datoken.append(";");
     }
     p->setProp("@distributedAccessToken", datoken);
@@ -6740,12 +7106,12 @@ IStringVal& CLocalWorkUnit::getAllowedClusters(IStringVal &str) const
 }
 
 void CLocalWorkUnit::setAllowAutoQueueSwitch(bool val)
-{ 
+{
     setDebugValueInt("allowautoqueueswitch",val?1:0,true);
 }
-    
+
 bool CLocalWorkUnit::getAllowAutoQueueSwitch() const
-{ 
+{
     CriticalBlock block(crit);
     return getDebugValueBool("allowautoqueueswitch",false);
 }
@@ -6776,7 +7142,7 @@ void CLocalWorkUnit::remoteCheckAccess(IUserDescriptor *user, bool writeaccess) 
         if (perm<0) {
             if (perm == SecAccess_Unavailable)
                 perm = SecAccess_Full;
-            else 
+            else
                 perm = SecAccess_None;
         }
     }
@@ -6787,10 +7153,10 @@ void CLocalWorkUnit::remoteCheckAccess(IUserDescriptor *user, bool writeaccess) 
 }
 
 
-void CLocalWorkUnit::setUser(const char * value) 
-{ 
+void CLocalWorkUnit::setUser(const char * value)
+{
     CriticalBlock block(crit);
-    p->setProp("@submitID", value); 
+    p->setProp("@submitID", value);
 }
 
 const char *CLocalWorkUnit::queryUser() const
@@ -6802,8 +7168,8 @@ const char *CLocalWorkUnit::queryUser() const
     return ret;
 }
 
-void CLocalWorkUnit::setWuScope(const char * value) 
-{ 
+void CLocalWorkUnit::setWuScope(const char * value)
+{
     if (value && *value)
     {
         if (checkWuScopeSecAccess(value, secMgr.get(), secUser.get(), SecAccess_Write, "Change Scope", true, true))
@@ -6823,13 +7189,13 @@ const char *CLocalWorkUnit::queryWuScope() const
     return ret;
 }
 
-void CLocalWorkUnit::setPriority(WUPriorityClass cls) 
+void CLocalWorkUnit::setPriority(WUPriorityClass cls)
 {
     CriticalBlock block(crit);
     setEnum(p, "@priorityClass", cls, priorityClasses);
 }
 
-WUPriorityClass CLocalWorkUnit::getPriority() const 
+WUPriorityClass CLocalWorkUnit::getPriority() const
 {
     CriticalBlock block(crit);
     return (WUPriorityClass) getEnum(p, "@priorityClass", priorityClasses);
@@ -6840,12 +7206,12 @@ const char *CLocalWorkUnit::queryPriorityDesc() const
     return getEnumText(getPriority(), priorityClasses);
 }
 
-void CLocalWorkUnit::setState(WUState value) 
+void CLocalWorkUnit::setState(WUState value)
 {
     if (value==WUStateAborted || value==WUStatePaused || value==WUStateCompleted || value==WUStateFailed || value==WUStateSubmitted || value==WUStateWait)
     {
-        if (factory)
-            factory->clearAborting(queryWuid());
+        if (globalFactory)
+            globalFactory->clearAborting(queryWuid());
     }
     CriticalBlock block(crit);
     setEnum(p, "@state", value, states);  // For historical reasons, we use state to store the state
@@ -6880,19 +7246,19 @@ void CLocalWorkUnit::setAgentSession(__int64 sessionId)
     p->setPropInt64("@agentSession", sessionId);
 }
 
-bool CLocalWorkUnit::getIsQueryService() const 
+bool CLocalWorkUnit::getIsQueryService() const
 {
     CriticalBlock block(crit);
     return p->getPropBool("@isQueryService", false);
 }
 
-void CLocalWorkUnit::setIsQueryService(bool value) 
+void CLocalWorkUnit::setIsQueryService(bool value)
 {
     CriticalBlock block(crit);
     p->setPropBool("@isQueryService", value);
 }
 
-void CLocalWorkUnit::checkAgentRunning(WUState & state) 
+void CLocalWorkUnit::checkAgentRunning(WUState & state)
 {
     if (queryDaliServerVersion().compare("2.1")<0)
         return;
@@ -6945,7 +7311,7 @@ void CLocalWorkUnit::checkAgentRunning(WUState & state)
     }
 }
 
-WUState CLocalWorkUnit::getState() const 
+WUState CLocalWorkUnit::getState() const
 {
     CriticalBlock block(crit);
     WUState state = (WUState) getEnum(p, "@state", states);
@@ -6968,7 +7334,7 @@ WUState CLocalWorkUnit::getState() const
     return state;
 }
 
-IStringVal& CLocalWorkUnit::getStateEx(IStringVal & str) const 
+IStringVal& CLocalWorkUnit::getStateEx(IStringVal & str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@stateEx"));
@@ -7001,13 +7367,13 @@ const char * CLocalWorkUnit::queryStateDesc() const
     }
 }
 
-void CLocalWorkUnit::setAction(WUAction value) 
+void CLocalWorkUnit::setAction(WUAction value)
 {
     CriticalBlock block(crit);
     setEnum(p, "Action", value, actions);
 }
 
-WUAction CLocalWorkUnit::getAction() const 
+WUAction CLocalWorkUnit::getAction() const
 {
     CriticalBlock block(crit);
     return (WUAction) getEnum(p, "Action", actions);
@@ -7019,21 +7385,32 @@ const char *CLocalWorkUnit::queryActionDesc() const
     return p->queryProp("Action");
 }
 
-IStringVal& CLocalWorkUnit::getApplicationValue(const char *app, const char *propname, IStringVal &str) const
+bool CLocalWorkUnit::hasApplicationValue(const char *app, const char *propname) const
 {
-    CriticalBlock block(crit);
     StringBuffer prop("Application/");
     prop.append(app).append('/').append(propname);
-    str.set(p->queryProp(prop.str())); 
+
+    CriticalBlock block(crit);
+    return p->hasProp(prop);
+}
+
+IStringVal& CLocalWorkUnit::getApplicationValue(const char *app, const char *propname, IStringVal &str) const
+{
+    StringBuffer prop("Application/");
+    prop.append(app).append('/').append(propname);
+
+    CriticalBlock block(crit);
+    str.set(p->queryProp(prop.str()));
     return str;
 }
 
 int CLocalWorkUnit::getApplicationValueInt(const char *app, const char *propname, int defVal) const
 {
-    CriticalBlock block(crit);
     StringBuffer prop("Application/");
     prop.append(app).append('/').append(propname);
-    return p->getPropInt(prop.str(), defVal); 
+
+    CriticalBlock block(crit);
+    return p->getPropInt(prop.str(), defVal);
 }
 
 IConstWUAppValueIterator& CLocalWorkUnit::getApplicationValues() const
@@ -7052,9 +7429,9 @@ void CLocalWorkUnit::setApplicationValue(const char *app, const char *propname, 
     if (overwrite || !p->hasProp(prop.str()))
     {
         StringBuffer sp;
-        p->setProp(sp.append("Application").str(), ""); 
-        p->setProp(sp.append('/').append(app).str(), ""); 
-        p->setProp(prop.str(), value); 
+        p->setProp(sp.append("Application").str(), "");
+        p->setProp(sp.append('/').append(app).str(), "");
+        p->setProp(prop.str(), value);
     }
 }
 
@@ -7064,16 +7441,16 @@ void CLocalWorkUnit::setApplicationValueInt(const char *app, const char *propnam
     setApplicationValue(app, propname, s, overwrite);
 }
 
-void CLocalWorkUnit::setPriorityLevel(int level) 
+void CLocalWorkUnit::setPriorityLevel(int level)
 {
     CriticalBlock block(crit);
     p->setPropInt("PriorityFlag",  level);
 }
 
-int CLocalWorkUnit::getPriorityLevel() const 
+int CLocalWorkUnit::getPriorityLevel() const
 {
     CriticalBlock block(crit);
-    return p->getPropInt("PriorityFlag"); 
+    return p->getPropInt("PriorityFlag");
 }
 
 int calcPriorityValue(const IPropertyTree * p)
@@ -7092,22 +7469,22 @@ int calcPriorityValue(const IPropertyTree * p)
 }
 
 
-int CLocalWorkUnit::getPriorityValue() const 
+int CLocalWorkUnit::getPriorityValue() const
 {
     CriticalBlock block(crit);
     return calcPriorityValue(p);
 }
 
-void CLocalWorkUnit::setRescheduleFlag(bool value) 
+void CLocalWorkUnit::setRescheduleFlag(bool value)
 {
     CriticalBlock block(crit);
-    p->setPropInt("RescheduleFlag", (int) value); 
+    p->setPropInt("RescheduleFlag", (int) value);
 }
 
-bool CLocalWorkUnit::getRescheduleFlag() const 
+bool CLocalWorkUnit::getRescheduleFlag() const
 {
     CriticalBlock block(crit);
-    return p->getPropInt("RescheduleFlag") != 0; 
+    return p->getPropInt("RescheduleFlag") != 0;
 }
 
 class NullIStringIterator : implements IStringIterator, public CInterface
@@ -7293,668 +7670,43 @@ wuTokenStates verifyWorkunitDAToken(const char * ctxUser, const char * daToken)
     return wuActive ? wuTokenValid : wuTokenWorkunitInactive;
 }
 
-IPropertyTree *queryRoxieProcessTree(IPropertyTree *environment, const char *process)
+bool CLocalWorkUnit::resolveFilePrefix(StringBuffer & prefix, const char * queue) const
 {
-    if (!process || !*process)
-        return NULL;
-    VStringBuffer xpath("Software/RoxieCluster[@name=\"%s\"]", process);
-    return environment->queryPropTree(xpath.str());
+    if (hasApplicationValue("prefix", queue))
+    {
+        getApplicationValue("prefix", queue, StringBufferAdaptor(prefix));
+        return true;
+    }
+
+#ifndef _CONTAINERIZED
+    Owned<IConstWUClusterInfo> ci = getTargetClusterInfo(queue);
+    if (ci)
+    {
+        ci->getScope(StringBufferAdaptor(prefix));
+        return true;
+    }
+#endif
+    return false;
 }
 
-void getRoxieProcessServers(IPropertyTree *roxie, SocketEndpointArray &endpoints)
+IStringVal& CLocalWorkUnit::getScope(IStringVal &str) const
 {
-    if (!roxie)
-        return;
-    Owned<IPropertyTreeIterator> servers = roxie->getElements("RoxieServerProcess");
-    ForEach(*servers)
-    {
-        IPropertyTree &server = servers->query();
-        const char *netAddress = server.queryProp("@netAddress");
-        if (netAddress && *netAddress)
-        {
-            SocketEndpoint ep(netAddress, server.getPropInt("@port", 9876));
-            endpoints.append(ep);
-        }
-    }
-}
-
-void getRoxieProcessServers(const char *process, SocketEndpointArray &servers)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    getRoxieProcessServers(queryRoxieProcessTree(root, process), servers);
-}
-
-class CEnvironmentClusterInfo: implements IConstWUClusterInfo, public CInterface
-{
-    StringAttr name;
-    StringAttr alias;
-    StringAttr serverQueue;
-    StringAttr agentQueue;
-    StringAttr agentName;
-    StringAttr roxieProcess;
-    SocketEndpointArray roxieServers;
-    StringAttr thorQueue;
-    StringArray thorProcesses;
-    StringArray primaryThorProcesses;
-    StringAttr prefix;
-    StringAttr ldapUser;
-    StringBuffer ldapPassword;
-    ClusterType platform;
-    unsigned clusterWidth;
-    unsigned roxieRedundancy;
-    unsigned channelsPerNode;
-    unsigned numberOfSlaveLogs;
-    int roxieReplicateOffset;
-
-public:
-    IMPLEMENT_IINTERFACE;
-    CEnvironmentClusterInfo(const char *_name, const char *_prefix, const char *_alias, IPropertyTree *agent, IArrayOf<IPropertyTree> &thors, IPropertyTree *roxie)
-        : name(_name), prefix(_prefix), alias(_alias), roxieRedundancy(0), channelsPerNode(0), numberOfSlaveLogs(0), roxieReplicateOffset(1)
-    {
-        StringBuffer queue;
-        if (thors.ordinality())
-        {
-            thorQueue.set(getClusterThorQueueName(queue.clear(), name));
-            clusterWidth = 0;
-            bool isMultiThor = (thors.length() > 1);
-            ForEachItemIn(i,thors) 
-            {
-                IPropertyTree &thor = thors.item(i);
-                const char* thorName = thor.queryProp("@name");
-                thorProcesses.append(thorName);
-                if (!isMultiThor)
-                    primaryThorProcesses.append(thorName);
-                else
-                {
-                    const char *nodeGroup = thor.queryProp("@nodeGroup");
-                    if (!nodeGroup || strieq(nodeGroup, thorName))
-                        primaryThorProcesses.append(thorName);
-                }
-                unsigned nodes = thor.getCount("ThorSlaveProcess");
-                if (!nodes)
-                    throw MakeStringException(WUERR_MismatchClusterSize,"CEnvironmentClusterInfo: Thor cluster can not have 0 slave processes");
-                unsigned slavesPerNode = thor.getPropInt("@slavesPerNode", 1);
-                unsigned channelsPerSlave = thor.getPropInt("@channelsPerSlave", 1);
-                unsigned ts = nodes * slavesPerNode * channelsPerSlave;
-                numberOfSlaveLogs = nodes * slavesPerNode;
-                if (clusterWidth && (ts!=clusterWidth)) 
-                    throw MakeStringException(WUERR_MismatchClusterSize,"CEnvironmentClusterInfo: mismatched thor sizes in cluster");
-                clusterWidth = ts;
-                bool islcr = !thor.getPropBool("@Legacy");
-                if (!islcr)
-                    throw MakeStringException(WUERR_MismatchThorType,"CEnvironmentClusterInfo: Legacy Thor no longer supported");
-            }
-            platform = ThorLCRCluster;
-        }
-        else if (roxie)
-        {
-            roxieProcess.set(roxie->queryProp("@name"));
-            platform = RoxieCluster;
-            getRoxieProcessServers(roxie, roxieServers);
-            clusterWidth = roxieServers.length();
-            ldapUser.set(roxie->queryProp("@ldapUser"));
-            StringBuffer encPassword (roxie->queryProp("@ldapPassword"));
-            if (encPassword.length())
-                decrypt(ldapPassword, encPassword);
-            const char *redundancyMode = roxie->queryProp("@slaveConfig");
-            if (redundancyMode && *redundancyMode)
-            {
-                unsigned dataCopies = roxie->getPropInt("@numDataCopies", 1);
-                if (strieq(redundancyMode, "overloaded"))
-                    channelsPerNode = roxie->getPropInt("@channelsPernode", 1);
-                else if (strieq(redundancyMode, "full redundancy"))
-                {
-                    roxieRedundancy = dataCopies-1;
-                    roxieReplicateOffset = 0;
-                }
-                else if (strieq(redundancyMode, "cyclic redundancy"))
-                {
-                    roxieRedundancy = dataCopies-1;
-                    channelsPerNode = dataCopies;
-                    roxieReplicateOffset = roxie->getPropInt("@cyclicOffset", 1);
-                }
-            }
-        }
-        else 
-        {
-            clusterWidth = 1;
-            platform = HThorCluster;
-        }
-
-        if (agent)
-        {
-            assertex(!roxie);
-            agentQueue.set(getClusterEclAgentQueueName(queue.clear(), name));
-            agentName.set(agent->queryProp("@name"));
-        }
-        else if (roxie)
-            agentQueue.set(getClusterRoxieQueueName(queue.clear(), name));
-        // MORE - does this need to be conditional?
-        serverQueue.set(getClusterEclCCServerQueueName(queue.clear(), name));
-    }
-
-    IStringVal & getName(IStringVal & str) const
-    {
-        str.set(name.get());
-        return str;
-    }
-    const char *getAlias() const
-    {
-        return alias;
-    }
-    IStringVal & getScope(IStringVal & str) const
-    {
-        str.set(prefix.get());
-        return str;
-    }
-    IStringVal & getAgentQueue(IStringVal & str) const
-    {
-        str.set(agentQueue);
-        return str;
-    }
-    IStringVal & getAgentName(IStringVal & str) const
-    {
-        str.set(agentName);
-        return str;
-    }
-    virtual IStringVal & getServerQueue(IStringVal & str) const
-    {
-        str.set(serverQueue);
-        return str;
-    }
-    IStringVal & getThorQueue(IStringVal & str) const
-    {
-        str.set(thorQueue);
-        return str;
-    }
-    unsigned getSize() const 
-    {
-        return clusterWidth;
-    }
-    unsigned getNumberOfSlaveLogs() const
-    {
-        return numberOfSlaveLogs;
-    }
-    virtual ClusterType getPlatform() const
-    {
-        return platform;
-    }
-    IStringVal & getRoxieProcess(IStringVal & str) const
-    {
-        str.set(roxieProcess.get());
-        return str;
-    }
-    const StringArray & getThorProcesses() const
-    {
-        return thorProcesses;
-    }
-    const StringArray & getPrimaryThorProcesses() const
-    {
-        return primaryThorProcesses;
-    }
-
-    const SocketEndpointArray & getRoxieServers() const
-    {
-        return roxieServers;
-    }
-    unsigned getRoxieRedundancy() const
-    {
-        return roxieRedundancy;
-    }
-    unsigned getChannelsPerNode() const
-    {
-        return channelsPerNode;
-    }
-    int getRoxieReplicateOffset() const
-    {
-        return roxieReplicateOffset;
-    }
-    const char *getLdapUser() const
-    {
-        return ldapUser.get();
-    }
-    virtual const char *getLdapPassword() const
-    {
-        return ldapPassword.str();
-    }
-};
-
-IStringVal &getProcessQueueNames(IStringVal &ret, const char *process, const char *type, const char *suffix)
-{
-    if (process)
-    {
-        Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-        Owned<IConstEnvironment> env = factory->openEnvironment();
-        Owned<IPropertyTree> root = &env->getPTree();
-        StringBuffer queueNames;
-        StringBuffer xpath;
-        xpath.appendf("%s[@process=\"%s\"]", type, process);
-        Owned<IPropertyTreeIterator> targets = root->getElements("Software/Topology/Cluster");
-        ForEach(*targets)
-        {
-            IPropertyTree &target = targets->query();
-            if (target.hasProp(xpath))
-            {
-                if (queueNames.length())
-                    queueNames.append(',');
-                queueNames.append(target.queryProp("@name")).append(suffix);
-            }
-        }
-        ret.set(queueNames);
-    }
-    return ret;
-}
-
-#define ROXIE_QUEUE_EXT ".roxie"
-#define THOR_QUEUE_EXT ".thor"
-#define ECLCCSERVER_QUEUE_EXT ".eclserver"
-#define ECLSERVER_QUEUE_EXT ECLCCSERVER_QUEUE_EXT
-#define ECLSCHEDULER_QUEUE_EXT ".eclscheduler"
-#define ECLAGENT_QUEUE_EXT ".agent"
-
-extern WORKUNIT_API void getDFUServerQueueNames(StringArray &ret, const char *process)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-
-    StringBuffer xpath ("Software/DfuServerProcess");
-    if (!isEmptyString(process))
-        xpath.appendf("[@name=\"%s\"]", process);
-
-    Owned<IPropertyTree> root = &env->getPTree();
-    Owned<IPropertyTreeIterator> targets = root->getElements(xpath.str());
-    ForEach(*targets)
-    {
-        IPropertyTree &target = targets->query();
-        if (target.hasProp("@queue"))
-            ret.appendListUniq(target.queryProp("@queue"), ",");
-    }
-    return;
-}
-
-extern WORKUNIT_API IStringVal &getEclCCServerQueueNames(IStringVal &ret, const char *process)
-{
-    return getProcessQueueNames(ret, process, "EclCCServerProcess", ECLCCSERVER_QUEUE_EXT);
-}
-
-extern WORKUNIT_API IStringVal &getEclServerQueueNames(IStringVal &ret, const char *process)
-{
-    return getProcessQueueNames(ret, process, "EclServerProcess", ECLSERVER_QUEUE_EXT); // shares queue name with EclCCServer
-}
-
-extern WORKUNIT_API IStringVal &getEclSchedulerQueueNames(IStringVal &ret, const char *process)
-{
-    return getProcessQueueNames(ret, process, "EclSchedulerProcess", ECLSCHEDULER_QUEUE_EXT); // Shares deployment/config with EclCCServer
-}
-
-extern WORKUNIT_API IStringVal &getAgentQueueNames(IStringVal &ret, const char *process)
-{
-    return getProcessQueueNames(ret, process, "EclAgentProcess", ECLAGENT_QUEUE_EXT);
-}
-
-extern WORKUNIT_API IStringVal &getRoxieQueueNames(IStringVal &ret, const char *process)
-{
-    return getProcessQueueNames(ret, process, "RoxieCluster", ROXIE_QUEUE_EXT);
-}
-
-extern WORKUNIT_API IStringVal &getThorQueueNames(IStringVal &ret, const char *process)
-{
-    return getProcessQueueNames(ret, process, "ThorCluster", THOR_QUEUE_EXT);
-}
-
-extern WORKUNIT_API StringBuffer &getClusterThorQueueName(StringBuffer &ret, const char *cluster)
-{
-    return ret.append(cluster).append(THOR_QUEUE_EXT);
-}
-
-extern WORKUNIT_API StringBuffer &getClusterThorGroupName(StringBuffer &ret, const char *cluster)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    StringBuffer path;
-    path.append("Software/ThorCluster[@name=\"").append(cluster).append("\"]");
-    IPropertyTree * child = root->queryPropTree(path);
-    if (child)
-        getClusterGroupName(*child, ret);
-
-    return ret;
-}
-
-extern WORKUNIT_API StringBuffer &getClusterGroupName(StringBuffer &ret, const char *cluster)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    StringBuffer path;
-    path.set("Software/ThorCluster[@name=\"").append(cluster).append("\"]");
-    IPropertyTree * child = root->queryPropTree(path);
-    if (child)
-    {
-        return getClusterGroupName(*child, ret);
-    }
-    path.set("Software/RoxieCluster[@name=\"").append(cluster).append("\"]");
-    child = root->queryPropTree(path);
-    if (child)
-    {
-        return getClusterGroupName(*child, ret);
-    }
-    path.set("Software/EclAgentProcess[@name=\"").append(cluster).append("\"]");
-    child = root->queryPropTree(path);
-    if (child)
-    {
-        return ret.setf("hthor__%s", cluster);
-    }
-
-    return ret;
-}
-
-extern WORKUNIT_API ClusterType getClusterTypeByClusterName(const char *cluster)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    StringBuffer path;
-    path.set("Software/ThorCluster[@name=\"").append(cluster).append("\"]");
-    if (root->hasProp(path))
-        return ThorLCRCluster;
-
-    path.set("Software/RoxieCluster[@name=\"").append(cluster).append("\"]");
-    if (root->hasProp(path))
-        return RoxieCluster;
-
-    path.set("Software/EclAgentProcess[@name=\"").append(cluster).append("\"]");
-    if (root->hasProp(path))
-        return HThorCluster;
-
-    return NoCluster;
-}
-
-extern WORKUNIT_API StringBuffer &getClusterRoxieQueueName(StringBuffer &ret, const char *cluster)
-{
-    return ret.append(cluster).append(ROXIE_QUEUE_EXT);
-}
-
-extern WORKUNIT_API StringBuffer &getClusterEclCCServerQueueName(StringBuffer &ret, const char *cluster)
-{
-    return ret.append(cluster).append(ECLCCSERVER_QUEUE_EXT);
-}
-
-extern WORKUNIT_API StringBuffer &getClusterEclServerQueueName(StringBuffer &ret, const char *cluster)
-{
-    return ret.append(cluster).append(ECLSERVER_QUEUE_EXT);
-}
-
-extern WORKUNIT_API StringBuffer &getClusterEclAgentQueueName(StringBuffer &ret, const char *cluster)
-{
-    return ret.append(cluster).append(ECLAGENT_QUEUE_EXT);
-}
-
-extern WORKUNIT_API IStringIterator *getTargetClusters(const char *processType, const char *processName)
-{
-    Owned<CStringArrayIterator> ret = new CStringArrayIterator;
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    StringBuffer xpath;
-    xpath.appendf("%s", processType ? processType : "*");
-    if (processName && *processName)
-        xpath.appendf("[@process=\"%s\"]", processName);
-    Owned<IPropertyTreeIterator> targets = root->getElements("Software/Topology/Cluster");
-    ForEach(*targets)
-    {
-        IPropertyTree &target = targets->query();
-        if (target.hasProp(xpath))
-        {
-            ret->append(target.queryProp("@name"));
-        }
-    }
-    return ret.getClear();
-}
-
-extern WORKUNIT_API bool isProcessCluster(const char *process)
-{
-    if (!process || !*process)
-        return false;
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    VStringBuffer xpath("Software/*Cluster[@name=\"%s\"]", process);
-    return root->hasProp(xpath.str());
-}
-
-extern WORKUNIT_API bool isProcessCluster(const char *remoteDali, const char *process)
-{
-    if (!remoteDali || !*remoteDali)
-        return isProcessCluster(process);
-    if (!process || !*process)
-        return false;
-    Owned<INode> remote = createINode(remoteDali, 7070);
-    if (!remote)
-        return false;
-
-    //Cannot use getEnvironmentFactory() since it is using a remotedali
-    VStringBuffer xpath("Environment/Software/*Cluster[@name=\"%s\"]/@name", process);
-    try
-    {
-        Owned<IPropertyTreeIterator> clusters = querySDS().getElementsRaw(xpath, remote, 1000*60*1);
-        return clusters->first();
-    }
-    catch (IException *E)
-    {
-        StringBuffer msg;
-        E->errorMessage(msg);
-        DBGLOG("Exception validating cluster %s/%s: %s", remoteDali, xpath.str(), msg.str());
-        E->Release();
-    }
-    return true;
-}
-
-IConstWUClusterInfo* getTargetClusterInfo(IPropertyTree *environment, IPropertyTree *cluster)
-{
-    const char *clustname = cluster->queryProp("@name");
-
-    // MORE - at the moment configenf specifies eclagent and thor queues by (in effect) placing an 'example' thor or eclagent in the topology 
-    // that uses the queue that will be used.
-    // We should and I hope will change that, at which point the code below gets simpler
-
-    StringBuffer prefix(cluster->queryProp("@prefix"));
-    prefix.toLowerCase();
-
-    StringBuffer xpath;
-    StringBuffer querySetName;
-    
-    IPropertyTree *agent = NULL;
-    const char *agentName = cluster->queryProp("EclAgentProcess/@process");
-    if (agentName) 
-    {
-        xpath.clear().appendf("Software/EclAgentProcess[@name=\"%s\"]", agentName);
-        agent = environment->queryPropTree(xpath.str());
-    }
-    Owned<IPropertyTreeIterator> ti = cluster->getElements("ThorCluster");
-    IArrayOf<IPropertyTree> thors;
-    ForEach(*ti) 
-    {
-        const char *thorName = ti->query().queryProp("@process");
-        if (thorName) 
-        {
-            xpath.clear().appendf("Software/ThorCluster[@name=\"%s\"]", thorName);
-            thors.append(*environment->getPropTree(xpath.str()));
-        }
-    }
-    const char *roxieName = cluster->queryProp("RoxieCluster/@process");
-    return new CEnvironmentClusterInfo(clustname, prefix, cluster->queryProp("@alias"), agent, thors, queryRoxieProcessTree(environment, roxieName));
-}
-
-IPropertyTree* getTopologyCluster(Owned<IPropertyTree> &envRoot, const char *clustname)
-{
-    if (!clustname || !*clustname)
-        return NULL;
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    envRoot.setown(&env->getPTree());
-    StringBuffer xpath;
-    xpath.appendf("Software/Topology/Cluster[@name=\"%s\"]", clustname);
-    return envRoot->getPropTree(xpath.str());
-}
-
-bool validateTargetClusterName(const char *clustname)
-{
-    Owned<IPropertyTree> envRoot;
-    Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
-    return (cluster.get()!=NULL);
-}
-
-IConstWUClusterInfo* getTargetClusterInfo(const char *clustname)
-{
-    Owned<IPropertyTree> envRoot;
-    Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
-    if (!cluster)
-        return NULL;
-    return getTargetClusterInfo(envRoot, cluster);
-}
-
-unsigned getEnvironmentClusterInfo(CConstWUClusterInfoArray &clusters)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    return getEnvironmentClusterInfo(root, clusters);
-}
-
-unsigned getEnvironmentClusterInfo(IPropertyTree* environmentRoot, CConstWUClusterInfoArray &clusters)
-{
-    if (!environmentRoot)
-        return 0;
-
-    Owned<IPropertyTreeIterator> clusterIter = environmentRoot->getElements("Software/Topology/Cluster");
-    ForEach(*clusterIter)
-    {
-        IPropertyTree &node = clusterIter->query();
-        Owned<IConstWUClusterInfo> cluster = getTargetClusterInfo(environmentRoot, &node);
-        clusters.append(*cluster.getClear());
-    }
-    return clusters.ordinality();
-}
-
-const char *getTargetClusterComponentName(const char *clustname, const char *processType, StringBuffer &name)
-{
-    if (!clustname)
-        return NULL;
-
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    StringBuffer xpath;
-
-    xpath.appendf("Software/Topology/Cluster[@name=\"%s\"]", clustname);
-    Owned<IPropertyTree> cluster = root->getPropTree(xpath.str());
-    if (!cluster) 
-        return NULL;
-
-    StringBuffer xpath1;
-    xpath1.appendf("%s/@process", processType);
-    name.append(cluster->queryProp(xpath1.str()));
-    return name.str();
-}
-
-unsigned getEnvironmentThorClusterNames(StringArray &thorNames, StringArray &groupNames, StringArray &targetNames, StringArray &queueNames)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    Owned<IPropertyTreeIterator> allTargets = root->getElements("Software/Topology/Cluster");
-    ForEach(*allTargets)
-    {
-        IPropertyTree &target = allTargets->query();
-        const char *targetName = target.queryProp("@name");
-        if (targetName && *targetName)
-        {
-            Owned<IPropertyTreeIterator> thorClusters = target.getElements("ThorCluster");
-            ForEach(*thorClusters)
-            {
-                const char *thorName = thorClusters->query().queryProp("@process");
-                VStringBuffer query("Software/ThorCluster[@name=\"%s\"]",thorName);
-                IPropertyTree *thorCluster = root->queryPropTree(query.str());
-                if (thorCluster)
-                {
-                    const char *groupName = thorCluster->queryProp("@nodeGroup");
-                    if (!groupName||!*groupName)
-                        groupName = thorName;
-                    thorNames.append(thorName);
-                    groupNames.append(groupName);
-                    targetNames.append(targetName);
-                    StringBuffer queueName(targetName);
-                    queueNames.append(queueName.append(THOR_QUEUE_EXT));
-                }
-            }
-        }
-    }
-    return thorNames.ordinality();
-}
-
-
-unsigned getEnvironmentHThorClusterNames(StringArray &eclAgentNames, StringArray &groupNames, StringArray &targetNames)
-{
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    Owned<IPropertyTreeIterator> allEclAgents = root->getElements("Software/EclAgentProcess");
-    ForEach(*allEclAgents)
-    {
-        IPropertyTree &eclAgent = allEclAgents->query();
-        const char *eclAgentName = eclAgent.queryProp("@name");
-        if (eclAgentName && *eclAgentName)
-        {
-            Owned<IPropertyTreeIterator> allTargets = root->getElements("Software/Topology/Cluster");
-            ForEach(*allTargets)
-            {
-                IPropertyTree &target = allTargets->query();
-                const char *targetName = target.queryProp("@name");
-                if (targetName && *targetName)
-                {
-                    StringBuffer xpath;
-                    xpath.appendf("EclAgentProcess[@process=\"%s\"]", eclAgentName);
-                    if (target.hasProp(xpath) && !target.hasProp("ThorCluster"))
-                    {
-                        StringBuffer groupName("hthor__");
-                        groupName.append(eclAgentName);
-
-                        groupNames.append(groupName);
-                        eclAgentNames.append(eclAgentName);
-                        targetNames.append(targetName);
-                    }
-                }
-            }
-        }
-    }
-    return eclAgentNames.ordinality();
-}
-
-
-IStringVal& CLocalWorkUnit::getScope(IStringVal &str) const 
-{
+    StringBuffer prefix;
     CriticalBlock block(crit);
     if (p->hasProp("Debug/ForceScope"))
     {
-        StringBuffer prefix(p->queryProp("Debug/ForceScope"));
-        str.set(prefix.toLowerCase().str()); 
+        prefix.append(p->queryProp("Debug/ForceScope")).toLowerCase();
     }
     else
     {
-        Owned <IConstWUClusterInfo> ci = getTargetClusterInfo(p->queryProp("@clusterName"));
-        if (ci)
-            ci->getScope(str); 
-        else
-            str.clear();
+        resolveFilePrefix(prefix, p->queryProp("@clusterName"));
     }
+    str.set(prefix.str());
     return str;
 }
 
 //Queries
-void CLocalWorkUnit::setCodeVersion(unsigned codeVersion, const char * buildVersion, const char * eclVersion) 
+void CLocalWorkUnit::setCodeVersion(unsigned codeVersion, const char * buildVersion, const char * eclVersion)
 {
     CriticalBlock block(crit);
     p->setPropInt("@codeVersion", codeVersion);
@@ -7962,38 +7714,38 @@ void CLocalWorkUnit::setCodeVersion(unsigned codeVersion, const char * buildVers
     p->setProp("@eclVersion", eclVersion);
 }
 
-unsigned CLocalWorkUnit::getCodeVersion() const 
+unsigned CLocalWorkUnit::getCodeVersion() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("@codeVersion");
 }
 
-unsigned CLocalWorkUnit::getWuidVersion() const 
+unsigned CLocalWorkUnit::getWuidVersion() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("@wuidVersion");
 }
 
-void CLocalWorkUnit::getBuildVersion(IStringVal & buildVersion, IStringVal & eclVersion) const 
+void CLocalWorkUnit::getBuildVersion(IStringVal & buildVersion, IStringVal & eclVersion) const
 {
     CriticalBlock block(crit);
     buildVersion.set(p->queryProp("@buildVersion"));
     eclVersion.set(p->queryProp("@eclVersion"));
 }
 
-void CLocalWorkUnit::setCloneable(bool value) 
+void CLocalWorkUnit::setCloneable(bool value)
 {
     CriticalBlock block(crit);
     p->setPropInt("@cloneable", value);
 }
 
-void CLocalWorkUnit::setIsClone(bool value) 
+void CLocalWorkUnit::setIsClone(bool value)
 {
     CriticalBlock block(crit);
     p->setPropInt("@isClone", value);
 }
 
-bool CLocalWorkUnit::getCloneable() const 
+bool CLocalWorkUnit::getCloneable() const
 {
     CriticalBlock block(crit);
     return p->getPropBool("@cloneable", false);
@@ -8054,7 +7806,7 @@ unsigned CLocalWorkUnit::getResultLimit() const
 IStringVal & CLocalWorkUnit::getSnapshot(IStringVal & str) const
 {
     CriticalBlock block(crit);
-    str.set(p->queryProp("SNAPSHOT")); 
+    str.set(p->queryProp("SNAPSHOT"));
     return str;
 }
 
@@ -8156,8 +7908,8 @@ static void setProp(IPropertyTree * to, const IPropertyTree * from, const char *
 
 static void copyTree(IPropertyTree * to, const IPropertyTree * from, const char * xpath)
 {
-    IPropertyTree * match = from->getBranch(xpath); 
-    if (match) 
+    IPropertyTree * match = from->getBranch(xpath);
+    if (match)
         to->setPropTree(xpath, match);
 }
 
@@ -8189,14 +7941,20 @@ void CLocalWorkUnit::copyWorkUnit(IConstWorkUnit *cached, bool copyStats, bool a
     query.clear();
     updateProp(p, fromP, "@jobName");
     copyTree(p, fromP, "Query");
-    pt = fromP->getBranch("Application/LibraryModule"); 
+    pt = fromP->getBranch("Application/LibraryModule");
     if (pt)
     {
         ensurePTree(p, "Application");
         p->setPropTree("Application/LibraryModule", pt);
     }
+    pt = fromP->getBranch("Application/prefix");
+    if (pt)
+    {
+        ensurePTree(p, "Application");
+        p->setPropTree("Application/prefix", pt);
+    }
 
-    pt = fromP->queryBranch("Debug"); 
+    pt = fromP->queryBranch("Debug");
     if (pt)
     {
         IPropertyTree *curDebug = p->queryPropTree("Debug");
@@ -8320,7 +8078,7 @@ IStringVal& CLocalWorkUnit::getDebugValue(const char *propname, IStringVal &str)
     lower.append(propname).toLowerCase();
     CriticalBlock block(crit);
     StringBuffer prop("Debug/");
-    str.set(p->queryProp(prop.append(lower).str())); 
+    str.set(p->queryProp(prop.append(lower).str()));
     return str;
 }
 
@@ -8351,7 +8109,7 @@ int CLocalWorkUnit::getDebugValueInt(const char *propname, int defVal) const
     CriticalBlock block(crit);
     StringBuffer prop("Debug/");
     prop.append(lower);
-    return p->getPropInt(prop.str(), defVal); 
+    return p->getPropInt(prop.str(), defVal);
 }
 
 __int64 CLocalWorkUnit::getDebugValueInt64(const char *propname, __int64 defVal) const
@@ -8361,7 +8119,17 @@ __int64 CLocalWorkUnit::getDebugValueInt64(const char *propname, __int64 defVal)
     CriticalBlock block(crit);
     StringBuffer prop("Debug/");
     prop.append(lower);
-    return p->getPropInt64(prop.str(), defVal); 
+    return p->getPropInt64(prop.str(), defVal);
+}
+
+double CLocalWorkUnit::getDebugValueReal(const char *propname, double defVal) const
+{
+    StringBuffer lower;
+    lower.append(propname).toLowerCase();
+    CriticalBlock block(crit);
+    StringBuffer prop("Debug/");
+    prop.append(lower);
+    return p->getPropReal(prop.str(), defVal);
 }
 
 bool CLocalWorkUnit::getDebugValueBool(const char * propname, bool defVal) const
@@ -8371,7 +8139,7 @@ bool CLocalWorkUnit::getDebugValueBool(const char * propname, bool defVal) const
     CriticalBlock block(crit);
     StringBuffer prop("Debug/");
     prop.append(lower);
-    return p->getPropBool(prop.str(), defVal); 
+    return p->getPropBool(prop.str(), defVal);
 }
 
 IStringIterator *CLocalWorkUnit::getLogs(const char *type, const char *instance) const
@@ -8414,7 +8182,8 @@ IStringIterator *CLocalWorkUnit::getProcesses(const char *type) const
     return new CStringPTreeTagIterator(p->getElements(xpath.str()));
 }
 
-void CLocalWorkUnit::addProcess(const char *type, const char *instance, unsigned pid, const char *log)
+void CLocalWorkUnit::addProcess(const char *type, const char *instance, unsigned pid,
+    unsigned max, const char *pattern, bool singleLog, const char *log)
 {
     VStringBuffer processType("Process/%s", type);
     VStringBuffer xpath("%s/%s", processType.str(), instance);
@@ -8427,6 +8196,12 @@ void CLocalWorkUnit::addProcess(const char *type, const char *instance, unsigned
         node = node->addPropTree(instance);
         node->setProp("@log", log);
         node->setPropInt("@pid", pid);
+        if (max > 0)
+            node->setPropInt("@max", max);
+        if (!isEmptyString(pattern))
+            node->setProp("@pattern", pattern);
+        if (singleLog)
+            node->setPropBool("@singleLog", true);
     }
 }
 
@@ -8440,8 +8215,8 @@ void CLocalWorkUnit::setDebugValue(const char *propname, const char *value, bool
     if (overwrite || !p->hasProp(prop.str()))
     {
         // MORE - not sure this line should be needed....
-        p->setProp("Debug", ""); 
-        p->setProp(prop.str(), value); 
+        p->setProp("Debug", "");
+        p->setProp(prop.str(), value);
     }
 }
 
@@ -8455,8 +8230,8 @@ void CLocalWorkUnit::setDebugValueInt(const char *propname, int value, bool over
     if (overwrite || !p->hasProp(prop.str()))
     {
         // MORE - not sure this line should be needed....
-        p->setProp("Debug", ""); 
-        p->setPropInt(prop.str(), value); 
+        p->setProp("Debug", "");
+        p->setPropInt(prop.str(), value);
     }
 }
 
@@ -8464,16 +8239,16 @@ void CLocalWorkUnit::setTracingValue(const char *propname, const char *value)
 {
     CriticalBlock block(crit);
     // MORE - not sure this line should be needed....
-    p->setProp("Tracing", ""); 
+    p->setProp("Tracing", "");
     StringBuffer prop("Tracing/");
-    p->setProp(prop.append(propname).str(), value); 
+    p->setProp(prop.append(propname).str(), value);
 }
 
 void CLocalWorkUnit::setTracingValueInt(const char *propname, int value)
 {
     CriticalBlock block(crit);
     StringBuffer prop("Tracing/");
-    p->setPropInt(prop.append(propname).str(), value); 
+    p->setPropInt(prop.append(propname).str(), value);
 }
 
 void CLocalWorkUnit::setTracingValueInt64(const char *propname, __int64 value)
@@ -8506,7 +8281,7 @@ IWUQuery* CLocalWorkUnit::updateQuery()
         if (!s)
             s = p->addPropTree("Query", createPTreeFromXMLString("<Query fetchEntire='1'/>")); // Is this really desirable (the fetchEntire) ?
         s->Link();
-        query.setown(new CLocalWUQuery(s)); 
+        query.setown(new CLocalWUQuery(s));
     }
     return query.getLink();
 }
@@ -8760,16 +8535,13 @@ bool CLocalWorkUnit::getStatistic(stat_type & value, const char * scope, Statist
 IConstWUScopeIterator & CLocalWorkUnit::getScopeIterator(const WuScopeFilter & filter) const
 {
     assertex(filter.isOptimized());
-    WuScopeSourceFlags sources = filter.sourceFlags;
+    WuScopeSourceFlags sources = filter.querySources();
 
     Owned<CompoundStatisticsScopeIterator> compoundIter = new CompoundStatisticsScopeIterator(filter);
     if (sources & SSFsearchGlobalStats)
     {
-        {
-            CriticalBlock block(crit);
-            statistics.loadBranch(p,"Statistics");
-        }
-
+        CriticalBlock block(crit);
+        statistics.loadBranch(p,"Statistics");
         Owned<IConstWUScopeIterator> localStats(new WorkUnitStatisticsScopeIterator(statistics, filter.queryIterFilter()));
         compoundIter->addIter(localStats);
     }
@@ -8777,7 +8549,7 @@ IConstWUScopeIterator & CLocalWorkUnit::getScopeIterator(const WuScopeFilter & f
     if (sources & SSFsearchGraphStats)
     {
         const char * wuid = p->queryName();
-        Owned<IConstWUScopeIterator> scopeIter(new CConstGraphProgressScopeIterator(wuid, filter.queryIterFilter(), filter.minVersion));
+        Owned<IConstWUScopeIterator> scopeIter(new CConstGraphProgressScopeIterator(wuid, filter.queryIterFilter(), filter.queryMinVersion()));
         compoundIter->addIter(scopeIter);
     }
 
@@ -8817,7 +8589,7 @@ IWUPlugin* CLocalWorkUnit::updatePluginByName(const char *qname)
     IPropertyTree *pl = p->queryPropTree("Plugins");
     IPropertyTree *s = pl->addPropTree("Plugin");
     s->Link();
-    IWUPlugin* q = new CLocalWUPlugin(s); 
+    IWUPlugin* q = new CLocalWUPlugin(s);
     q->Link();
     plugins.append(*q);
     q->setPluginName(qname);
@@ -8853,7 +8625,7 @@ IWULibrary* CLocalWorkUnit::updateLibraryByName(const char *qname)
     IPropertyTree *pl = p->queryPropTree("Libraries");
     IPropertyTree *s = pl->addPropTree("Library");
     s->Link();
-    IWULibrary* q = new CLocalWULibrary(s); 
+    IWULibrary* q = new CLocalWULibrary(s);
     q->Link();
     libraries.append(*q);
     q->setName(qname);
@@ -8896,7 +8668,7 @@ unsigned CLocalWorkUnit::getExceptionCount() const
     return exceptions.length();
 }
 
-void CLocalWorkUnit::clearExceptions()
+void CLocalWorkUnit::clearExceptions(const char *source)
 {
     CriticalBlock block(crit);
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
@@ -8906,8 +8678,16 @@ void CLocalWorkUnit::clearExceptions()
         IWUException &e = exceptions.item(idx);
         SCMStringBuffer s;
         e.getExceptionSource(s);
-        if (strieq(s.s, "eclcc") || strieq(s.s, "eclccserver") || strieq(s.s, "eclserver") )
-            break;
+        if (source)
+        {
+            if (!strieq(s.s, source))
+                continue;
+        }
+        else
+        {
+            if (strieq(s.s, "eclcc") || strieq(s.s, "eclccserver") || strieq(s.s, "eclserver") )
+                break;
+        }
         VStringBuffer xpath("Exceptions/Exception[@sequence='%d']", e.getSequence());
         p->removeProp(xpath);
         exceptions.remove(idx);
@@ -8928,7 +8708,7 @@ IWUException* CLocalWorkUnit::createException()
     IPropertyTree *r = p->queryPropTree("Exceptions");
     IPropertyTree *s = r->addPropTree("Exception");
     s->setPropInt("@sequence", exceptions.ordinality());
-    IWUException* q = new CLocalWUException(LINK(s)); 
+    IWUException* q = new CLocalWUException(LINK(s));
     exceptions.append(*LINK(q));
 
     Owned<IJlibDateTime> now = createDateTimeNow();
@@ -8969,7 +8749,7 @@ IWUWebServicesInfo* CLocalWorkUnit::updateWebServicesInfo(bool create)
                 return NULL;
         }
         s->Link();
-        webServicesInfo.setown(new CLocalWUWebServicesInfo(s)); 
+        webServicesInfo.setown(new CLocalWUWebServicesInfo(s));
         webServicesInfoCached = true;
     }
     return webServicesInfo.getLink();
@@ -9068,7 +8848,7 @@ IWUResult* CLocalWorkUnit::createResult()
     IPropertyTree *s = r->addPropTree("Result");
 
     s->Link();
-    IWUResult* q = new CLocalWUResult(s); 
+    IWUResult* q = new CLocalWUResult(s);
     q->Link();
     results.append(*q);
     return q;
@@ -9080,7 +8860,7 @@ IWUResult* CLocalWorkUnit::updateResultByName(const char *qname)
     IConstWUResult *existing = getResultByName(qname);
     if (existing)
         return (IWUResult *) existing;
-    IWUResult* q = createResult(); 
+    IWUResult* q = createResult();
     q->setResultName(qname);
     return q;
 }
@@ -9091,7 +8871,7 @@ IWUResult* CLocalWorkUnit::updateResultBySequence(unsigned seq)
     IConstWUResult *existing = getResultBySequence(seq);
     if (existing)
         return (IWUResult *) existing;
-    IWUResult* q = createResult(); 
+    IWUResult* q = createResult();
     q->setResultSequence(seq);
     return q;
 }
@@ -9171,7 +8951,7 @@ IConstWUResult* CLocalWorkUnit::getGlobalByName(const char *qname) const
     if (strcmp(p->queryName(), GLOBAL_WORKUNIT)==0)
         return getVariableByName(qname);
 
-    Owned <IWorkUnit> global = factory->getGlobalWorkUnit(secMgr, secUser);
+    Owned <IWorkUnit> global = globalFactory->getGlobalWorkUnit(secMgr, secUser);
     return global->getVariableByName(qname);
 }
 
@@ -9181,7 +8961,7 @@ IWUResult* CLocalWorkUnit::updateGlobalByName(const char *qname)
     if (strcmp(p->queryName(), GLOBAL_WORKUNIT)==0)
         return updateVariableByName(qname);
 
-    Owned <IWorkUnit> global = factory->getGlobalWorkUnit(secMgr, secUser);
+    Owned <IWorkUnit> global = globalFactory->getGlobalWorkUnit(secMgr, secUser);
     return global->updateVariableByName(qname);
 }
 
@@ -9237,7 +9017,7 @@ IWUResult* CLocalWorkUnit::updateTemporaryByName(const char *qname)
     IPropertyTree *vars = (temporaries.length()) ? p->queryPropTree("Temporaries") : p->addPropTree("Temporaries");
     IPropertyTree *s = vars->addPropTree("Variable");
     s->Link();
-    IWUResult* q = new CLocalWUResult(s); 
+    IWUResult* q = new CLocalWUResult(s);
     q->Link();
     temporaries.append(*q);
     q->setResultName(qname);
@@ -9256,7 +9036,7 @@ IWUResult* CLocalWorkUnit::updateVariableByName(const char *qname)
     IPropertyTree *vars = p->queryPropTree("Variables");
     IPropertyTree *s = vars->addPropTree("Variable");
     s->Link();
-    IWUResult* q = new CLocalWUResult(s); 
+    IWUResult* q = new CLocalWUResult(s);
     q->Link();
     variables.append(*q);
     q->setResultName(qname);
@@ -9420,21 +9200,27 @@ void CLocalWorkUnit::releaseFile(const char *fileName)
     IPropertyTree *files = p->queryPropTree("Files");
     if (!files) return;
     Owned<IPropertyTreeIterator> fiter = files->getElements(path.str());
-    ForEach (*fiter)
+    if (fiter->first())
     {
-        IPropertyTree *file = &fiter->query();
-        unsigned usageCount = file->getPropInt("@usageCount");
-        if (usageCount > 1)
-            file->setPropInt("@usageCount", usageCount-1);
-        else
+        while (true)
         {
-            StringAttr name(file->queryProp("@name"));
-            files->removeTree(file);
-            if (!name.isEmpty()&&(1 == usageCount))
+            IPropertyTree *file = &fiter->query();
+            unsigned usageCount = file->getPropInt("@usageCount");
+            bool more = fiter->next();
+            if (usageCount > 1)
+                file->setPropInt("@usageCount", usageCount-1);
+            else
             {
-                if (queryDistributedFileDirectory().removeEntry(fileName, queryUserDescriptor()))
-                    LOG(MCdebugProgress, unknownJob, "Removed (released) file %s from DFS", name.get());
+                StringAttr name(file->queryProp("@name"));
+                files->removeTree(file);
+                if (!name.isEmpty()&&(1 == usageCount))
+                {
+                    if (queryDistributedFileDirectory().removeEntry(fileName, queryUserDescriptor()))
+                        LOG(MCdebugProgress, unknownJob, "Removed (released) file %s from DFS", name.get());
+                }
             }
+            if (!more)
+                break;
         }
     }
 }
@@ -9489,7 +9275,7 @@ bool isFilenameResolved(StringBuffer& filename)
 bool CLocalWorkUnit::getFieldUsageArray(StringArray & filenames, StringArray & columnnames, const char * clusterName) const
 {
     bool scopeLoaded = false;
-    SCMStringBuffer defaultScope;
+    StringBuffer defaultScope;
 
     Owned<IConstWUFileUsageIterator> files = getFieldUsage();
 
@@ -9497,27 +9283,27 @@ bool CLocalWorkUnit::getFieldUsageArray(StringArray & filenames, StringArray & c
         return false; // this query was not compiled with recordFieldUsage option.
 
     ForEach(*files)
-    {    
+    {
         Owned<IConstWUFileUsage> file = files->get();
 
         StringBuffer filename(file->queryName());
         size32_t length = filename.length();
-        
+
         if (length == 0)
             throw MakeStringException(WUERR_InvalidFieldUsage, "Invalid FieldUsage found in WU. Cannot enforce view security.");
 
         StringBuffer normalizedFilename;
-        
+
         // Two cases to handle:
         // 1. Filename was known at compile time, and is surrounded in single quotes (i.e. 'filename').
-        // 2. Filename could not be resolved at compile time (i.e. filename is an input to a query), 
+        // 2. Filename could not be resolved at compile time (i.e. filename is an input to a query),
         //    and is a raw expression WITHOUT surrounding single quotes (i.e. STORED('input_filename')).
         if (isFilenameResolved(filename))
         {
             // filename cannot be empty (i.e. empty single quotes '')
             if (length == 2)
                 throw MakeStringException(WUERR_InvalidFieldUsage, "Invalid FieldUsage found in WU. Cannot enforce view security.");
-        
+
             // Remove surrounding single quotes
             StringAttr cleanFilename(filename.str()+1, length-2);
 
@@ -9528,10 +9314,9 @@ bool CLocalWorkUnit::getFieldUsageArray(StringArray & filenames, StringArray & c
                 // loading a default scope from config is expensive, and should be only done once and be reused later.
                 if (!scopeLoaded)
                 {
-                    Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(clusterName);
-                    if (!clusterInfo)
+                    //MORE: This should actually depend on the cluster that was active when the file was read!
+                    if (!resolveFilePrefix(defaultScope, clusterName))
                         throw MakeStringException(WUERR_InvalidCluster, "Unknown cluster %s", clusterName);
-                    clusterInfo->getScope(defaultScope);
                     scopeLoaded = true;
                 }
 
@@ -9540,7 +9325,7 @@ bool CLocalWorkUnit::getFieldUsageArray(StringArray & filenames, StringArray & c
             }
             else
             {
-                normalizedFilename.append(cleanFilename); 
+                normalizedFilename.append(cleanFilename);
             }
         }
         else
@@ -9552,7 +9337,7 @@ bool CLocalWorkUnit::getFieldUsageArray(StringArray & filenames, StringArray & c
 
         Owned<IConstWUFieldUsageIterator> fields = file->getFields();
         ForEach(*fields)
-        {    
+        {
             Owned<IConstWUFieldUsage> field = fields->get();
             filenames.append(normalizedFilename.str());
             columnnames.append(field->queryName());
@@ -9619,24 +9404,20 @@ bool CLocalWorkUnit::switchThorQueue(const char *cluster, IQueueSwitcher *qs)
     CriticalBlock block(crit);
     if (qs->isAuto()&&!getAllowAutoQueueSwitch())
         return false;
-    Owned<IConstWUClusterInfo> newci = getTargetClusterInfo(cluster);
-    if (!newci) 
-        return false;
-    StringBuffer currentcluster;
-    if (!p->getProp("@clusterName",currentcluster))
-        return false;
-    Owned<IConstWUClusterInfo> curci = getTargetClusterInfo(currentcluster.str());
-    if (!curci)
-        return false;
-    SCMStringBuffer curqname;
-    curci->getThorQueue(curqname);
+
+    const char * currentcluster = queryClusterName();
     const char *wuid = p->queryName();
+    StringBuffer curqname;
+    getClusterThorQueueName(curqname, currentcluster);
+
     void *qi = qs->getQ(curqname.str(),wuid);
     if (!qi)
         return false;
+
     setClusterName(cluster);
-    SCMStringBuffer newqname;
-    newci->getThorQueue(newqname);
+
+    StringBuffer newqname;
+    getClusterThorQueueName(newqname, cluster);
     qs->putQ(newqname.str(),wuid,qi);
     return true;
 }
@@ -9763,7 +9544,7 @@ unsigned CLocalWorkUnit::getSourceFileCount() const
         return p->queryPropTree("FilesRead")->numChildren();
     }
     return 0;
-    
+
 }
 
 unsigned CLocalWorkUnit::getResultCount() const
@@ -9774,7 +9555,7 @@ unsigned CLocalWorkUnit::getResultCount() const
         return p->queryPropTree("Results")->numChildren();
     }
     return 0;
-    
+
 }
 
 unsigned CLocalWorkUnit::getVariableCount() const
@@ -9785,7 +9566,7 @@ unsigned CLocalWorkUnit::getVariableCount() const
         return p->queryPropTree("Variables")->numChildren();
     }
     return 0;
-    
+
 }
 
 unsigned CLocalWorkUnit::getApplicationValueCount() const
@@ -9796,7 +9577,7 @@ unsigned CLocalWorkUnit::getApplicationValueCount() const
         return p->queryPropTree("Application")->numChildren();
     }
     return 0;
-    
+
 }
 
 StringBuffer &appendPTreeOpenTag(StringBuffer &s, IPropertyTree *tree, const char *name, unsigned indent, bool hidePasswords)
@@ -10265,7 +10046,7 @@ WUQueryType CLocalWUQuery::getQueryType() const
     return (WUQueryType) getEnum(p, "@type", queryTypes);
 }
 
-void CLocalWUQuery::setQueryType(WUQueryType qt) 
+void CLocalWUQuery::setQueryType(WUQueryType qt)
 {
     setEnum(p, "@type", qt, queryTypes);
 }
@@ -10419,7 +10200,7 @@ void CLocalWUQuery::addAssociatedFile(WUFileType type, const char * name, const 
         s->setPropInt("@minActivity", minActivity);
     if (maxActivity)
         s->setPropInt("@maxActivity", maxActivity);
-    IConstWUAssociatedFile * q = new CLocalWUAssociated(LINK(s)); 
+    IConstWUAssociatedFile * q = new CLocalWUAssociated(LINK(s));
     associated.append(*q);
 }
 
@@ -10791,8 +10572,8 @@ void readRow(StringBuffer &out, MemoryBuffer &in, TypeInfoArray &types, StringAt
                 free(outstr);
                 break;
             }
-        case type_int: 
-        case type_swapint: 
+        case type_int:
+        case type_swapint:
             if (type.isSigned())
             {
                 const unsigned char *raw = (const unsigned char *) in.readDirect(size);
@@ -11087,14 +10868,14 @@ void CLocalWUResult::setResultFormat(WUResultFormat format)
 {
     switch (format)
     {
-    case ResultFormatXml: 
-        p->setProp("@format","xml"); 
+    case ResultFormatXml:
+        p->setProp("@format","xml");
         break;
-    case ResultFormatXmlSet: 
-        p->setProp("@format","xmlSet"); 
+    case ResultFormatXmlSet:
+        p->setProp("@format","xmlSet");
         break;
-    case ResultFormatCsv: 
-        p->setProp("@format","csv"); 
+    case ResultFormatCsv:
+        p->setProp("@format","csv");
         break;
     default:
         p->removeProp("@format");
@@ -11115,13 +10896,13 @@ void CLocalWUResult::addResultRaw(unsigned len, const void *data, WUResultFormat
     const char *formatStr = NULL;
     switch (format)
     {
-    case ResultFormatXml: 
-        formatStr = "xml"; 
+    case ResultFormatXml:
+        formatStr = "xml";
         break;
-    case ResultFormatXmlSet: 
+    case ResultFormatXmlSet:
         formatStr = "xmlSet";
         break;
-    case ResultFormatCsv: 
+    case ResultFormatCsv:
         formatStr = "csv";
         break;
     default:
@@ -11209,7 +10990,12 @@ __int64 CLocalWUResult::getResultInt() const
     if (s.length())
         s.read(result);
     else
-        result = p->getPropInt64("xmlValue");
+    {
+        // NOTE - we use this rather than getPropInt64 since it handles uint64 values up to MAX_UINT better (for our purposes)
+        const char *val = p->queryProp("xmlValue");
+        if (val)
+            result = rtlStrToInt8(strlen(val), val);
+    }
     return result;
 }
 
@@ -11809,7 +11595,7 @@ StatisticKind CLocalWUStatistic::getKind() const
 const char * CLocalWUStatistic::queryScope() const
 {
     const char * scope = p->queryProp("@scope");
-    if (scope && streq(scope, LEGACY_GLOBAL_SCOPE))
+    if (!scope || streq(scope, LEGACY_GLOBAL_SCOPE))
         scope = GLOBAL_SCOPE;
     return scope;
 }
@@ -12007,21 +11793,18 @@ extern WORKUNIT_API void submitWorkUnit(const char *wuid, const char *username, 
     MemoryBuffer buffer;
     Owned<INamedQueueConnection> conn = createNamedQueueConnection(0); // MORE - security token?
     Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-    Owned<IWorkUnit> workunit = factory->updateWorkUnit(wuid);
-    assertex(workunit);
-    StringAttr clusterName(workunit->queryClusterName());
-    if (!clusterName.length()) 
+    Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
+    assertex(cw);
+    StringAttr clusterName(cw->queryClusterName());
+    cw.clear();
+    if (!clusterName.length())
         throw MakeStringException(WUERR_InvalidCluster, "No target cluster specified");
-    workunit->commit();
-    workunit.clear();
-    Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(clusterName.str());
-    if (!clusterInfo) 
-        throw MakeStringException(WUERR_InvalidCluster, "Unknown cluster %s", clusterName.str());
-    SCMStringBuffer serverQueue;
-    clusterInfo->getServerQueue(serverQueue);
+
+    StringBuffer serverQueue;
+    getClusterEclCCServerQueueName(serverQueue, clusterName);
     assertex(serverQueue.length());
     Owned<IJobQueue> queue = createJobQueue(serverQueue.str());
-    if (!queue.get()) 
+    if (!queue.get())
         throw MakeStringException(WUERR_InvalidQueue, "Could not create workunit queue");
 
     IJobQueueItem *item = createJobQueueItem(wuid);
@@ -12046,7 +11829,7 @@ extern WORKUNIT_API void secAbortWorkUnit(const char *wuid, ISecManager &secmgr,
         return;
 
     abortWorkUnit(wuid);
-    Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
+    Owned<IConstWorkUnit> cw = globalFactory->openWorkUnit(wuid);
     if(!cw)
         return;
 
@@ -12108,7 +11891,7 @@ IConstWorkflowItemIterator* CLocalWorkUnit::getWorkflowItems() const
         assertex(!workflowIterator);
         Owned<IPropertyTree> s = p->getPropTree("Workflow");
         if(s)
-            workflowIterator.setown(createWorkflowItemIterator(s)); 
+            workflowIterator.setown(createWorkflowItemIterator(s));
         workflowIteratorCached = true;
     }
     return workflowIterator.getLink();
@@ -12147,7 +11930,7 @@ IWorkflowItemIterator * CLocalWorkUnit::updateWorkflowItems()
         IPropertyTree * s = p->queryPropTree("Workflow");
         if(!s)
             s = p->addPropTree("Workflow");
-        workflowIterator.setown(createWorkflowItemIterator(s)); 
+        workflowIterator.setown(createWorkflowItemIterator(s));
         workflowIteratorCached = true;
     }
     return workflowIterator.getLink();
@@ -12216,7 +11999,7 @@ void CLocalWorkUnit::schedule()
     ncnameEscape(wuid, xpath);
     bool more;
     do more = root->removeProp(xpath.str()); while(more);
-        
+
     Owned<IConstWorkflowItemIterator> iter = getWorkflowItems();
     Owned<IWorkflowEvent> event;
     Owned<IPropertyTree> branch1, branch2;
@@ -12549,21 +12332,21 @@ void testWorkflow()
 
 //------------------------------------------------------------------------------------------
 
-extern WUState waitForWorkUnitToComplete(const char * wuid, int timeout, bool returnOnWaitState)
+extern WUState waitForWorkUnitToComplete(const char * wuid, int timeout, std::list<WUState> expectedStates)
 {
-    return factory->waitForWorkUnit(wuid, (unsigned) timeout, false, returnOnWaitState);
+    return globalFactory->waitForWorkUnit(wuid, (unsigned) timeout, false, expectedStates);
 }
 
-extern WORKUNIT_API WUState secWaitForWorkUnitToComplete(const char * wuid, ISecManager &secmgr, ISecUser &secuser, int timeout, bool returnOnWaitState)
+extern WORKUNIT_API WUState secWaitForWorkUnitToComplete(const char * wuid, ISecManager &secmgr, ISecUser &secuser, int timeout, std::list<WUState> expectedStates)
 {
     if (checkWuSecAccess(wuid, &secmgr, &secuser, SecAccess_Read, "Wait for Complete", false, true))
-        return waitForWorkUnitToComplete(wuid, timeout, returnOnWaitState);
+        return waitForWorkUnitToComplete(wuid, timeout, expectedStates);
     return WUStateUnknown;
 }
 
 extern bool waitForWorkUnitToCompile(const char * wuid, int timeout)
 {
-    switch(factory->waitForWorkUnit(wuid, (unsigned) timeout, true, true))
+    switch(globalFactory->waitForWorkUnit(wuid, (unsigned) timeout, true, { WUStateWait }))
     {
     case WUStateCompiled:
     case WUStateCompleted:
@@ -12586,9 +12369,9 @@ extern WORKUNIT_API bool secDebugWorkunit(const char * wuid, ISecManager &secmgr
 {
     if (strnicmp(command, "<debug:", 7) == 0 && checkWuSecAccess(wuid, &secmgr, &secuser, SecAccess_Read, "Debug", false, true))
     {
-        Owned<IConstWorkUnit> wu = factory->openWorkUnit(wuid, &secmgr, &secuser);
+        Owned<IConstWorkUnit> wu = globalFactory->openWorkUnit(wuid, &secmgr, &secuser);
         SCMStringBuffer ip;
-        unsigned port;
+        unsigned port = 0;
         try
         {
             port = wu->getDebugAgentListenerPort();
@@ -13271,7 +13054,7 @@ IPropertyTree * addNamedPackageSet(IPropertyTree * packageRegistry, const char *
         else
             throw MakeStringException(WUERR_PackageAlreadyExists, "Package name %s already exists, either delete it or specify overwrite",name);
     }
-    
+
     IPropertyTree *tree = packageRegistry->addPropTree("Package", packageInfo);
     tree->setProp("@id", lcName);
     return tree;
@@ -13327,7 +13110,7 @@ void addQueryToQuerySet(IWorkUnit *workunit, IPropertyTree *queryRegistry, const
         throw MakeStringException(WUERR_InvalidDll, "Cannot deploy query - no associated dll.");
 
     StringBuffer currentTargetClusterType;
-    queryRegistry->getProp("@targetclustertype", currentTargetClusterType); 
+    queryRegistry->getProp("@targetclustertype", currentTargetClusterType);
 
     SCMStringBuffer targetClusterType;
     workunit->getDebugValue("targetclustertype", targetClusterType);
@@ -13335,7 +13118,7 @@ void addQueryToQuerySet(IWorkUnit *workunit, IPropertyTree *queryRegistry, const
     SCMStringBuffer snapshot;
     workunit->getSnapshot(snapshot);
 
-    if (currentTargetClusterType.length() < 1) 
+    if (currentTargetClusterType.length() < 1)
     {
         queryRegistry->setProp("@targetclustertype", targetClusterType.str());
     }
@@ -13370,7 +13153,7 @@ void activateQuery(IPropertyTree *queryRegistry, WUQueryActivationOptions activa
         {
             if (activateOption == ACTIVATE_SUSPEND_PREVIOUS)
                 setQuerySuspendedState(queryRegistry, prevQuery->queryProp("@id"), true, userid);
-            else 
+            else
                 removeNamedQuery(queryRegistry, prevQuery->queryProp("@id"));
         }
     }
@@ -13511,12 +13294,30 @@ IPropertyTree * resolveDefinitionInArchive(IPropertyTree * archive, const char *
 
 extern WORKUNIT_API void associateLocalFile(IWUQuery * query, WUFileType type, const char * name, const char * description, unsigned crc, unsigned minActivity, unsigned maxActivity)
 {
-    StringBuffer hostname;
-    queryHostIP().getIpText(hostname);
-
-    StringBuffer fullPathname;
-    makeAbsolutePath(name, fullPathname);
-    query->addAssociatedFile(type, fullPathname, hostname, description, crc, minActivity, maxActivity);
+    StringBuffer fullPathName;
+    makeAbsolutePath(name, fullPathName);
+    if (isContainerized())
+    {
+        const char *dllserver_root = getenv("HPCC_DLLSERVER_PATH");
+        assertex(dllserver_root != nullptr);
+        StringBuffer destPathName(dllserver_root);
+        addNonEmptyPathSepChar(destPathName);
+        splitFilename(fullPathName.str(), nullptr, nullptr, &destPathName, &destPathName);
+        OwnedIFile source = createIFile(fullPathName);
+        OwnedIFile target = createIFile(destPathName);
+        if (!target->exists())
+        {
+            source->copyTo(target, 0, NULL, true);
+        }
+        query->addAssociatedFile(type, destPathName, "localhost", description, crc, minActivity, maxActivity);
+        // Should we delete the local files? May not matter...
+    }
+    else
+    {
+        StringBuffer hostname;
+        queryHostIP().getIpText(hostname);
+        query->addAssociatedFile(type, fullPathName, hostname, description, crc, minActivity, maxActivity);
+    }
 }
 
 extern WORKUNIT_API void descheduleWorkunit(char const * wuid)
@@ -13582,6 +13383,18 @@ extern WORKUNIT_API void addTimeStamp(IWorkUnit * wu, StatisticScopeType scopeTy
     wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scopestr, kind, NULL, getTimeStampNowValue(), 1, 0, StatsMergeAppend);
 }
 
+extern WORKUNIT_API cost_type calculateThorCost(unsigned __int64 ms, unsigned clusterWidth)
+{
+    IPropertyTree *costs = queryCostsConfiguration();
+    if (costs)
+    {
+        cost_type thor_master_rate = money2cost_type(costs->getPropReal("thor/@master"));
+        cost_type thor_slave_rate = money2cost_type(costs->getPropReal("thor/@slave"));
+
+        return calcCost(thor_master_rate, ms) + calcCost(thor_slave_rate, ms) * clusterWidth;
+    }
+    return 0;
+}
 
 void aggregateStatistic(StatsAggregation & result, IConstWorkUnit * wu, const WuScopeFilter & filter, StatisticKind search)
 {
@@ -13778,3 +13591,651 @@ bool isValidMemoryValue(const char *memoryUnit)
     }
     return false;
 }
+
+
+// used by eclagent and roxie
+
+#define ABORT_POLL_PERIOD (5*1000)
+void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IPropertyTree &config)
+{
+    unsigned timelimit = workunit.getDebugValueInt("thorConnectTimeout", config.getPropInt("@thorConnectTimeout", 60));
+    StringAttr wuid(workunit.queryWuid());
+    IConstWUGraph *graph = workunit.getGraph(graphName);
+    if (!graph)
+        throw makeStringExceptionV(0, "getGraph() returns nullptr for %s", graphName);
+    unsigned wfid = graph->getWfid();
+
+#ifdef _CONTAINERIZED
+    // NB: If a single agent were to want to launch >1 Thor, then the threading could be in the workflow above this call.
+
+    {
+        Owned<IWorkUnit> w = &workunit.lock();
+        w->setState(WUStateBlocked);
+    }
+
+    WUState state = WUStateUnknown;
+    if (config.hasProp("@queue"))
+    {
+        CCycleTimer elapsedTimer;
+
+        bool multiJobLinger = config.getPropBool("@multiJobLinger");
+        if (executeGraphOnLingeringThor(workunit, graphName, multiJobLinger ? config.queryProp("@queue") : nullptr))
+            PROGLOG("Existing lingering Thor handled graph: %s", graphName);
+        else
+        {
+            VStringBuffer queueName("%s.thor", config.queryProp("@queue"));
+            DBGLOG("Queueing wuid=%s, graph=%s, on queue=%s, timelimit=%u seconds", wuid.str(), graphName, queueName.str(), timelimit);
+            Owned<IJobQueue> queue = createJobQueue(queueName);
+            VStringBuffer jobName("%s/%s", wuid.get(), graphName);
+            IJobQueueItem *item = createJobQueueItem(jobName);
+            queue->enqueue(item);
+        }
+
+        // NB: overall max runtime if guillotine set handled by abortmonitor
+        unsigned runningTimeLimit = workunit.getDebugValueInt("maxRunTime", 0);
+        runningTimeLimit = runningTimeLimit ? runningTimeLimit : INFINITE;
+
+        std::list<WUState> expectedStates = { WUStateRunning, WUStateWait };
+        unsigned __int64 blockedTime = 0;
+        for (unsigned i=0; i<2; i++)
+        {
+            WUState state = waitForWorkUnitToComplete(wuid, timelimit*1000, expectedStates);
+            DBGLOG("Got state: %s", getWorkunitStateStr(state));
+            if (WUStateWait == state) // already finished
+            {
+                // workunit may have spent time in blocked state, but then transitioned to
+                // wait state quickly such that this code did not see its running state.
+                if (!blockedTime)
+                    blockedTime = elapsedTimer.elapsedNs();
+                break;
+            }
+            else if ((INFINITE != timelimit) && (WUStateUnknown == state))
+                throw makeStringExceptionV(0, "Query %s failed to start within specified timelimit (%u) seconds", wuid.str(), timelimit);
+            else
+            {
+                auto it = std::find(expectedStates.begin(), expectedStates.end(), state);
+                if (it == expectedStates.end())
+                    throw makeStringExceptionV(0, "Query %s failed, state: %s", wuid.str(), getWorkunitStateStr(state));
+            }
+            blockedTime = elapsedTimer.elapsedNs();
+            timelimit = runningTimeLimit;
+            expectedStates = { WUStateWait };
+        }
+        Owned<IWorkUnit> w = &workunit.lock();
+        updateWorkunitStat(w, SSTgraph, graphName, StTimeBlocked, nullptr, blockedTime, wfid);
+    }
+    else
+    {
+        VStringBuffer job("%s-%s", wuid.str(), graphName);
+        runK8sJob("thormanager", wuid, job, { { "graphName", graphName} });
+    }
+
+    /* In k8s, Thor feeds back the terminating exception via the workunit.
+     * (in bare-metal it is returned via a socket the agent connect to Thor with)
+     */
+    workunit.forceReload();
+    if (workunit.getExceptionCount())
+    {
+        Owned<IConstWUExceptionIterator> iter = &workunit.getExceptions();
+        ForEach(*iter)
+        {
+            IConstWUException &e = iter->query();
+            SCMStringBuffer str;
+            e.getExceptionSource(str);
+            if (streq("thormasterexception", str.s))
+            {
+                str.clear();
+                e.getExceptionMessage(str);
+                unsigned errCode = e.getExceptionCode();
+                {
+                    /* Clear the feedback exception (consume it),
+                     * so that any future re-submissions of this workunit (e.g. due to workflow)
+                     * don't see it again.
+                     */
+                    Owned<IWorkUnit> w = &workunit.lock();
+                    w->clearExceptions("thormasterexception");
+                }
+                throw makeStringException(errCode, str.str());
+            }
+        }
+    }
+    else
+    {
+        Owned<IWorkUnit> w = &workunit.lock();
+        WUState state = w->getState();
+        if (WUStateFailed == state)
+            throw makeStringException(0, "Workunit failed");
+    }
+
+    {
+        Owned<IWorkUnit> w = &workunit.lock();
+        w->setState(WUStateRunning);
+    }
+#else
+    StringAttr owner(workunit.queryUser());
+    StringAttr cluster(workunit.queryClusterName());
+    int priority = workunit.getPriorityValue();
+
+    Owned<IConstWUClusterInfo> c = getTargetClusterInfo(cluster);
+    if (!c)
+        throw MakeStringException(0, "Invalid thor cluster %s", cluster.str());
+    SCMStringBuffer queueName;
+    c->getThorQueue(queueName);
+    Owned<IJobQueue> jq = createJobQueue(queueName.str());
+
+    bool resubmit;
+    Owned<IWorkUnitFactory> wuFactory = getWorkUnitFactory();
+    do // loop if pause interrupted graph and needs resubmitting on resume
+    {
+        resubmit = false; // set if job interrupted in thor
+        if (WUStatePaused == workunit.getState()) // check initial state - and wait if paused
+        {
+            for (;;)
+            {
+                WUAction action = wuFactory->waitForWorkUnitAction(wuid, workunit.getAction());
+                if (action == WUActionUnknown)
+                    throw new WorkflowException(0, "Workunit aborting", 0, WorkflowException::ABORT, MSGAUD_user);
+                if (action != WUActionPause && action != WUActionPauseNow)
+                    break;
+            }
+        }
+
+        {
+            Owned<IWorkUnit> w = &workunit.lock();
+            w->setState(WUStateBlocked);
+        }
+
+        class cPollThread: public Thread  // MORE - why do we ned a thread here?
+        {
+            Semaphore sem;
+            bool stopped;
+            IJobQueue *jq;
+            IConstWorkUnit *wu;
+        public:
+
+            bool timedout;
+            CTimeMon tm;
+            cPollThread(IJobQueue *_jq, IConstWorkUnit *_wu, unsigned timelimit)
+                : tm(timelimit)
+            {
+                stopped = false;
+                jq = _jq;
+                wu = _wu;
+                timedout = false;
+            }
+            ~cPollThread()
+            {
+                stop();
+            }
+            int run()
+            {
+                while (!stopped) {
+                    sem.wait(ABORT_POLL_PERIOD);
+                    if (stopped)
+                        break;
+                    if (tm.timedout()) {
+                        timedout = true;
+                        stopped = true;
+                        jq->cancelInitiateConversation();
+                    }
+                    else if (wu->aborting()) {
+                        stopped = true;
+                        jq->cancelInitiateConversation();
+                    }
+
+                }
+                return 0;
+            }
+            void stop()
+            {
+                stopped = true;
+                sem.signal();
+            }
+        } pollthread(jq, &workunit, timelimit*1000);
+
+        pollthread.start();
+
+        CCycleTimer elapsedTimer;
+        PROGLOG("Enqueuing on %s to run wuid=%s, graph=%s, timelimit=%d seconds, priority=%d", queueName.str(), wuid.str(), graphName, timelimit, priority);
+        VStringBuffer wuidGraph("%s/%s", wuid.str(), graphName);
+        IJobQueueItem* item = createJobQueueItem(wuidGraph.str());
+        item->setOwner(owner.str());
+        item->setPriority(priority);
+        Owned<IConversation> conversation = jq->initiateConversation(item);
+        bool got = conversation.get()!=NULL;
+        pollthread.stop();
+        pollthread.join();
+        if (!got)
+        {
+            if (pollthread.timedout)
+                throw MakeStringException(0, "Query %s failed to start within specified timelimit (%u) seconds", wuidGraph.str(), timelimit);
+            throw MakeStringException(0, "Query %s cancelled (1)", wuidGraph.str());
+        }
+        // get the thor ep from whoever picked up
+
+        SocketEndpoint thorMaster;
+        MemoryBuffer msg;
+        if (!conversation->recv(msg,1000*60))
+            throw MakeStringException(0, "Query %s cancelled (2)", wuidGraph.str());
+        thorMaster.deserialize(msg);
+        msg.clear();
+        SocketEndpoint myep;
+        myep.setLocalHost(0);
+        myep.serialize(msg);  // only used for tracing
+        if (!conversation->send(msg)) {
+            StringBuffer s("Failed to send query to Thor on ");
+            thorMaster.getUrlStr(s);
+            throw MakeStringExceptionDirect(-1, s.str()); // maybe retry?
+        }
+        unsigned __int64 blockedTime = elapsedTimer.elapsedNs();
+        {
+            Owned<IWorkUnit> w = &workunit.lock();
+            updateWorkunitStat(w, SSTgraph, graphName, StTimeBlocked, nullptr, blockedTime, wfid);
+        }
+
+        StringBuffer eps;
+        PROGLOG("Thor on %s running %s", thorMaster.getUrlStr(eps).str(), wuidGraph.str());
+        MemoryBuffer reply;
+        try
+        {
+            if (!conversation->recv(reply,INFINITE))
+            {
+                StringBuffer s("Failed to receive reply from thor ");
+                thorMaster.getUrlStr(s);
+                throw MakeStringExceptionDirect(-1, s.str());
+            }
+        }
+        catch (IException *e)
+        {
+            StringBuffer s("Failed to receive reply from thor ");
+            thorMaster.getUrlStr(s);
+            s.append("; (").append(e->errorCode()).append(", ");
+            e->errorMessage(s).append(")");
+            e->Release();
+            throw MakeStringExceptionDirect(-1, s.str());
+        }
+        unsigned replyCode;
+        reply.read(replyCode);
+        switch ((ThorReplyCodes) replyCode)
+        {
+            case DAMP_THOR_REPLY_PAUSED:
+            {
+                bool isException;
+                reply.read(isException);
+                if (isException)
+                {
+                    Owned<IException> e = deserializeException(reply);
+                    VStringBuffer str("Pausing job %s caused exception", wuidGraph.str());
+                    EXCLOG(e, str.str());
+                }
+                Owned<IWorkUnit> w = &workunit.lock();
+                w->setState(WUStatePaused); // will trigger executeThorGraph to pause next time around.
+                WUAction action = w->getAction();
+                switch (action)
+                {
+                    case WUActionPause:
+                    case WUActionPauseNow:
+                        w->setAction(WUActionUnknown);
+                }
+                resubmit = true; // JCSMORE - all subgraph _could_ be done, thor will check though and not rerun
+                break;
+            }
+            case DAMP_THOR_REPLY_GOOD:
+                break;
+            case DAMP_THOR_REPLY_ERROR:
+            {
+                throw deserializeException(reply);
+            }
+            case DAMP_THOR_REPLY_ABORT:
+            {
+                Owned<IException> e = deserializeException(reply);
+                StringBuffer msg;
+                e->errorMessage(msg);
+                throw new WorkflowException(e->errorCode(), msg.str(), 0, WorkflowException::ABORT, MSGAUD_user);
+            }
+            default:
+                throwUnexpected();
+        }
+        workunit.forceReload();
+    }
+    while (resubmit); // if pause interrupted job (i.e. with pausenow action), resubmit graph
+#endif
+}
+
+
+#ifdef _CONTAINERIZED
+bool executeGraphOnLingeringThor(IConstWorkUnit &workunit, const char *graphName, const char *multiJobLingerQueueName)
+{
+    // check if lingering thor instance is up.
+    // Returns true if successfully submitted graph to a lingering Thor.
+
+    /* If code was dependent on reading a workunit in parallel, the whole area of
+     * workunit locking and reading will need revisiting, because at the moment the
+     * workunit reading code does not lock at all.
+     *
+     * Either,
+     * 1) multiJobThorLinger is set, meaning Thor instances will wait for any job's graph.
+     * OR
+     * 2) if not set, the Thor will wait for graphs from same job only, and will be
+     *    notified to quit by the agent, when the last graph is complete.
+     *
+     * This code is called from the client (agent) when it wants to execute a Thor graph.
+     * This function checks to see if there any registered lingering Thor instances available.
+     *
+     * Lingering Thor's register when they are idle either with the workunit itself in
+     * the case of [2], or with a Dali psuedo queue (a branch under /Status/ThorLinger),
+     * in the case of [1]
+     * If they have not been contacted within the 'lingerPeriod' they shutdown and remove
+     * their registered instance from the queue.
+     *
+     * The client will attempt to find a lingering Thor in either the workunit or a global
+     * named dali queue (depending on the configuration), it will then remove that entry,
+     * and attempt to post the graph to that lingering Thor. If the Thor acknowledges the
+     * request, this function exits with success. If it it fails, or there are no more
+     * lingering Thor instances, it returns with false to indicate that the graph was not
+     * submitted to a lingering Thor.
+     * The client should then queue the wuid/graph normally, which will invoke a new Thor
+     * instance.
+     */
+
+    try
+    {
+        if (multiJobLingerQueueName && graphName)
+        {
+            // check a Dali queue for idle spare Thor's
+            DBGLOG("Checking multi job lingering queue: %s", multiJobLingerQueueName);
+
+            VStringBuffer xpath("/Status/ThorLinger/%s", multiJobLingerQueueName);
+            while (true)
+            {
+                Owned<IRemoteConnection> conn = querySDS().connect(xpath, myProcessSession(), RTM_LOCK_WRITE, 5*60*1000);
+                if (!conn)
+                    break;
+                IPropertyTree *root = conn->queryRoot();
+                if (0 == root->numChildren())
+                    break;
+                IPropertyTree *entry = root->queryPropTree("Thor*[1]");
+                const char *entryName = entry->queryName();
+
+                // get available instance and remove it
+                VStringBuffer entryXPath("%s/%s", xpath.str(), entryName);
+                Owned<IRemoteConnection> lingerInstanceConn = querySDS().connect(entryXPath, myProcessSession(), RTM_LOCK_WRITE | RTM_DELETE_ON_DISCONNECT, 5*1000);
+                if (lingerInstanceConn)
+                {
+                    StringBuffer instanceName;
+                    lingerInstanceConn->queryRoot()->getProp(nullptr, instanceName);
+                    lingerInstanceConn->close(true);
+                    lingerInstanceConn.clear();
+                    conn.clear();
+
+                    Owned<INode> masterNode = createINode(instanceName);
+                    CMessageBuffer msg;
+                    VStringBuffer jobStr("%s/%s", workunit.queryWuid(), graphName);
+                    msg.append(jobStr);
+
+                    bool success = queryWorldCommunicator().sendRecv(msg, masterNode, MPTAG_THOR, 10000);
+                    DBGLOG("Found lingering Thor: %s, submitted: %s, success: %s", instanceName.str(), jobStr.str(), boolToStr(success));
+                    if (success)
+                    {
+                        bool ok;
+                        msg.read(ok);
+                        return true;
+                    }
+                }
+            }
+        }
+        else
+        {
+            /* NB: forcing a reload here to ensure Debug values are recent.
+            * Could be improved by refreshing only the specific area of interest (i.e. Debug/ in this case).
+            * The area of persisting a non-locked connection to workunits should be resivisted..
+            */
+            workunit.forceReload();
+
+            Owned<IStringIterator> iter = &workunit.getDebugValues("thorinstance_*");
+            ForEach(*iter)
+            {
+                /* NB: Thor's set their running endpoint into Debug values of workunit
+                * Check to see if workunit has any Thor's available lingering instances.
+                */
+                SCMStringBuffer thorInstance;
+                iter->str(thorInstance);
+                SCMStringBuffer thorInstanceValue;
+                if (workunit.getDebugValueBool(thorInstance.s, false))
+                {
+                    {
+                        Owned<IWorkUnit> w = &workunit.lock();
+                        w->setDebugValue(thorInstance.s, "0", true);
+                    }
+                    /* NB: there's a window where Thor could shutdown here.
+                    * In that case, the sendRecv will fail and it will fall through to queueing.
+                    */
+                    const char *instanceName = strchr(thorInstance.str(), '_') + 1;
+
+                    Owned<INode> masterNode = createINode(instanceName);
+                    CMessageBuffer msg;
+                    VStringBuffer jobStr("%s/%s", workunit.queryWuid(), graphName?graphName:"");
+                    msg.append(jobStr);
+                    if (queryWorldCommunicator().sendRecv(msg, masterNode, MPTAG_THOR, 10000))
+                    {
+                        bool ok;
+                        msg.read(ok);
+                        if (graphName) // if graphName==nullptr, then continue around to look at others
+                        {
+                            if (ok)
+                                return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e, "executeGraphOnLingeringThor");
+        e->Release();
+    }
+    return false;
+}
+
+static void setResources(IPropertyTree *workerConfig, const IConstWorkUnit *workunit, const char *process)
+{
+    auto setResourcesItem = [&workerConfig](const char *category, const char *resourceName,  unsigned value, const char *units)
+    {
+        if (!value) return;
+        VStringBuffer xpath("spec/template/spec/containers/resources/%s@%s", category, resourceName);
+        ensurePTree(workerConfig, xpath.str());
+
+        VStringBuffer v("%u%s", value, units);
+        workerConfig->setProp(xpath.str(), v.str());
+    };
+
+    StringBuffer s;
+    unsigned memRequest = workunit->getDebugValueInt(s.clear().appendf("resource-%s-memory", process), 0);
+    setResourcesItem("requests", "memory", memRequest, "Mi");
+    setResourcesItem("limits", "memory", memRequest, "Mi");
+
+    unsigned cpuRequest = workunit->getDebugValueInt(s.clear().appendf("resource-%s-cpu", process), 0);
+    setResourcesItem("requests", "cpu", cpuRequest, "m");
+    setResourcesItem("limits", "cpu", cpuRequest, "m");
+}
+
+KeepK8sJobs translateKeepJobs(const char *keepJob)
+{
+    if (!isEmptyString(keepJob)) // common case
+    {
+        if (streq("podfailures", keepJob))
+            return KeepK8sJobs::podfailures;
+        else if (streq("all", keepJob))
+            return KeepK8sJobs::all;
+    }
+    return KeepK8sJobs::none;
+}
+
+void deleteK8sResource(const char *componentName, const char *job, const char *resource)
+{
+    VStringBuffer jobname("%s-%s", componentName, job);
+    jobname.toLowerCase();
+    VStringBuffer deleteResource("kubectl delete %s/%s", resource, jobname.str());
+    StringBuffer output, error;
+    bool ret = runExternalCommand(componentName, output, error, deleteResource.str(), nullptr);
+    DBGLOG("kubectl delete output: %s", output.trimRight().str());
+    if (error.length())
+        DBGLOG("kubectl delete error: %s", error.trimRight().str());
+    if (ret)
+        throw makeStringException(0, "Failed to run kubectl delete");
+}
+
+void waitK8sJob(const char *componentName, const char *job, unsigned pendingTimeoutSecs, KeepK8sJobs keepJob)
+{
+    VStringBuffer jobname("%s-%s", componentName, job);
+    jobname.toLowerCase();
+    VStringBuffer waitJob("kubectl get jobs %s -o jsonpath={.status.active}", jobname.str());
+    VStringBuffer getScheduleStatus("kubectl get pods --selector=job-name=%s --output=jsonpath={.items[*].status.conditions[?(@.type=='PodScheduled')].status}", jobname.str());
+    VStringBuffer checkJobExitCode("kubectl get pods --selector=job-name=%s --output=jsonpath={.items[*].status.containerStatuses[?(@.name==\"%s\")].state.terminated.exitCode}", jobname.str(), jobname.str());
+
+    unsigned delay = 100;
+    unsigned start = msTick();
+
+    bool schedulingTimeout = false;
+    Owned<IException> exception;
+    try
+    {
+        for (;;)
+        {
+            StringBuffer output, error;
+            unsigned ret = runExternalCommand(nullptr, output, error, waitJob.str(), nullptr);
+            if (ret || error.length())
+                throw makeStringExceptionV(0, "Failed to run %s: error %u: %s", waitJob.str(), ret, error.str());
+            if (!streq(output, "1"))  // status.active value
+            {
+                // Job is no longer active - we can terminate
+                DBGLOG("kubectl jobs output: %s", output.str());
+                unsigned ret = runExternalCommand(nullptr, output.clear(), error.clear(), checkJobExitCode.str(), nullptr);
+                if (ret || error.length())
+                    throw makeStringExceptionV(0, "Failed to run %s: error %u: %s", checkJobExitCode.str(), ret, error.str());
+                if (output.length() && !streq(output, "0"))  // state.terminated.exitCode
+                    throw makeStringExceptionV(0, "Failed to run %s: pod exited with error: %s", jobname.str(), output.str());
+                break;
+            }
+            ret = runExternalCommand(nullptr, output.clear(), error.clear(), getScheduleStatus.str(), nullptr);
+            if (error.length())
+            {
+                DBGLOG("kubectl get schedule status error: %s", error.str());
+                break;
+            }
+            // Check whether pod has been scheduled yet - if resources are not available pods may block indefinitely waiting to be scheduled, and
+            // we would prefer them to fail instead.
+            bool pending = streq(output, "False");
+            if (pendingTimeoutSecs && pending && msTick()-start > pendingTimeoutSecs*1000)
+            {
+                schedulingTimeout = true;
+                VStringBuffer getReason("kubectl get pods --selector=job-name=%s \"--output=jsonpath={range .items[*].status.conditions[?(@.type=='PodScheduled')]}{.reason}{': '}{.message}{end}\"", jobname.str());
+                runExternalCommand(componentName, output.clear(), error.clear(), getReason.str(), nullptr);
+                throw makeStringExceptionV(0, "Failed to run %s - pod not scheduled after %u seconds: %s ", jobname.str(), pendingTimeoutSecs, output.str());
+            }
+            MilliSleep(delay);
+            if (delay < 10000)
+                delay = delay * 2;
+        }
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e, nullptr);
+        exception.setown(e);
+    }
+    if (keepJob != KeepK8sJobs::all)
+    {
+        // Delete jobs unless the pod failed and keepJob==podfailures
+        if ((nullptr == exception) || (KeepK8sJobs::podfailures != keepJob) || schedulingTimeout)
+            deleteK8sResource(componentName, job, "job");
+    }
+    if (exception)
+        throw exception.getClear();
+}
+
+bool applyK8sYaml(const char *componentName, const char *wuid, const char *job, const char *suffix, const std::list<std::pair<std::string, std::string>> &extraParams, bool optional)
+{
+    StringBuffer jobname(job);
+    jobname.toLowerCase();
+    VStringBuffer jobSpecFilename("/etc/config/%s-%s.yaml", componentName, suffix);
+    StringBuffer jobYaml;
+    try
+    {
+        jobYaml.loadFile(jobSpecFilename, false);
+    }
+    catch (IException *E)
+    {
+        if (!optional)
+            throw;
+        E->Release();
+        return false;
+    }
+    jobYaml.replaceString("%jobname", jobname.str());
+
+    VStringBuffer args("\"--workunit=%s\"", wuid);
+    for (const auto &p: extraParams)
+    {
+        if ('%' == p.first[0]) // jobspec substituion
+            jobYaml.replaceString(p.first.c_str(), p.second.c_str());
+        else
+            args.append(',').newline().append("\"--").append(p.first.c_str()).append('=').append(p.second.c_str()).append("\"");
+    }
+    jobYaml.replaceString("%args", args.str());
+
+// Disable ability change resources from within workunit
+// - all values are unquoted by toYAML.  This caused problems when previous string values are
+// outputted unquoted and then treated as a non string type -e.g. labels in metadata.
+// - Also, ability to control if and how much users may change resources should be provided.
+#if 0
+    Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
+    if (factory)
+    {
+        Owned<IConstWorkUnit> workunit = factory->openWorkUnit(wuid);
+        if (workunit)
+        {
+            Owned<IPropertyTree> workerConfig = createPTreeFromYAMLString(jobYaml.length(), jobYaml.str(), 0, ptr_none, nullptr);
+            setResources(workerConfig, workunit, componentName);
+            toYAML(workerConfig, jobYaml.clear(), 2, 0);
+        }
+    }
+#endif
+
+    StringBuffer output, error;
+    unsigned ret = runExternalCommand(componentName, output, error, "kubectl replace --force -f -", jobYaml.str());
+    DBGLOG("kubectl output: %s", output.trimRight().str());
+    if (error.length())
+        DBGLOG("kubectl error: %s", error.trimRight().str());
+    if (ret)
+    {
+        DBGLOG("Using yaml %s", jobYaml.str());
+        throw makeStringException(0, "Failed to replace k8s resource");
+    }
+    return true;
+}
+
+static constexpr unsigned defaultPendingTimeSecs = 600;
+void runK8sJob(const char *componentName, const char *wuid, const char *job, const std::list<std::pair<std::string, std::string>> &extraParams)
+{
+    KeepK8sJobs keepJob = translateKeepJobs(queryComponentConfig().queryProp("@keepJobs"));
+    unsigned pendingTimeoutSecs = queryComponentConfig().getPropInt("@pendingTimeoutSecs", defaultPendingTimeSecs);
+
+    bool removeNetwork = applyK8sYaml(componentName, wuid, job, "networkspec", extraParams, true);
+    applyK8sYaml(componentName, wuid, job, "jobspec", extraParams, false);
+    Owned<IException> exception;
+    try
+    {
+        waitK8sJob(componentName, job, pendingTimeoutSecs, keepJob);
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e, nullptr);
+        exception.setown(e);        
+    }
+    if (removeNetwork)
+        deleteK8sResource(componentName, job, "networkpolicy");
+    if (exception)
+        throw exception.getClear();
+}
+
+#endif

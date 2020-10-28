@@ -328,6 +328,9 @@
                 <xs:attribute name="formOptionsAccess" type="xs:boolean" hpcc:presetValue="false"
                               hpcc:displayName="Form Options Access"
                               hpcc:tooltip="Allows show Options in test form page"/>
+                <xs:attribute name="maxLogFileSize" type="xs:nonNegativeInteger"
+                              hpcc:presetValue="0" hpcc:displayName="Max log file size"
+                              hpcc:tooltip="The maximum log file size (0 for no size limit)"/>
                 <xs:attribute name="maxRequestEntityLength" type="xs:nonNegativeInteger"
                               hpcc:presetValue="8000000" hpcc:displayName="Max Request Entity Length"
                               hpcc:tooltip="The maximum length of request entity allowed"/>
@@ -382,6 +385,9 @@
                 <xs:attribute name="maxPersistentRequests" type="xs:integer"
                               hpcc:displayName="Max Persistent Requests" hpcc:presetValue="100"
                               hpcc:tooltip="Maximum number of query requests per persistent http connection. (-1 for unlimited, 0 to disable)"/>
+                <xs:attribute name="minCompressLength" type="xs:integer"
+                              hpcc:displayName="Minimum content length for compression" hpcc:presetValue="1000"
+                              hpcc:tooltip="Minimum content length in bytes for the content to be compressed"/>
                 <xs:attribute name="dafilesrvConnectTimeout" type="xs:nonNegativeInteger"
                               hpcc:displayName="Remote file connection timeout in seconds"
                               hpcc:presentValue="10"

@@ -53,14 +53,13 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
-        ActPrintLog("COUNTPROJECT: Is Local");
+        ActivityTimer s(slaveTimerStats, timeActivities);
         anyThisGroup = false;
         PARENT::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         while (!abortSoon)
         {
             OwnedConstThorRow row(inputStream->nextRow());
@@ -158,11 +157,10 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         localRecCount = RCUNSET;
         onInputFinishSends = true;
         PARENT::start();
-        ActPrintLog( "COUNTPROJECT: Is Global");
         first = true;
         prevRecCount = 0;
         ThorDataLinkMetaInfo info;
@@ -193,7 +191,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (first) 
         {
             first = false;

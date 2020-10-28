@@ -38,6 +38,7 @@ protected:
     bool eof, pipeFinished;
     unsigned retcode;
     unsigned flags;
+    Owned<IException> verifyPipeException;
 
 protected:
 
@@ -119,9 +120,10 @@ protected:
                     }
                 }
                 if (START_FAILURE == retcode) // PIPE process didn't start at all, START_FAILURE is our own error code
-                    throw MakeActivityException(this, TE_PipeReturnedFailure, "Process failed to start: %s - PIPE(%s)", stdError.str(), pipeCommand.get());
+                    verifyPipeException.setown(MakeActivityException(this, TE_PipeReturnedFailure, "Process failed to start: %s - PIPE(%s)", stdError.str(), pipeCommand.get()));
                 else
-                    throw MakeActivityException(this, TE_PipeReturnedFailure, "Process returned %d:%s - PIPE(%s)", retcode, stdError.str(), pipeCommand.get());
+                    verifyPipeException.setown(MakeActivityException(this, TE_PipeReturnedFailure, "Process returned %d:%s - PIPE(%s)", retcode, stdError.str(), pipeCommand.get()));
+                throw verifyPipeException.getLink();
             }
         }
     }
@@ -206,7 +208,7 @@ public:
     }
     CATCH_NEXTROW()
     {   
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eof || abortSoon)
             return NULL;
         try
@@ -243,7 +245,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         OwnedRoxieString xmlIteratorPath(helper->getXmlIteratorPath());
         IThorRowInterfaces *_inrowif = needTransform ? inrowif.get() : this;
@@ -376,7 +378,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         OwnedRoxieString xmlIterator(helper->getXmlIteratorPath());
         readTransformer.setown(createReadRowStream(queryRowAllocator(), queryRowDeserializer(), helper->queryXmlTransformer(), helper->queryCsvTransformer(), xmlIterator, flags));
@@ -400,7 +402,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eof || abortSoon)
             return NULL;
         for (;;)
@@ -478,7 +480,8 @@ public:
         Owned<IException> wrexc = pipeWriter->joinExc();
         PARENT::stop();
         verifyPipe();
-        if (wrexc)
+        Owned<IException> hadVerifyPipeException = verifyPipeException.getClear(); // ensured cleared in case in CQ
+        if (wrexc && !hadVerifyPipeException)
             throw wrexc.getClear();
         if (retcode!=0 && !(flags & TPFnofail))
             throw MakeActivityException(this, TE_PipeReturnedFailure, "Process returned %d", retcode);

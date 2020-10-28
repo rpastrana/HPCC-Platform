@@ -33,6 +33,7 @@
 #include "portlist.h"
 #include "dalienv.hpp"
 #include "daaudit.hpp"
+#include "workunit.hpp"
 
 #include "hqlplugins.hpp"
 #include "eclrtl_imp.hpp"
@@ -67,9 +68,7 @@ using roxiemem::OwnedRoxieString;
 
 //#define LEAK_FILE         "c:\\leaks.txt"
 
-#define MONITOR_ECLAGENT_STATUS     
- 
-static const char XMLHEADER[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
+#define MONITOR_ECLAGENT_STATUS
 
 //#define ROOT_DRIVE      "c:"
 
@@ -80,6 +79,7 @@ static const char XMLHEADER[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
 #define ABORT_CHECK_INTERVAL 30     // seconds
 #define ABORT_DEADMAN_INTERVAL (60*5)  // seconds
 #define MAX_FILE_READ_FAIL_COUNT 3
+#define CHECK_COST_INTERVAL 120 // How frequently workunit cost is checked against cost limit (seconds)
 
 typedef IEclProcess* (* EclProcessFactory)();
 
@@ -89,6 +89,7 @@ constexpr LogMsgCategory MCresolve = MCprogress(100);       // Category used to 
 constexpr LogMsgCategory MCrunlock = MCprogress(100);      // Category used to inform about run lock progress
 
 Owned<IPropertyTree> agentTopology;
+Owned<IProperties> cmdLineArgs;
 
 MODULE_INIT(INIT_PRIORITY_STANDARD)
 {
@@ -97,6 +98,7 @@ MODULE_INIT(INIT_PRIORITY_STANDARD)
 MODULE_EXIT()
 {
     agentTopology.clear();
+    cmdLineArgs.clear();
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -152,9 +154,10 @@ class CHThorDebugSocketListener : public Thread, implements IHThorDebugSocketLis
 
 public:
     IMPLEMENT_IINTERFACE;
-    CHThorDebugSocketListener(CHThorDebugContext * _debugContext) 
+    CHThorDebugSocketListener(CHThorDebugContext * _debugContext)
         : Thread("CHThorDebugSocketListener"), debugContext(_debugContext)
     {
+        port = 0;
         running = false;
         suspended = false;
         unsigned poolSize = 10;//MORE : What is a good threadcoutn?
@@ -201,7 +204,7 @@ public:
         port = HTHOR_DEBUG_BASE_PORT;
         for (;;)
         {
-            try 
+            try
             {
                 DBGLOG("CHThorDebugSocketListener trying port %d", port);
                 socket.setown( ISocket::create(port) );
@@ -346,7 +349,7 @@ public:
         {
             client->querySocket()->getPeerAddress(peer);
             DBGLOG("Reading debug command from socket...");
-            if (!client->readBlock(rawText, WAIT_FOREVER, &httpHelper, continuationNeeded, isStatus, 1024*1024))
+            if (!client->readBlocktms(rawText, WAIT_FOREVER, &httpHelper, continuationNeeded, isStatus, 1024*1024))
             {
                 if (traceLevel > 8)
                 {
@@ -425,7 +428,7 @@ public:
     virtual bool stop() override
     {
         IERRLOG("CHThorDebugSocketWorker stopped with queries active");
-        return true; 
+        return true;
     }
 
 };
@@ -437,7 +440,7 @@ IPooledThread *CHThorDebugSocketListener::createNew()
 
 //=======================================================================================
 
-CHThorDebugContext::CHThorDebugContext(const IContextLogger &_logctx, IPropertyTree *_queryXGMML, EclAgent *_eclAgent) 
+CHThorDebugContext::CHThorDebugContext(const IContextLogger &_logctx, IPropertyTree *_queryXGMML, EclAgent *_eclAgent)
     : CBaseServerDebugContext(_logctx, _queryXGMML), eclAgent(_eclAgent)
 {
 }
@@ -508,8 +511,8 @@ public:
 
 //=======================================================================================
 
-EclAgent::EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bool _resetWorkflow, bool _noRetry, char const * _logname, const char *_allowedPipeProgs, IPropertyTree *_queryXML, IProperties *_globals, IPropertyTree *_config, ILogMsgHandler * _logMsgHandler)
-    : wuRead(wu), wuid(_wuid), checkVersion(_checkVersion), resetWorkflow(_resetWorkflow), noRetry(_noRetry), allowedPipeProgs(_allowedPipeProgs), globals(_globals), config(_config), logMsgHandler(_logMsgHandler)
+EclAgent::EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bool _resetWorkflow, bool _noRetry, char const * _logname, const char *_allowedPipeProgs, IPropertyTree *_queryXML, ILogMsgHandler * _logMsgHandler)
+    : wuRead(wu), wuid(_wuid), checkVersion(_checkVersion), resetWorkflow(_resetWorkflow), noRetry(_noRetry), allowedPipeProgs(_allowedPipeProgs), logMsgHandler(_logMsgHandler)
 {
     isAborting = false;
     isStandAloneExe = false;
@@ -531,7 +534,7 @@ EclAgent::EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bo
     StringAttrAdaptor adaptor(clusterType);
     wuRead->getDebugValue("targetClusterType", adaptor);
     pluginMap = NULL;
-    stopAfter = globals->getPropInt("-limit",-1);
+    stopAfter = agentTopology->getPropInt("@limit",-1);
 
     RemoteFilename logfile;
     logfile.setLocalPath(_logname);
@@ -562,6 +565,21 @@ EclAgent::EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bo
             w->setXmlParams(_queryXML);
         updateSuppliedXmlParams(w);
     }
+    IPropertyTree *costs = queryCostsConfiguration();
+    if (costs)
+    {
+        agentMachineCost = money2cost_type(costs->getPropReal("@agent"));
+        if (agentMachineCost)
+        {
+            double softCostLimit = costs->getPropReal("@limit");
+            double guillotineCost = wu->getDebugValueReal("maxCost", softCostLimit);
+            double hardCostLimit = costs->getPropReal("@hardlimit");
+            if (hardCostLimit && ((guillotineCost == 0) || (guillotineCost > hardCostLimit)))
+                guillotineCost = hardCostLimit;
+            abortmonitor->setGuillotineCost(money2cost_type(guillotineCost));
+        }
+    }
+
 }
 
 EclAgent::~EclAgent()
@@ -598,7 +616,7 @@ ICodeContext *EclAgent::queryCodeContext()
 
 const char *EclAgent::queryTempfilePath()
 {
-    if (agentTempDir.isEmpty()) 
+    if (agentTempDir.isEmpty())
     {
         StringBuffer dir;
         getTempFilePath(dir, "eclagent", agentTopology);
@@ -661,35 +679,22 @@ const char *EclAgent::loadResource(unsigned id)
 
 IWorkUnit *EclAgent::updateWorkUnit() const
 {
-    CriticalBlock block(wusect);
-    if (!wuWrite)
-    {
-        wuWrite.setown(&wuRead->lock());
-    }
-    return wuWrite.getLink();
-}
-
-void EclAgent::unlockWorkUnit()
-{
-    CriticalBlock block(wusect);
-    if (wuWrite)
-    {
-        IWorkUnit *w = wuWrite.getClear();
-        if (!w->Release()) 
-            IERRLOG("EclAgent::unlockWorkUnit workunit not released");
-    }
+    return &wuRead->lock();
 }
 
 void EclAgent::reloadWorkUnit()
 {
-    unlockWorkUnit();
     wuRead->forceReload();
 }
 
 void EclAgent::abort()
 {
-    if (activeGraph)
-        activeGraph->abort();
+    //for each active graph, abort()
+    CriticalBlock thisBlock(activeGraphCritSec);
+    ForEachItemIn(i,activeGraphs)
+    {
+        activeGraphs.item(i)->abort();
+    }
 }
 
 RecordTranslationMode EclAgent::getLayoutTranslationMode() const
@@ -699,8 +704,8 @@ RecordTranslationMode EclAgent::getLayoutTranslationMode() const
     if(wu->hasDebugValue("layoutTranslation"))
         wu->getDebugValue("layoutTranslation", val);
     else
-        config->getProp("@fieldTranslationEnabled", val.s);
-    return getTranslationMode(val.str());
+        agentTopology->getProp("@fieldTranslationEnabled", val.s);
+    return getTranslationMode(val.str(), false);
 }
 
 IConstWUResult *EclAgent::getResult(const char *name, unsigned sequence)
@@ -825,7 +830,7 @@ void EclAgent::setResultReal(const char *name, unsigned sequence, double val)
     Owned<IWUResult> r = updateWorkUnitResult(w, name, sequence);
     if (r)
     {
-        r->setResultReal(val);  
+        r->setResultReal(val);
         r->setResultStatus(ResultStatusCalculated);
     }
     else
@@ -1005,16 +1010,16 @@ void EclAgent::getExternalResultRaw(unsigned & tlen, void * & tgt, const char * 
     {
         Owned<IConstWUResult> r = getExternalResult(wuid, stepname, sequence);
         if (!r) failv(0, "Failed to find raw value %s:%d in workunit %s", nullText(stepname),sequence, wuid);
-        
+
         Variable2IDataVal result(&tlen, &tgt);
         Owned<IXmlToRawTransformer> rawXmlTransformer = createXmlRawTransformer(xmlTransformer);
         Owned<ICsvToRawTransformer> rawCsvTransformer = createCsvRawTransformer(csvTransformer);
         r->getResultRaw(result, rawXmlTransformer, rawCsvTransformer);
     }
-    catch (IException * e) 
+    catch (IException * e)
     {
-        StringBuffer text; 
-        e->errorMessage(text); 
+        StringBuffer text;
+        e->errorMessage(text);
         e->Release();
         failv(0, "value %s:%d in workunit %s contains an invalid raw value [%s]", nullText(stepname), sequence, wuid, text.str());
     }
@@ -1083,10 +1088,10 @@ bool EclAgent::getWorkunitResultFilename(StringBuffer & diskFilename, const char
         diskFilename.append("~").append(tempFilename.str());
         return true;
     }
-    catch (IException * e) 
+    catch (IException * e)
     {
-        StringBuffer text; 
-        e->errorMessage(text); 
+        StringBuffer text;
+        e->errorMessage(text);
         e->Release();
         failv(0, "Failed to find value %s:%d in workunit %s [%s]", nullText(stepname),sequence, nullText(wuid), text.str());
     }
@@ -1121,12 +1126,12 @@ void EclAgent::setResultData(const char * stepname, unsigned sequence, int len, 
 
 void EclAgent::doSetResultString(type_t type, const char *name, unsigned sequence, int len, const char *val)
 {
-    LOG(MCsetresult, unknownJob, "setResultString(%s,%d,'%.*s')", nullText(name), sequence, len, val);
+    LOG(MCsetresult, unknownJob, "setResultString(%s,%d,(%d bytes))", nullText(name), sequence, len);
     WorkunitUpdate w = updateWorkUnit();
     Owned<IWUResult> r = updateWorkUnitResult(w, name, sequence);
     if (r)
     {
-        r->setResultString(val, len);   
+        r->setResultString(val, len);
         r->setResultStatus(ResultStatusCalculated);
     }
     else
@@ -1176,7 +1181,7 @@ void EclAgent::setResultSet(const char * name, unsigned sequence, bool isAll, si
     if (r)
     {
         r->setResultIsAll(isAll);
-        r->setResultRaw(len, val, ResultFormatRaw); 
+        r->setResultRaw(len, val, ResultFormatRaw);
         r->setResultStatus(ResultStatusCalculated);
     }
     else
@@ -1192,7 +1197,7 @@ void EclAgent::setResultSet(const char * name, unsigned sequence, bool isAll, si
             {
                 SimpleOutputWriter x;
                 xform->toXML(isAll, len, (const byte *) val, x);
-                outputSerializer->printf(sequence, "%s]", x.str()); 
+                outputSerializer->printf(sequence, "%s]", x.str());
             }
             else
                 outputSerializer->printf(sequence, "?]");
@@ -1339,7 +1344,7 @@ char * EclAgent::resolveName(const char *in, char *out, unsigned outlen)
     return NULL;
 }
 
-void EclAgent::logFileAccess(IDistributedFile * file, char const * component, char const * type)
+void EclAgent::logFileAccess(IDistributedFile * file, char const * component, char const * type, EclGraph & activeGraph)
 {
     const char * cluster = clusterNames.item(clusterNames.length()-1);
     LOG(MCauditInfo,
@@ -1350,7 +1355,7 @@ void EclAgent::logFileAccess(IDistributedFile * file, char const * component, ch
         ensureText(userid.get()),
         file->queryLogicalName(),
         wuid.get(),
-        activeGraph ? activeGraph->queryGraphName() : "");
+        activeGraph.queryGraphName());
 }
 
 bool EclAgent::expandLogicalName(StringBuffer & fullname, const char * logicalName)
@@ -1361,7 +1366,7 @@ bool EclAgent::expandLogicalName(StringBuffer & fullname, const char * logicalNa
         logicalName++;
         useScope = false;
     }
-    else if (isAbsolutePath(logicalName)) 
+    else if (isAbsolutePath(logicalName))
     {
         fullname.append(logicalName);
         return false;
@@ -1392,9 +1397,9 @@ ILocalOrDistributedFile *EclAgent::resolveLFN(const char *fname, const char *err
         }
         else
         {
-            makeAbsolutePath(lfn.str(), name);  
+            makeAbsolutePath(lfn.str(), name);
         }
-        lfn.clear().append(name);  
+        lfn.clear().append(name);
     }
     if (expandedlfn)
         *expandedlfn = lfn;
@@ -1430,26 +1435,6 @@ ILocalOrDistributedFile *EclAgent::resolveLFN(const char *fname, const char *err
     return ldFile.getClear();
 }
 
-static void getFileSize(IFile * file, unsigned __int64 & gotSize)
-{
-    gotSize = file->size();
-}
-
-static unsigned __int64 getFileSize(IFile * file)
-{
-    unsigned __int64 size;
-    try
-    {
-        getFileSize(file, size);
-    }
-    catch (IException * e)
-    {
-        e->Release();
-        size = (unsigned __int64)-1;
-    }
-    return size;
-}
-
 bool EclAgent::fileExists(const char *name)
 {
     unsigned __int64 size = 0;
@@ -1457,7 +1442,7 @@ bool EclAgent::fileExists(const char *name)
     expandLogicalName(lfn, name);
 
     Owned<IDistributedFile> f = queryDistributedFileDirectory().lookup(lfn.str(),queryUserDescriptor(), false, false, false, nullptr, defaultPrivilegedUser);
-    if (f) 
+    if (f)
         return true;
     return false;
 }
@@ -1560,19 +1545,33 @@ char *EclAgent::getPlatform()
 {
     if (!isStandAloneExe)
     {
+#ifdef _CONTAINERIZED
+        /* NB: platform specs. are defined if agent is running in the context of
+         * another engine, e.g. query has been submitted to Thor, but some code is
+        * executing outside of it.
+        *
+        * If not defined then assumed to be executing in hthor context,
+        * where platform() defaults to "hthor".
+        */
+        StringBuffer type;
+        if (!agentTopology->getProp("platform/@type", type))
+            type.set("hthor"); // default
+        return type.detach();
+#else
         const char * cluster = clusterNames.tos();
         Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(cluster);
         if (!clusterInfo)
             throw MakeStringException(-1, "Unknown Cluster '%s'", cluster);
         return strdup(clusterTypeString(clusterInfo->getPlatform(), false));
+#endif
     }
     else
         return strdup("standalone");
 }
 
-char *EclAgent::getEnv(const char *name, const char *defaultValue) const 
+char *EclAgent::getEnv(const char *name, const char *defaultValue) const
 {
-    const char *val = globals->queryProp(name);
+    const char *val = cmdLineArgs->queryProp(name);
     if (!val)
         val = getenv(name);
     if (val)
@@ -1592,18 +1591,30 @@ void EclAgent::selectCluster(const char *newCluster)
         if (!streq(oldCluster, newCluster))
             throw MakeStringException(-1, "Error - cannot switch cluster in hthor jobs");
     }
+    if (!streq(oldCluster, newCluster))
+    {
+        WorkunitUpdate wu = updateWorkUnit();
+        wu->setClusterName(newCluster);
+        clusterWidth = -1;
+    }
     clusterNames.append(oldCluster);
-    WorkunitUpdate wu = updateWorkUnit();
-    wu->setClusterName(newCluster);
-    clusterWidth = -1;
 }
 
 void EclAgent::restoreCluster()
 {
     WorkunitUpdate wu = updateWorkUnit();
-    wu->setClusterName(clusterNames.item(clusterNames.length()-1));
+    restoreCluster(wu);
+}
+void EclAgent::restoreCluster(IWorkUnit *wu)
+{
+    const char *previousCluster = clusterNames.item(clusterNames.length()-1);
+    const char *currentCluster = queryWorkUnit()->queryClusterName();
+    if (!streq(previousCluster, currentCluster))
+    {
+        wu->setClusterName(previousCluster);
+        clusterWidth = -1;
+    }
     clusterNames.pop();
-    clusterWidth = -1;
 }
 
 unsigned EclAgent::getNodes()//retrieve node count for current cluster
@@ -1612,12 +1623,23 @@ unsigned EclAgent::getNodes()//retrieve node count for current cluster
     {
         if (!isStandAloneExe)
         {
+#ifdef _CONTAINERIZED
+            /* NB: platform specs. are defined if agent is running in the context of
+             * another engine, e.g. query has been submitted to Thor, but some code is
+             * executing outside of it.
+             *
+             * If not defined then assumed to be executing in hthor context,
+             * where getNodes() defaults to 1.
+             */
+            clusterWidth = agentTopology->getPropInt("platform/@width", 1);
+#else
             const char * cluster = clusterNames.tos();
             Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(cluster);
-            if (!clusterInfo) 
+            if (!clusterInfo)
                 throw MakeStringException(-1, "Unknown cluster '%s'", cluster);
             clusterWidth = clusterInfo->getSize();
             assertex(clusterWidth != 0);
+#endif
         }
         else
             clusterWidth = 1;
@@ -1716,7 +1738,7 @@ IConstWorkUnit * EclAgent::resolveLibrary(const char * libraryName, unsigned exp
     Owned<IPropertyTree> resolved = queryRegistry ? resolveQueryAlias(queryRegistry, libraryName) : NULL;
     if (!resolved)
         throw MakeStringException(0, "No current implementation of library %s", libraryName);
-    
+
     const char * libraryWuid = resolved->queryProp("@wuid");
 
     Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
@@ -1847,7 +1869,7 @@ void EclAgent::doProcess()
                 traceLevel = w->getDebugValueInt("traceLevel", 10);
             w->setTracingValue("EclAgentBuild", BUILD_TAG);
             if (agentTopology->hasProp("@name"))
-                w->addProcess("EclAgent", agentTopology->queryProp("@name"), GetCurrentProcessId(), logname.str());
+                w->addProcess("EclAgent", agentTopology->queryProp("@name"), GetCurrentProcessId(), 0, nullptr, false, logname.str());
 
             eclccCodeVersion = w->getCodeVersion();
             if (eclccCodeVersion == 0)
@@ -1863,7 +1885,7 @@ void EclAgent::doProcess()
                 w->setAgentSession(myProcessSession());
                 w->clearGraphProgress();  // Should Roxie do this too??
             }
-            if (debugContext)   
+            if (debugContext)
             {
                 w->setDebugAgentListenerPort(debugContext->queryPort());
 
@@ -1877,7 +1899,7 @@ void EclAgent::doProcess()
         {
             MTIME_SECTION(queryActiveTimer(), "Process");
             Owned<IEclProcess> process = loadProcess();
-            QueryTerminationCleanup threadCleanup;
+            QueryTerminationCleanup threadCleanup(false);
 
             if (checkVersion && (process->getActivityVersion() != eclccCodeVersion))
                 failv(0, "Inconsistent interface versions.  Workunit was created using eclcc for version %u, but the c++ compiler used version %u", eclccCodeVersion, process->getActivityVersion());
@@ -1918,18 +1940,29 @@ void EclAgent::doProcess()
         logException((IException *) NULL);
     }
 
+#ifdef _CONTAINERIZED
+    // signal to any lingering Thor's that job is complete and they can quit before timeout.
+    executeGraphOnLingeringThor(*wuRead, nullptr, nullptr);
+#endif
+
     DBGLOG("Process complete");
     // Add some timing stats
     bool deleteJobTemps = true;
+    WorkunitUpdate w(nullptr);
     try
     {
-        updateWULogfile();//Update workunit logfile name in case of date rollover
-
-        WorkunitUpdate w = updateWorkUnit();
+        w.setown(updateWorkUnit());
+        updateWULogfile(w);//Update workunit logfile name in case of date rollover
 
         addTimeStamp(w, SSTglobal, NULL, StWhenFinished);
-        updateWorkunitStat(w, SSTglobal, NULL, StTimeElapsed, nullptr, elapsedTimer.elapsedNs());
-        addTimings();
+        const __int64 elapsedNs = elapsedTimer.elapsedNs();
+        updateWorkunitStat(w, SSTglobal, NULL, StTimeElapsed, nullptr, elapsedNs);
+
+        const cost_type cost = aggregateCost(w, nullptr, false);
+        if (cost)
+            w->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTglobal, "", StCostExecute, NULL, cost, 1, 0, StatsMergeReplace);
+
+        addTimings(w);
 
         switch (w->getState())
         {
@@ -1967,8 +2000,8 @@ void EclAgent::doProcess()
         {
             if (w->getDebugValueBool("analyzeWorkunit", agentTopology->getPropBool("@analyzeWorkunit", true)))
             {
-                WuAnalyseOptions options;  // TODO: read options from configuration file
-                analyseWorkunit(w.get(), options);
+                IPropertyTree *analyzerOptions = agentTopology->queryPropTree("analyzerOptions");
+                analyseWorkunit(w.get(), analyzerOptions);
             }
         }
         if(w->queryEventScheduledCount() > 0)
@@ -1992,7 +2025,7 @@ void EclAgent::doProcess()
             }
 
         while (clusterNames.ordinality())
-            restoreCluster();
+            restoreCluster(w);
         if (!queryResolveFilesLocally())
         {
             w->deleteTempFiles(NULL, false, deleteJobTemps);
@@ -2006,7 +2039,7 @@ void EclAgent::doProcess()
             unsigned errCode = 0;
             try
             {
-               if (dir->exists() && dir->isDirectory() && !dir->remove())
+               if (dir->exists() && dir->isDirectory()==fileBool::foundYes && !dir->remove())
                     rmMsg.append("Failed to remove temporary directory: ").append(jobTempDir.str());
             }
             catch (IException *e)
@@ -2019,15 +2052,6 @@ void EclAgent::doProcess()
                 UWARNLOG(errCode, "%s", rmMsg.str());
         }
 
-        if (globals->getPropBool("DUMPFINALWU", false))
-        {
-            StringBuffer xml;
-            exportWorkUnitToXML(wuRead, xml, true, false, true);
-            fprintf(stdout, "%s", xml.str());
-        }
-        wuRead.clear(); // have a write lock still, but don't want to leave dangling unlocked wuRead after releasing write lock
-                        // or else something can delete whilst still referenced (e.g. on complete signal)
-        w.clear();
     }
     catch (IException *e)
     {
@@ -2043,14 +2067,14 @@ void EclAgent::doProcess()
         logException((IException *) NULL);
     }
     try {
-        unlockWorkUnit(); 
+        w.clear();
     }
     catch (IException *e)
     {
         try
         {
             // a final attempt to commit the original error (only) to the workunit
-            // since unlockWorkUnit( which commits ) can error due to the nature of the transaction.
+            // since commit () can error due to the nature of the transaction.
             Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
             Owned<IConstWorkUnit> wu = factory->openWorkUnit(wuid.get());
             Owned<IWorkUnit> w = &wu->lock();
@@ -2077,20 +2101,16 @@ void EclAgent::runProcess(IEclProcess *process)
 
     //Get memory limit. Workunit specified value takes precedence over config file
     int memLimitMB = agentTopology->getPropInt("@defaultMemoryLimitMB", DEFAULT_MEM_LIMIT);
-    memLimitMB = globals->getPropInt("defaultMemoryLimitMB", memLimitMB);
     memLimitMB = queryWorkUnit()->getDebugValueInt("hthorMemoryLimit", memLimitMB);
 
     bool allowHugePages = agentTopology->getPropBool("@heapUseHugePages", false);
-    allowHugePages = globals->getPropBool("heapUseHugePages", allowHugePages);
 
     bool allowTransparentHugePages = agentTopology->getPropBool("@heapUseTransparentHugePages", true);
-    allowTransparentHugePages = globals->getPropBool("heapUseTransparentHugePages", allowTransparentHugePages);
 
     bool retainMemory = agentTopology->getPropBool("@heapRetainMemory", false);
-    retainMemory = globals->getPropBool("heapRetainMemory", retainMemory);
 
-    if (globals->hasProp("@httpGlobalIdHeader"))
-        updateDummyContextLogger().setHttpIdHeaders(globals->queryProp("@httpGlobalIdHeader"), globals->queryProp("@httpCallerIdHeader"));
+    if (agentTopology->hasProp("@httpGlobalIdHeader"))
+        updateDummyContextLogger().setHttpIdHeaders(agentTopology->queryProp("@httpGlobalIdHeader"), agentTopology->queryProp("@httpCallerIdHeader"));
 
     if (queryWorkUnit()->hasDebugValue("GlobalId"))
     {
@@ -2173,7 +2193,7 @@ void EclAgent::runProcess(IEclProcess *process)
 
 unsigned EclAgent::getWorkflowId()
 {
-    return workflow->queryCurrentWfid(); 
+    throwUnexpected();
 }
 
 //----------------------------------------------------------------
@@ -2191,6 +2211,14 @@ void EclAgentWorkflowMachine::begin()
     workflow.setown(agent.queryWorkUnit()->getWorkflowClone());
     if(agent.queryWorkUnit()->getDebugValueBool("prelockpersists", false))
         prelockPersists();
+}
+bool EclAgentWorkflowMachine::getParallelFlag() const
+{
+    return agent.queryWorkUnit()->getDebugValueBool("parallelWorkflow", false);
+}
+unsigned EclAgentWorkflowMachine::getThreadNumFlag() const
+{
+    return agent.queryWorkUnit()->getDebugValueInt("numWorkflowThreads", 4);
 }
 
 void EclAgentWorkflowMachine::prelockPersists()
@@ -2294,10 +2322,14 @@ void EclAgentWorkflowMachine::syncWorkflow()
 
 void EclAgentWorkflowMachine::reportContingencyFailure(char const * type, IException * e)
 {
-    StringBuffer msg;
-    msg.append(type).append(" clause failed (execution will continue): ").append(e->errorCode()).append(": ");
-    e->errorMessage(msg);
-    agent.logException(SeverityWarning, MSGAUD_user, e->errorCode(), msg.str(), false);
+    ErrorSeverity severity = agent.wuRead->getWarningSeverity(e->errorCode(), SeverityWarning);
+    if (severity != SeverityIgnore)
+    {
+        StringBuffer msg;
+        msg.append(type).append(" clause failed (execution will continue): ").append(e->errorCode()).append(": ");
+        e->errorMessage(msg);
+        agent.logException(severity, MSGAUD_user, e->errorCode(), msg.str(), false);
+    }
 }
 
 void EclAgentWorkflowMachine::checkForAbort(unsigned wfid, IException * handling)
@@ -2338,6 +2370,10 @@ void EclAgentWorkflowMachine::noteTiming(unsigned wfid, timestamp_type startTime
     scope.append(WorkflowScopePrefix).append(wfid);
     updateWorkunitStat(wu, SSTworkflow, scope, StWhenStarted, nullptr, startTime, 0);
     updateWorkunitStat(wu, SSTworkflow, scope, StTimeElapsed, nullptr, elapsedNs, 0);
+
+    const cost_type cost = calcCost(agent.queryAgentMachineCost(), nanoToMilli(elapsedNs)) + aggregateCost(wu, scope, true);
+    if (cost)
+        wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTworkflow, scope, StCostExecute, NULL, cost, 1, 0, StatsMergeReplace);
 }
 
 void EclAgentWorkflowMachine::doExecutePersistItem(IRuntimeWorkflowItem & item)
@@ -2516,7 +2552,7 @@ void EclAgent::logException(WorkflowException *e)
         e->errorMessage(m);
         code = e->errorCode();
     }
-    else    
+    else
         m.append("Unknown error");
 
     logException(SeverityError, aud, code, m.str(), isAbort);
@@ -2536,7 +2572,7 @@ void EclAgent::logException(IException *e)
         e->errorMessage(m);
         code = e->errorCode();
     }
-    else    
+    else
         m.append("Unknown error");
 
     logException(SeverityError, MSGAUD_programmer, code, m.str(), false);
@@ -2732,7 +2768,7 @@ bool EclAgent::isPersistUptoDate(Owned<IRemoteConnection> &persistLock, IRuntime
 {
     //Loop trying to get a write lock - if it fails, then release the read lock, otherwise
     //you can get a deadlock with several things waiting to read, and none being able to write.
-    bool rebuildAllPersists = globals->getPropBool("REBUILDPERSISTS", false);   // Useful for debugging purposes
+    bool rebuildAllPersists = agentTopology->getPropBool("@rebuildPersists", false);   // Useful for debugging purposes
     for (;;)
     {
         StringBuffer dummy;
@@ -2751,7 +2787,6 @@ bool EclAgent::isPersistUptoDate(Owned<IRemoteConnection> &persistLock, IRuntime
 
         //Get a write lock
         setBlockedOnPersist(logicalName);
-        unlockWorkUnit();
         if (changePersistLockMode(persistLock, RTM_LOCK_WRITE, logicalName, false))
             break;
 
@@ -2804,7 +2839,6 @@ void EclAgent::updatePersist(IRemoteConnection *persistLock, const char * logica
 IRemoteConnection *EclAgent::startPersist(const char * logicalName)
 {
     setBlockedOnPersist(logicalName);
-    unlockWorkUnit();
     IRemoteConnection *persistLock = getPersistReadLock(logicalName);
     setRunning();
     return persistLock;
@@ -2948,6 +2982,10 @@ char * EclAgent::getClusterName()
 
 char * EclAgent::getGroupName()
 {
+#ifdef _CONTAINERIZED
+    // in a containerized setup, the group is moving..
+    return strdup("unknown");
+#endif
     StringBuffer groupName;
     if (!isStandAloneExe)
     {
@@ -3015,7 +3053,7 @@ char * EclAgent::queryIndexMetaData(char const * lfn, char const * xpath)
             if(thissize != -1)
             {
                 StringBuffer remotePath;
-                rfn.getRemotePath(remotePath);
+                rfn.getPath(remotePath);
                 unsigned crc;
                 part->getCrc(crc);
                 key.setown(createKeyIndex(remotePath.str(), crc, false, false));
@@ -3098,7 +3136,7 @@ char *EclAgent::getFilePart(const char *lfn, bool create)
                 OwnedIFile file = ldFile->getPartFile(0,copyno);
                 if (file->exists())
                 {
-                    StringBuffer p(file->queryFilename()); 
+                    StringBuffer p(file->queryFilename());
                     return p.detach();
                 }
             }
@@ -3121,7 +3159,7 @@ void EclAgent::reportProgress(const char *progress, unsigned flags)
         CriticalBlock block(wusect);
         WorkunitUpdate w = updateWorkUnit();
         w->setState(WUStateAborting);
-        throw new WorkflowException(0, "Workunit abort request received", (workflow ? workflow->queryCurrentWfid() : 0), WorkflowException::ABORT, MSGAUD_user);
+        throw new WorkflowException(0, "Workunit abort request received", 0, WorkflowException::ABORT, MSGAUD_user);
     }
     if (progress)
     {
@@ -3159,32 +3197,40 @@ char * EclAgent::getDaliServers()
     return dali.detach();
 }
 
-void EclAgent::addTimings()
+void EclAgent::addTimings(IWorkUnit *w)
 {
-    WorkunitUpdate w = updateWorkUnit();
     updateWorkunitTimings(w, queryActiveTimer());
 }
 
 // eclagent abort monitoring
-void EclAgent::abortMonitor() 
+void EclAgent::abortMonitor()
 {
     StringBuffer errorText;
     unsigned guillotineleft = 0;
-    for (;;) {
-        unsigned waittime = ABORT_CHECK_INTERVAL;   
-        if (abortmonitor->guillotinetimeout) {
-            if (guillotineleft==0) {
+    unsigned checkCostInterval = CHECK_COST_INTERVAL;
+    for (;;)
+    {
+        unsigned waittime = ABORT_CHECK_INTERVAL;
+        if (abortmonitor->guillotinetimeout)
+        {
+            if (guillotineleft==0)
+            {
                 guillotineleft = abortmonitor->guillotinetimeout;
                 DBGLOG("Guillotine set to %ds",guillotineleft);
             }
             if (guillotineleft<waittime)
                 waittime = guillotineleft;
         }
-        if (abortmonitor->sem.wait(waittime*1000) && abortmonitor->stopping) {
+        if ((abortmonitor->guillotineCost > 0) && (checkCostInterval < waittime))
+            waittime = checkCostInterval;
+        if (abortmonitor->sem.wait(waittime*1000) && abortmonitor->stopping)
+        {
             return;
         }
-        if (guillotineleft) {
-            if (abortmonitor->guillotinetimeout) {
+        if (guillotineleft)
+        {
+            if (abortmonitor->guillotinetimeout)
+            {
                 guillotineleft-=waittime;
                 if (guillotineleft==0) {
                     DBGLOG("Guillotine triggered");
@@ -3200,13 +3246,31 @@ void EclAgent::abortMonitor()
             if (queryWorkUnit()) // could be exiting
                 isAborting = queryWorkUnit()->aborting();
         }
-        if (isAborting) {
+        if (isAborting)
+        {
             DBGLOG("Abort detected");
             while (abortmonitor->sem.wait(ABORT_DEADMAN_INTERVAL*1000))
                 if (abortmonitor->stopping)
                     return; // stopped in time
             IERRLOG("EclAgent failed to abort within %ds - killing process",ABORT_DEADMAN_INTERVAL);
             break;
+        }
+        if (abortmonitor->guillotineCost)
+        {
+            if (checkCostInterval<=waittime)
+            {
+                cost_type totalCost = aggregateCost(queryWorkUnit());
+                if (totalCost > abortmonitor->guillotineCost)
+                {
+                    errorText.appendf("Workunit cost limit exceeded");
+                    break;
+                }
+                checkCostInterval=CHECK_COST_INTERVAL;
+            }
+            else
+            {
+                checkCostInterval-=waittime;
+            }
         }
     }
     fatalAbort(isAborting,errorText.str());
@@ -3215,15 +3279,15 @@ void EclAgent::abortMonitor()
 void EclAgent::fatalAbort(bool userabort,const char *excepttext)
 {
     try {
-        CriticalBlock block(wusect); 
+        CriticalBlock block(wusect);
         WorkunitUpdate w = updateWorkUnit();
-        if (userabort) 
+        if (userabort)
             w->setState(WUStateAborted);
         if (excepttext&&*excepttext)
             addExceptionEx(SeverityError, MSGAUD_programmer, "eclagent", 1000, excepttext, NULL, 0, 0, true, false);
         w->deleteTempFiles(NULL, false, true);
-        wuRead.clear(); 
-        w->commit();        // needed because we can't unlock the workunit in this thread
+        wuRead.clear();
+        w->commit();
         w.clear();
         deleteTempFiles();
     }
@@ -3306,6 +3370,28 @@ int myhook(int alloctype, void *, size_t nSize, int p1, long allocSeq, const uns
 }
 #endif
 //--------------------------------------------------------------
+
+void usage()
+{
+    printf("USAGE: hthor --workunit=wuid options\n"
+           "options include:\n"
+           "       --daliServers=daliEp\n"
+           "       --traceLevel=n\n"
+           "       --resetWorkflow  (performs workflow reset on starting)\n"
+           "       --noRetry        (immediately fails if workunit is in failed state)\n");
+}
+
+static constexpr const char * defaultYaml = R"!!(
+version: "1.0"
+hthor:
+    name: hthor
+    analyzeWorkunit: true
+    defaultMemoryLimitMB: 300
+    thorConnectTimeout: 600
+    traceLevel: 0
+)!!";
+
+
 extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * wuXML, bool standAloneExe)
 {
 #ifdef _DEBUG
@@ -3315,25 +3401,36 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
 #endif
     int retcode = 0;
     addAbortHandler(ControlHandler);
-    Owned<IProperties> globals = createProperties(true); // cmdline props only
-    for (int i = 1; i < argc; i++) 
-        globals->loadProp(argv[i], true);
+    cmdLineArgs.setown(createProperties(true));
+    for (int i = 1; i < argc; i++)
+    {
+        const char *arg = argv[i];
+        if (arg && arg[0] != '-')
+            cmdLineArgs->loadProp(arg, true);
+    }
 
     //get logfile location from agentexec.xml config file
     if (!standAloneExe)
     {
+        if (argc==1)
+        {
+            usage();
+            return 2;
+        }
         try
         {
-            agentTopology.setown(createPTreeFromXMLFile("agentexec.xml", ipt_caseInsensitive));
+            agentTopology.setown(loadConfiguration(defaultYaml, argv, "hthor", "ECLAGENT", "agentexec.xml", nullptr));
         }
         catch (IException *E)
         {
-            agentTopology.setown(createPTree("AGENTEXEC"));
+            agentTopology.setown(createPTree("hthor"));
             E->Release();
         }
     }
     else
-        agentTopology.setown(createPTree("AGENTEXEC"));
+        agentTopology.setown(loadConfiguration(defaultYaml, argv, "hthor", "ECLAGENT", nullptr, nullptr));
+
+    installDefaultFileHooks(agentTopology);
 
     //Build log file specification
     StringBuffer logfilespec;
@@ -3341,12 +3438,15 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     if (!standAloneExe)
     {
         setStatisticsComponentName(SCThthor, agentTopology->queryProp("@name"), true);
-
+#ifndef _CONTAINERIZED
         Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(agentTopology, "eclagent");
         lf->setCreateAliasFile(false);
         logMsgHandler = lf->beginLogging();
         PROGLOG("Logging to %s", lf->queryLogFileSpec());
         logfilespec.set(lf->queryLogFileSpec());
+#else
+        setupContainerizedLogMsgHandler();
+#endif
     }
     else
     {
@@ -3356,50 +3456,12 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
         PROGLOG("Logging to %s", logfilespec.str());
     }
 
-    if (wuXML && wuXML->length())
-    {
-        if (const char * fn = globals->queryProp("-wu"))
-        {
-            //Write workunit to file and exit
-            if (0==strcmp(fn,"1"))
-                fn = "stdout:";
-            Owned<IFile> file = createIFile(fn);
-            OwnedIFileIO io;
-            try
-            {
-                io.setown(file->open(IFOcreate));
-            }
-            catch(IException * e)
-            {
-                StringBuffer sb;
-                e->errorMessage(sb);
-                throw MakeStringException(errno, "Failed to create WU XML file %s : %s", fn, sb.str());
-            }
-
-            Owned<IFileIOStream> out = createIOStream(io);
-            
-            StringBuffer str;
-            str.appendf("%s\n",XMLHEADER);// "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
-            out->write(str.length(), str.str());
-
-            out->write(wuXML->length(), wuXML->str());
-            return 0;
-        }
-    }
-
 #ifdef _DEBUG
     traceLevel = 10;
-#ifdef _WIN32
-    if (globals->getPropInt("ALLOCBREAK"))
-        _CrtSetBreakAlloc(globals->getPropInt("ALLOCBREAK"));
-    if (globals->getPropInt("BREAKATSTART"))
-        DebugBreak();
-#endif
 #else
     traceLevel = 0;
 #endif
     traceLevel = agentTopology->getPropInt("@traceLevel", traceLevel);
-    traceLevel = globals->getPropInt("TRACELEVEL", traceLevel);
 
     if (traceLevel)
     {
@@ -3411,7 +3473,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     Owned<IPropertyTree> query;
     try
     {
-        const char *queryXML = globals->queryProp("query");
+        const char *queryXML = agentTopology->queryProp("@query");
         if (queryXML)
         {
             if (queryXML[0]=='@')
@@ -3419,7 +3481,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
             else
                 query.setown(createPTreeFromXMLString(queryXML));
         }
-        Owned<IPropertyIterator> it = globals->getIterator();
+        Owned<IPropertyIterator> it = cmdLineArgs->getIterator();
         ForEach(*it)
         {
             const char * key = it->getPropKey();
@@ -3427,13 +3489,13 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
             {
                 if (!query)
                     query.setown(createPTree("Query"));
-                const char *val = globals->queryProp(key);
+                const char *val = cmdLineArgs->queryProp(key);
                 if (val[0]=='<')
                 {
                     Owned<IPropertyTree> valtree = createPTreeFromXMLString(val);
                     query->setPropTree(key+1, valtree.getClear());
                 }
-                else 
+                else
                     query->setProp(key+1, val);
             }
         }
@@ -3447,15 +3509,13 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     }
 
     StringBuffer wuid;
-    StringBuffer daliServers;
-    if (!globals->getProp("DALISERVERS", daliServers) && !globals->getProp("-DALISERVERS", daliServers))
-        daliServers.append(agentTopology->queryProp("@daliServers"));
+    const char *daliServers = agentTopology->queryProp("@daliServers");
 
 #ifdef LEAK_FILE
     enableMemLeakChecking(true);
     logLeaks(LEAK_FILE);
 #endif
-    if (globals->getPropInt("DAFILESRVCACHE", 1))
+    if (agentTopology->getPropBool("@dafilesrvCache", true))
         setDaliServixSocketCaching(true);
 
     enableForceRemoteReads(); // forces file reads to be remote reads if they match environment setting 'forceRemotePattern' pattern.
@@ -3463,7 +3523,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     Owned<IConnectionMonitor> daliDownMonitor;
     try
     {
-#ifdef MONITOR_ECLAGENT_STATUS  
+#ifdef MONITOR_ECLAGENT_STATUS
         std::unique_ptr<CSDSServerStatus> serverstatus;
 #endif
         Owned<ILocalWorkUnit> standAloneWorkUnit;
@@ -3475,15 +3535,14 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
         }
 
         Owned<IUserDescriptor> standAloneUDesc;
-        if (daliServers.length())
+        if (daliServers)
         {
-            SocketEndpoint daliEp(daliServers, DALI_SERVER_PORT);
             {
                 MTIME_SECTION(queryActiveTimer(), "SDS_Initialize");
-                Owned<IGroup> serverGroup = createIGroup(1, &daliEp);
+                Owned<IGroup> serverGroup = createIGroupRetry(daliServers, DALI_SERVER_PORT);
                 initClientProcess(serverGroup, DCR_EclAgent, 0, NULL, NULL, MP_WAIT_FOREVER);
             }
-#ifdef MONITOR_ECLAGENT_STATUS  
+#ifdef MONITOR_ECLAGENT_STATUS
             serverstatus.reset(new CSDSServerStatus("ECLagent"));
             serverstatus->queryProperties()->setPropInt("Pid", GetCurrentProcessId());
             serverstatus->commitProperties();
@@ -3517,15 +3576,12 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
                     }
                 }
             };
+            SocketEndpoint daliEp(daliServers, DALI_SERVER_PORT);
             daliDownMonitor.setown(new CDaliDownMonitor(daliEp));
             addMPConnectionMonitor(daliDownMonitor);
 
-            {
-                MTIME_SECTION(queryActiveTimer(), "Environment_Initialize");
-                setPasswordsFromSDS();
-            }
-            LOG(MCoperatorInfo, "ECLAGENT build %s", BUILD_TAG);
-            startLogMsgParentReceiver();    
+            LOG(MCoperatorInfo, "hthor build %s", BUILD_TAG);
+            startLogMsgParentReceiver();
             connectLogMsgManagerToDali();
 
             StringBuffer baseDir;
@@ -3541,14 +3597,14 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
             {
                 //Stand alone program, but dali is specified => create a workunit in dali, and store the results there....
                 Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-                Owned<IWorkUnit> daliWu = factory->createWorkUnit("eclagent", "eclagent");
+                Owned<IWorkUnit> daliWu = factory->createWorkUnit("hthor", "hthor");
                 IExtendedWUInterface * extendedWu = queryExtendedWU(daliWu);
                 extendedWu->copyWorkUnit(standAloneWorkUnit, true, true);
                 wuid.set(daliWu->queryWuid());
-                globals->setProp("WUID", wuid.str());
+                cmdLineArgs->setProp("WUID", wuid.str());  // So it can be retrieved by getenv
 
                 standAloneUDesc.setown(createUserDescriptor());
-                if (const char * userpwd = globals->queryProp("-USER"))
+                if (const char * userpwd = agentTopology->queryProp("@user"))
                 {
                     StringBuffer usr(userpwd);
                     usr.replace(':',(char)NULL);
@@ -3573,21 +3629,23 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
                 }
 
                 StringBuffer sb;
-                sb.append("//").append(daliServers.str()).append(':').append(appName);
+                sb.append("//").append(daliServers).append(':').append(appName);
                 daliWu->setJobName(sb.str());
 
-                sb.clear().append("//").append(daliServers.str()).append(":StandAloneHThor");
+                sb.clear().append("//").append(daliServers).append(":StandAloneHThor");
                 daliWu->setClusterName(sb.str());
 
                 standAloneWorkUnit.clear();
             }
         }
 
+        initializeStorageGroups(daliClientActive());
+
         if (!standAloneWorkUnit)
         {
-            if (!globals->hasProp("WUID"))
-                throw MakeStringException(0, "WUID not specified");
-            wuid.set(globals->queryProp("WUID"));
+            agentTopology->getProp("@workunit", wuid);
+            if (!wuid.length())
+                throw MakeStringException(0, "workunit not specified");
         }
         else
         {
@@ -3597,7 +3655,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
             wuid.set(uid);
         }
 
-#ifdef MONITOR_ECLAGENT_STATUS  
+#ifdef MONITOR_ECLAGENT_STATUS
         if (serverstatus)
         {
             serverstatus->queryProperties()->setProp("WorkUnit",wuid.str());
@@ -3622,19 +3680,21 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
 
             if (w)
             {
-                EclAgent agent(w, wuid.str(), globals->getPropInt("IGNOREVERSION", 0)==0, globals->getPropBool("WFRESET", false), globals->getPropBool("NORETRY", false), logfilespec.str(), globals->queryProp("allowedPipePrograms"), query.getClear(), globals, agentTopology, logMsgHandler);
-                const bool isRemoteWorkunit = (daliServers.length() != 0);
-                const bool resolveFilesLocally = standAloneExe && (!isRemoteWorkunit || globals->getPropBool("USELOCALFILES", false));
-                const bool writeResultsToStdout = standAloneExe && (!isRemoteWorkunit || globals->getPropBool("RESULTSTOSTDOUT", true));
+                EclAgent agent(w, wuid.str(), agentTopology->getPropBool("@ignoreVersion", false), agentTopology->getPropBool("@resetWorkflow", false), agentTopology->getPropBool("@noRetry", false), logfilespec.str(),
+                               agentTopology->queryProp("@allowedPipePrograms"), query.getClear(), logMsgHandler);
+                const bool isRemoteWorkunit = !isEmptyString(daliServers);
+                const bool resolveFilesLocally = standAloneExe && (!isRemoteWorkunit || agentTopology->getPropBool("@useLocalFiles", false));
+                const bool writeResultsToStdout = standAloneExe && (!isRemoteWorkunit || agentTopology->getPropBool("@resultsToStdout", true));
 
                 outputFmts outputFmt = ofSTD;
                 if (writeResultsToStdout)
                 {
-                    if (globals->getPropBool("-xml", false))
+                    const char *format = agentTopology->queryProp("@format");
+                    if (strsame(format, "xml") || agentTopology->getPropBool("@xml", false))
                         outputFmt = ofXML;
-                    else if (globals->getPropBool("-raw", false))
+                    else if (strsame(format, "raw") || agentTopology->getPropBool("@raw", false))
                         outputFmt = ofRAW;
-                    else if (globals->getPropBool("-csv", false))
+                    else if (strsame(format, "csv") || agentTopology->getPropBool("@csv", false))
                     {
                         fprintf(stdout,"\nCSV output format not supported\n");
                         return false;
@@ -3675,8 +3735,9 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     }
     catch (IException * e)
     {
-        EXCLOG(e, "EclAgent");
+        EXCLOG(e, "hthor:");
         e->Release();
+        retcode = 2;
     }
 
     if (daliDownMonitor)
@@ -3697,21 +3758,20 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
 }
 
 //=======================================================================================
-void usage(const char * exeName)
+
+void standalone_usage(const char * exeName)
 {
-    fprintf(stdout,"\nUsage:\n"
-           "    %s <options>\n"
-           "\nGeneral options:\n"
-           "    -wu=<file>          Write XML formatted workunit to given filespec and exit\n"
-           "    -xml                Display output as XML\n"
-           "    -raw                Display output as binary\n"
-           "    -limit=x            Limit number of output rows\n"
-           "    -DALISERVERS=daliEp Connect to the specified Dali(s)\n"
-           "    -USER=user:password Dali credentials\n"
-           "    --help              Display this message\n",
-          exeName
+    printf("Usage:\n"
+       "    %s <options>\n"
+       "\nGeneral options:\n"
+       "    --xml                Display output as XML\n"
+       "    --raw                Display output as binary\n"
+       "    --limit=x            Limit number of output rows\n"
+       "    --daliServers=ep     Connect to the specified Dali(s)\n",
+      exeName
     );
 }
+
 //=======================================================================================
 
 
@@ -3722,10 +3782,10 @@ int STARTQUERY_API start_query(int argc, const char *argv[])
 
     for (int idx = 1; idx < argc; idx++)
     {
-        if (strstr(argv[idx], "-help" ))
+        if (strstr(argv[idx], "--help" ))
         {
             const char * p = strrchr(argv[0],PATHSEPCHAR);
-            usage(p ? ++p : argv[0]);
+            standalone_usage(p ? ++p : argv[0]);
             return false;
         }
     }
@@ -3789,7 +3849,7 @@ protected:
     bool hasStarted;
     bool hasStopped;
     bool everStarted;
-        
+
 public:
     InputProbe(IHThorInput *_in, IEngineRowStream *_stream, unsigned _sourceId, unsigned _sourceIdx, unsigned _targetId, unsigned _targetIdx, unsigned _iteration, unsigned _channel)
         : in(_in), stream(_stream), sourceId(_sourceId), sourceIdx(_sourceIdx), targetId(_targetId), targetIdx(_targetIdx), iteration(_iteration), channel(_channel)
@@ -3799,29 +3859,30 @@ public:
         everStarted = false;
         rowCount = 0;
         maxRowSize = 0;
+        totalTime = 0;
         inMeta = NULL;
     }
 
-    virtual IInputSteppingMeta * querySteppingMeta() 
+    virtual IInputSteppingMeta * querySteppingMeta()
     {
         return in->querySteppingMeta();
     }
-    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) 
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector)
     {
-        return in->gatherConjunctions(collector); 
+        return in->gatherConjunctions(collector);
     }
-    virtual void resetEOF() 
-    { 
-        in->resetEOF(); 
-    }
-
-    virtual IOutputMetaData * queryOutputMeta() const 
-    { 
-        return in->queryOutputMeta(); 
+    virtual void resetEOF()
+    {
+        in->resetEOF();
     }
 
-    virtual IOutputMetaData * queryOutputMeta() 
-    { 
+    virtual IOutputMetaData * queryOutputMeta() const
+    {
+        return in->queryOutputMeta();
+    }
+
+    virtual IOutputMetaData * queryOutputMeta()
+    {
         return in->queryOutputMeta();
     }
 
@@ -3851,22 +3912,22 @@ public:
         return ret;
     }
 
-    virtual bool isGrouped() 
-    { 
-        return in->isGrouped(); 
+    virtual bool isGrouped()
+    {
+        return in->isGrouped();
     }
 
-    virtual void ready() 
-    { 
+    virtual void ready()
+    {
         // NOTE: rowCount/maxRowSize not reset, as we want them cumulative when working in a child query.
         hasStarted = true;
         hasStopped = false;
         everStarted = true;
-        in->ready(); 
+        in->ready();
     }
 
-    virtual void stop() 
-    { 
+    virtual void stop()
+    {
         hasStopped = true;
         stream->stop();
     }
@@ -3891,7 +3952,7 @@ class DebugProbe : public InputProbe, implements IActivityDebugContext
     unsigned historySize;
     unsigned historyCapacity;
     unsigned nextHistorySlot;
-    
+
     mutable memsize_t proxyId; // MORE - do we need a critsec to protect too?
 
     DebugActivityRecord *sourceAct;
@@ -3975,7 +4036,7 @@ public:
 
     virtual void Link() const
     {
-        CInterface::Link(); 
+        CInterface::Link();
     }
 
     virtual bool Release() const
@@ -3989,12 +4050,12 @@ public:
         return proxyId;
     }
 
-    virtual void resetEOF() 
-    { 
+    virtual void resetEOF()
+    {
         forceEOF = false;
         EOGseen = false;
         EOGsent = false;
-        InputProbe::resetEOF(); 
+        InputProbe::resetEOF();
     }
 #if 0
     virtual unsigned queryId() const
@@ -4071,7 +4132,7 @@ public:
         }
     }
 
-    virtual void getXGMML(IXmlWriter *output) const 
+    virtual void getXGMML(IXmlWriter *output) const
     {
         output->outputBeginNested("edge", false);
         sourceAct->outputId(output, "@source");
@@ -4091,7 +4152,7 @@ public:
         output->outputEndNested("edge");
     }
 
-    virtual IOutputMetaData *queryOutputMeta() const 
+    virtual IOutputMetaData *queryOutputMeta() const
     {
         return InputProbe::queryOutputMeta();
     }
@@ -4102,7 +4163,7 @@ public:
     }
 
     // NOTE - these functions are threadsafe because only called when query locked by debugger.
-    // Even though this thread may not yet be blocked on the debugger's critsec, because all manipulation (including setting history rows) is from 
+    // Even though this thread may not yet be blocked on the debugger's critsec, because all manipulation (including setting history rows) is from
     // within debugger it is ok.
 
     virtual unsigned queryHistorySize() const
@@ -4310,14 +4371,12 @@ public:
     }
 
     virtual void updateProgress(IStatisticGatherer &progress) const
-    {   
+    {
         if (in)
             in->updateProgress(progress);
     }
 
 };
-
-IDebugGraphManager *createProxyDebugGraphManager(unsigned graphId, unsigned channel, memsize_t remoteGraphId);
 
 //=======================================================================================
 

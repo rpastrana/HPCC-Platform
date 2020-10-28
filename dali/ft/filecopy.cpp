@@ -43,7 +43,7 @@
 #include "dalienv.hpp"
 #include "ftbase.ipp"
 
-#define DEFAULT_MAX_CONNECTIONS 25
+#define DEFAULT_MAX_CONNECTIONS 800
 #define PARTITION_RECOVERY_LIMIT 1000
 #define EXPECTED_RESPONSE_TIME          (60 * 1000)
 #define RESPONSE_TIME_TIMEOUT           (60 * 60 * 1000)
@@ -194,8 +194,6 @@ void FileTransferThread::addPartition(PartitionPoint & nextPartition, OutputProg
 {
     partition.append(OLINK(nextPartition));
     progress.append(OLINK(nextProgress));
-    passwordProvider.addPasswordForIp(nextPartition.inputName.queryIP());
-    passwordProvider.addPasswordForIp(nextPartition.outputName.queryIP());
 }
 
 unsigned __int64 FileTransferThread::getInputSize()
@@ -338,7 +336,11 @@ bool FileTransferThread::performTransfer()
 
         //Send message and wait for response...
         msg.append(action);
-        passwordProvider.serialize(msg);
+
+        // send 0 for password info that was in <= 7.6 versions
+        unsigned zero = 0;
+        msg.append(zero);
+
         ep.serialize(msg);
         sprayer.srcFormat.serialize(msg);
         sprayer.tgtFormat.serialize(msg);
@@ -347,7 +349,7 @@ bool FileTransferThread::performTransfer()
         serialize(partition, msg);
         msg.append(sprayer.numParallelSlaves());
         msg.append(slaveUpdateFrequency);
-        msg.append(sprayer.replicate);
+        msg.append(sprayer.replicate); // NB: controls whether FtSlave copies source timestamp
         msg.append(sprayer.mirroring);
         msg.append(sprayer.isSafeMode);
 
@@ -543,7 +545,6 @@ int FileSizeThread::run()
                     thisSize = io->size();
                 }
                 cur->size = thisSize;
-                thisFile->getTime(nullptr, &cur->modifiedTime, nullptr);
                 break;
             }
             if (copy==1)
@@ -570,6 +571,7 @@ FileSprayer::FileSprayer(IPropertyTree * _options, IPropertyTree * _progress, IR
 {
     totalSize = 0;
     replicate = false;
+    copySource = false;
     unknownSourceFormat = true;
     unknownTargetFormat = true;
     progressTree.set(_progress);
@@ -648,11 +650,10 @@ public:
             }
 
             renameDfuTempToFinal(targetFilename);
-            if (sprayer.replicate)
+            if (sprayer.replicate && !sprayer.mirroring)
             {
                 OwnedIFile file = createIFile(targetFilename);
-                if (!sprayer.mirroring)
-                    file->setTime(NULL, &cur.modifiedTime, NULL);
+                file->setTime(NULL, &cur.modifiedTime, NULL);
             }
             else if (cur.modifiedTime.isNull())
             {
@@ -811,6 +812,8 @@ void FileSprayer::assignPartitionFilenames()
         }
         cur.outputName.set(targets.item(cur.whichOutput).filename);
         setCanAccessDirectly(cur.outputName);
+
+        // NB: partition (cur) is serialized to ftslave and it's this modifiedTime is used if present
         if (replicate)
             cur.modifiedTime.set(targets.item(cur.whichOutput).modifiedTime);
     }
@@ -1087,17 +1090,15 @@ void FileSprayer::calculateMany2OnePartition()
     const char *partSeparator = srcFormat.getPartSeparatorString();
     offset_t partSeparatorLength = ( partSeparator == nullptr ? 0 : strlen(partSeparator));
     offset_t lastContentLength = 0;
-    offset_t contentLength = 0;
     ForEachItemIn(idx, sources)
     {
         FilePartInfo & cur = sources.item(idx);
         RemoteFilename curFilename;
         curFilename.set(cur.filename);
         setCanAccessDirectly(curFilename);
-        if (partSeparator)
+        if (cur.size)
         {
-            contentLength = (cur.size > cur.xmlHeaderLength + cur.xmlFooterLength  + partSeparatorLength ? cur.size - cur.xmlHeaderLength - cur.xmlFooterLength - partSeparatorLength : 0);
-            if (contentLength)
+            if (partSeparator)
             {
                 if (lastContentLength)
                 {
@@ -1105,14 +1106,10 @@ void FileSprayer::calculateMany2OnePartition()
                     part.whichOutput = 0;
                     partition.append(part);
                 }
-                lastContentLength = contentLength;
+                lastContentLength = cur.size;
             }
-        }
-        else
-            contentLength = (cur.size > cur.headerSize ? cur.size - cur.headerSize : 0);
-
-        if (contentLength)
             partition.append(*new PartitionPoint(idx, 0, cur.headerSize, cur.size, cur.size));
+        }
     }
 
     if (srcFormat.isCsv())
@@ -1310,10 +1307,10 @@ void FileSprayer::checkFormats()
 
         //If format omitted, and number of parts are the same then okay to omit the format
         if (sources.ordinality() == targets.ordinality() && !disallowImplicitReplicate())
-            replicate = true;
+            copySource = true;
 
         bool noSplit = !allowSplit();
-        if (!replicate && !noSplit)
+        if (!replicate && !copySource && !noSplit)
         {
             //copy to a single target => assume same format concatenated.
             if (targets.ordinality() != 1)
@@ -1430,7 +1427,7 @@ void FileSprayer::commonUpSlaves()
             cur.whichSlave = 0;
     }
 
-    if (options->getPropBool(ANnocommon, false))
+    if (options->getPropBool(ANnocommon, true))
         return;
 
     //First work out which are the same slaves, and then map the partition.
@@ -1616,7 +1613,11 @@ void FileSprayer::analyseFileHeaders(bool setcurheadersize)
                 }
                 cur.headerSize += (unsigned)cur.xmlHeaderLength;
                 if (cur.size >= cur.xmlHeaderLength + cur.xmlFooterLength)
+                {
                     cur.size -= (cur.xmlHeaderLength + cur.xmlFooterLength);
+                    if (cur.size <= srcFormat.rowTag.length()) // implies there's a header and footer but no rows (whitespace only)
+                        cur.size = 0;
+                }
                 else
                     throwError3(DFTERR_InvalidXmlPartSize, cur.size, cur.xmlHeaderLength, cur.xmlFooterLength);
             }
@@ -1759,7 +1760,21 @@ void FileSprayer::derivePartitionExtra()
 void FileSprayer::displayPartition()
 {
     ForEachItemIn(idx, partition)
+    {
         partition.item(idx).display();
+
+#ifdef _DEBUG
+        if ((partition.item(idx).whichInput >= 0) && (partition.item(idx).whichInput < sources.ordinality()) )
+            LOG(MCdebugInfoDetail, unknownJob,
+                     "   Header size: %" I64F "u, XML header size: %" I64F "u, XML footer size: %" I64F "u",
+                     sources.item(partition.item(idx).whichInput).headerSize,
+                     sources.item(partition.item(idx).whichInput).xmlHeaderLength,
+                     sources.item(partition.item(idx).whichInput).xmlFooterLength
+            );
+        else
+            LOG(MCdebugInfoDetail, unknownJob,"   No source file for this partition");
+#endif
+    }
 }
 
 
@@ -1802,14 +1817,13 @@ void FileSprayer::afterGatherFileSizes()
 {
     if (!copyCompressed)
     {
-        StringBuffer dateStr, tailStr;
+        StringBuffer tailStr;
         ForEachItemIn(idx2, sources)
         {
             FilePartInfo & cur = sources.item(idx2);
 
-            LOG(MCdebugProgress, job, "%9u:%s (size: %llu bytes, last modified: %s)",
-                                       idx2, cur.filename.getTail(tailStr.clear()).str(), cur.size,
-                                       cur.modifiedTime.getString(dateStr.clear(), true).str()
+            LOG(MCdebugProgress, job, "%9u:%s (size: %llu bytes)",
+                                       idx2, cur.filename.getTail(tailStr.clear()).str(), cur.size
                                        );
             cur.offset = totalSize;
             totalSize += cur.size;
@@ -2543,6 +2557,9 @@ void FileSprayer::setSource(IDistributedFile * source)
 void FileSprayer::setSource(IFileDescriptor * source)
 {
     setSource(source, 0, 1);
+
+    //Now get the size of the files directly (to check they exist).  If they don't exist then switch to the backup instead.
+    gatherFileSizes(false);
 }
 
 
@@ -2574,8 +2591,8 @@ void FileSprayer::setSource(IFileDescriptor * source, unsigned copy, unsigned mi
                 FilePartInfo & next = * new FilePartInfo(rfn);
                 Owned<IPartDescriptor> part = source->getPart(idx);
                 next.extractExtra(*part);
-                // don't set the following here - force to check disk
-                //next.size = multi.getSize(i);
+                // If size doesn't set here it will be forced to check the file size on disk (expensive)
+                next.size = multi.getSize(i);
                 sources.append(next);
             }
 
@@ -2917,16 +2934,14 @@ void FileSprayer::spray()
     progressTree->setPropBool(ANpull, usePullOperation());
 
     const char * splitPrefix = querySplitPrefix();
-    bool pretendreplicate = false;
     if (!replicate && (sources.ordinality() == targets.ordinality()))
     {
-        if (srcFormat.equals(tgtFormat) && !disallowImplicitReplicate()) {
-            pretendreplicate = true;
-            replicate = true;
-        }
+        if (srcFormat.equals(tgtFormat) && !disallowImplicitReplicate())
+            copySource = true;
     }
 
-    if (compressOutput&&!replicate) {
+    if (compressOutput&&!replicate&&!copySource)
+    {
         PROGLOG("Compress output forcing pull");
         options->setPropBool(ANpull, true);
         allowRecovery = false;
@@ -2934,11 +2949,11 @@ void FileSprayer::spray()
 
 
     gatherFileSizes(true);
-    if (!replicate||pretendreplicate)
-        analyseFileHeaders(!pretendreplicate); // if pretending replicate don't want to remove headers
+    if (!replicate||copySource) // NB: When copySource=true, analyseFileHeaders mainly just sets srcFormat.type
+        analyseFileHeaders(!copySource); // if pretending replicate don't want to remove headers
     afterGatherFileSizes();
 
-    if (compressOutput && !usePullOperation() && !replicate)
+    if (compressOutput && !usePullOperation() && !replicate && !copySource)
         throwError(DFTERR_CannotPushAndCompress);
 
     if (restorePartition())
@@ -2948,7 +2963,7 @@ void FileSprayer::spray()
     else
     {
         LOG(MCdebugProgress, job, "Calculate partition information");
-        if (replicate)
+        if (replicate || copySource)
             calculateOne2OnePartition();
         else if (!allowSplit())
             calculateNoSplitPartition();
@@ -2963,7 +2978,7 @@ void FileSprayer::spray()
         savePartition();
     }
     assignPartitionFilenames();     // assign source filenames - used in insertHeaders..
-    if (!replicate)
+    if (!replicate && !copySource)
     {
         LOG(MCdebugProgress, job, "Insert headers");
         insertHeaders();
@@ -3003,27 +3018,19 @@ void FileSprayer::spray()
 bool FileSprayer::isSameSizeHeaderFooter()
 {
     bool retVal = true;
-    unsigned whichHeaderInput = 0;
-    bool isEmpty = true;
-    headerSize = 0;
-    footerSize = 0;
 
     if (sources.ordinality() == 0)
         return retVal;
+
+    unsigned whichHeaderInput = 0;
+    headerSize = sources.item(whichHeaderInput).xmlHeaderLength;
+    footerSize = sources.item(whichHeaderInput).xmlFooterLength;
 
     ForEachItemIn(idx, partition)
     {
         PartitionPoint & cur = partition.item(idx);
         if (cur.inputLength && (idx+1 == partition.ordinality() || partition.item(idx+1).whichOutput != cur.whichOutput))
         {
-            if (isEmpty)
-            {
-                headerSize = sources.item(whichHeaderInput).xmlHeaderLength;
-                footerSize = sources.item(cur.whichInput).xmlFooterLength;
-                isEmpty = false;
-                continue;
-            }
-
             if (headerSize != sources.item(whichHeaderInput).xmlHeaderLength)
             {
                 retVal = false;
@@ -3039,7 +3046,6 @@ bool FileSprayer::isSameSizeHeaderFooter()
             if ( idx+1 != partition.ordinality() )
                 whichHeaderInput = partition.item(idx+1).whichInput;
         }
-
     }
     return retVal;
 }
@@ -3118,7 +3124,6 @@ void FileSprayer::updateTargetProperties()
                                     failedParts.append("Output CRC failed to match expected: ");
                                 curSource.filename.getPath(failedParts);
                                 failedParts.appendf("(%x,%x)",partCRC.get(),curSource.crc);
-
                             }
                         }
                     }
@@ -3151,21 +3156,24 @@ void FileSprayer::updateTargetProperties()
 
                     curProps.setProp("@modified", temp.getString(timestr).str());
                 }
-                if (replicate && (distributedSource != distributedTarget) )
+                if ((distributedSource != distributedTarget) && (cur.whichInput != (unsigned)-1))
                 {
-                    assertex(cur.whichInput != (unsigned)-1);
                     FilePartInfo & curSource = sources.item(cur.whichInput);
                     if (curSource.properties)
                     {
                         Owned<IAttributeIterator> aiter = curSource.properties->getAttributes();
-                        //At the moment only clone the topLevelKey indicator (stored in kind), but make it easy to add others.
-                        ForEach(*aiter) {
+                        ForEach(*aiter)
+                        {
                             const char *aname = aiter->queryName();
-                            if (strieq(aname,"@kind")
-                                ) {
-                                if (!curProps.hasProp(aname))
-                                    curProps.setProp(aname,aiter->queryValue());
-                            }
+                            if ( !( strieq(aname,"@fileCrc") ||
+                                    strieq(aname,"@modified") ||
+                                    strieq(aname,"@node") ||
+                                    strieq(aname,"@num")  ||
+                                    strieq(aname,"@size") ||
+                                    strieq(aname,"@name") ) ||
+                                    ( strieq(aname,"@recordCount") && (sources.ordinality() == targets.ordinality()) )
+                               )
+                                curProps.setProp(aname,aiter->queryValue());
                         }
                     }
                 }
@@ -3352,11 +3360,9 @@ void FileSprayer::updateTargetProperties()
             curHistory->addPropTree("Origin",newRecord.getClear());
         }
 
-        int expireDays = options->getPropInt("@expireDays");
+        int expireDays = options->getPropInt("@expireDays", -1);
         if (expireDays != -1)
-        {
             curProps.setPropInt("@expireDays", expireDays);
-        }
     }
     if (error)
         throw error.getClear();

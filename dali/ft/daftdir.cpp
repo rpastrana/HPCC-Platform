@@ -94,7 +94,7 @@ void DirectoryBuilder::rootDirectory(const char * directory, INode * node, IProp
     OwnedIFile dir = createIFile(directory);
     StringBuffer path;
     const char * tag = "directory";
-    if (dir->isDirectory() == foundYes)
+    if (dir->isDirectory() == fileBool::foundYes)
     {
         implicitWildcard = true;
         includeEmptyDirectory = true;
@@ -301,10 +301,10 @@ bool DirectoryBuilder::walkDirectory(const char * path, IPropertyTree * director
                 continue;
 
             OwnedIFile file = createIFile(curfname);
-            const char * tag = (file->isDirectory()==foundYes) ? "directory" : "file";
+            const char * tag = (file->isDirectory()==fileBool::foundYes) ? "directory" : "file";
 
             IPropertyTree * entry = NULL;
-            if (file->isDirectory()==foundYes)
+            if (file->isDirectory()==fileBool::foundYes)
             {
                 if (implicitWildcard && !recurse)
                     entry = directory->addPropTree(tag, createPTree(ipt_caseInsensitive));
@@ -462,7 +462,6 @@ bool DirectoryThread::performCommand()
         //Send message and wait for response... 
         //MORE: they should probably all be sent on different threads....
         msg.append((byte)FTactiondirectory);
-        passwordProvider.serialize(msg);
         msg.append(directory);
         options->serialize(msg);
         node->serialize(msg);
@@ -712,14 +711,14 @@ void DirectoryCopier::recursiveCopy(IPropertyTree * level, const char * sourcePa
         if (onlyCopyExisting || onlyCopyMissing)
         {
             fileBool exists = targetFile->isFile();
-            if (onlyCopyExisting && (exists != foundYes))
+            if (onlyCopyExisting && (exists != fileBool::foundYes))
                 doCopy = false;
-            if (onlyCopyMissing && (exists != notFound))
+            if (onlyCopyMissing && (exists != fileBool::notFound))
                 doCopy = false;
         }
         if (doCopy && preserveIfNewer)
         {
-            if (targetFile->isFile() == foundYes)
+            if (targetFile->isFile() == fileBool::foundYes)
             {
                 CDateTime modifiedSource, modifiedTarget;
                 sourceFile->getTime(NULL, &modifiedSource, NULL);
@@ -799,10 +798,8 @@ void doPhysicalCopy(IPropertyTree * source, const char * target, IPropertyTree *
 
     SocketEndpoint sourceMachine(source->queryProp("machine/@ip"));
     RemoteFilename targetName;
-    CachedPasswordProvider passwordProvider;
     Owned<IException> error;
 
-    passwordProvider.addPasswordForIp(sourceMachine);
     targetName.setRemotePath(target);
     const IpAddress & targetIP = targetName.queryIP();
     if (!canSpawnChildProcess(targetIP))
@@ -825,7 +822,6 @@ void doPhysicalCopy(IPropertyTree * source, const char * target, IPropertyTree *
         //Send message and wait for response... 
         //MORE: they should probably all be sent on different threads....
         msg.append((byte)FTactionpcopy);
-        passwordProvider.serialize(msg);
         source->serialize(msg);
         targetName.serialize(msg);
         options->serialize(msg);

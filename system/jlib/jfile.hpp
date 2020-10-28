@@ -41,6 +41,8 @@ enum IFSHmode { IFSHnone, IFSHread=0x8, IFSHfull=0x10};   // sharing modes
 enum IFSmode { IFScurrent = FILE_CURRENT, IFSend = FILE_END, IFSbegin = FILE_BEGIN };    // seek mode
 enum CFPmode { CFPcontinue, CFPcancel, CFPstop };    // modes for ICopyFileProgress::onProgress return
 enum IFEflags { IFEnone=0x0, IFEnocache=0x1, IFEcache=0x2 };    // mask
+constexpr offset_t unknownFileSize = -1;
+
 class CDateTime;
 
 interface IDirectoryIterator : extends IIteratorOf<IFile> 
@@ -79,7 +81,7 @@ interface ICopyFileProgress
 
 class RemoteFilename;
 
-enum fileBool { foundNo = false, foundYes = true, notFound = 2 };
+enum class fileBool { foundNo = false, foundYes = true, notFound = 2 };
 interface IFile :extends IInterface
 {
     virtual bool exists() = 0; // NB this can raise exceptions if the machine doesn't exist or other fault
@@ -223,14 +225,6 @@ interface IDiscretionaryLock: extends IInterface
 
 //-- Interfaces/functions used for managing passwords needed to access remote machines.
 
-class IpAddress;
-interface IPasswordProvider : public IInterface
-{
-    virtual bool getPassword(const IpAddress & ip, StringBuffer & username, StringBuffer & password) = 0;
-
-};
-
-
 #ifndef _WIN32
 #define _MAX_DRIVE      4
 #define _MAX_DIR        256
@@ -238,10 +232,6 @@ interface IPasswordProvider : public IInterface
 #define _MAX_EXT        256
 void jlib_decl _splitpath(const char *path, char *drive, char *dir, char *fname, char *ext);
 #endif
-
-extern jlib_decl void setDefaultUser(const char * username,const char *password);
-extern jlib_decl IPasswordProvider * queryPasswordProvider();
-extern jlib_decl void setPasswordProvider(IPasswordProvider * provider);
 
 //-- Helper routines 
 
@@ -278,6 +268,7 @@ extern jlib_decl IDirectoryIterator * createNullDirectoryIterator();
 extern jlib_decl IFileIO * createIORange(IFileIO * file, offset_t header, offset_t length);     // restricts input/output to a section of a file.
 
 extern jlib_decl IFileIOStream * createIOStream(IFileIO * file);        // links argument
+extern jlib_decl IFileIOStream * createNoSeekIOStream(IFileIOStream * stream);  // links argument
 extern jlib_decl IFileIOStream * createBufferedIOStream(IFileIO * file, unsigned bufsize=(unsigned)-1);// links argument
 extern jlib_decl IFileIOStream * createBufferedAsyncIOStream(IFileAsyncIO * file, unsigned bufsize=(unsigned)-1);// links argument
 
@@ -354,7 +345,6 @@ extern jlib_decl ISerialStream *createFileSerialStream(IFileIO *fileio, offset_t
 extern jlib_decl ISerialStream *createFileSerialStream(IMemoryMappedFile *mmapfile, offset_t ofs=0, offset_t flen=(offset_t)-1, IFileSerialStreamCallback *callback=NULL);
 extern jlib_decl ISerialStream *createMemorySerialStream(const void *buffer, memsize_t len, IFileSerialStreamCallback *callback=NULL);
 extern jlib_decl ISerialStream *createMemoryBufferSerialStream(MemoryBuffer & buffer, IFileSerialStreamCallback *callback=NULL);
-
 
 
 typedef Linked<IFile> IFileAttr;
@@ -550,13 +540,11 @@ inline const char *splitDirTail(const char *path,StringBuffer &dir)
     return tail;        
 }
 
-inline bool isAbsolutePath(const char *path)
-{   
-    if (!path||!*path)
-        return false;
-    return isPathSepChar(path[0])||((path[1]==':')&&(isPathSepChar(path[2])));
-}
+extern jlib_decl bool isUrl(const char *path);
+extern jlib_decl bool isRemotePath(const char *path);
+extern jlib_decl bool isAbsolutePath(const char *path);
 
+// NOTE - makeAbsolutePath also normalizes the supplied path to remove . and .. references
 extern jlib_decl StringBuffer &makeAbsolutePath(const char *relpath,StringBuffer &out,bool mustExist=false);
 extern jlib_decl StringBuffer &makeAbsolutePath(StringBuffer &relpath,bool mustExist=false);
 extern jlib_decl StringBuffer &makeAbsolutePath(const char *relpath, const char *basedir, StringBuffer &out);
@@ -599,8 +587,8 @@ public:
 
 public:
     StringAttr filename;
-    offset_t length;
-    offset_t offset;
+    offset_t length = 0;
+    offset_t offset = 0;
 };
 typedef CIArrayOf<ExtractedBlobInfo> ExtractedBlobArray;
 
@@ -639,5 +627,23 @@ const static bool filenamesAreCaseSensitive = true;
 
 extern jlib_decl IDirectoryIterator *getSortedDirectoryIterator(IFile *directory, SortDirectoryMode mode = SD_byname, bool rev = false, const char *mask = nullptr, bool sub = false, bool includedirs = false);
 extern jlib_decl IDirectoryIterator *getSortedDirectoryIterator(const char *dirName, SortDirectoryMode mode = SD_byname, bool rev = false, const char *mask = nullptr, bool sub = false, bool includedirs = false);
+
+//--------------------------------------------------------------------------------------------------------------------
+
+class jlib_decl FileIOStats
+{
+public:
+    unsigned __int64 getStatistic(StatisticKind kind);
+    void trace();
+
+public:
+    RelaxedAtomic<cycle_t> ioReadCycles{0};
+    RelaxedAtomic<cycle_t> ioWriteCycles{0};
+    RelaxedAtomic<__uint64> ioReadBytes{0};
+    RelaxedAtomic<__uint64> ioWriteBytes{0};
+    RelaxedAtomic<__uint64> ioReads{0};
+    RelaxedAtomic<__uint64> ioWrites{0};
+};
+
 
 #endif

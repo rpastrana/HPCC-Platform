@@ -1,21 +1,27 @@
-
 var DojoWebpackPlugin = require("dojo-webpack-plugin");
 var CopyWebpackPlugin = require("copy-webpack-plugin");
 
 var path = require("path");
 var webpack = require("webpack");
-var BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
 
 module.exports = function (env) {
-    const isDev = env && env.build === "development";
+    const isDev = env && env === "development";
     const isProduction = !isDev;
+
+    const entry = {
+        stub: "eclwatch/stub",
+        dojoLib: "lib/src/dojoLib"
+    };
+    if (!isProduction) {
+        entry.index = "lib/src/index";
+    }
 
     const plugins = [
         new DojoWebpackPlugin({
             loaderConfig: require("./eclwatch/dojoConfig"),
             environment: { dojoRoot: "build/dist" },
             buildEnvironment: { dojoRoot: "node_modules" }, // used at build time
-            locales: ["en", "bs", "es", "hr", "hu", "pt-br", "sr", "zh"]
+            locales: ["en", "bs", "es", "fr", "hr", "hu", "pt-br", "sr", "zh"]
         }),
 
         // Copy non-packed resources needed by the app to the release directory
@@ -42,10 +48,7 @@ module.exports = function (env) {
 
     return {
         context: __dirname,
-        entry: {
-            stub: "eclwatch/stub",
-            dojoLib: "lib/src/dojoLib"
-        },
+        entry: entry,
         output: {
             filename: "[name].eclwatch.js",
             chunkFilename: "[name].eclwatch.js",
@@ -76,6 +79,10 @@ module.exports = function (env) {
                             name: '[name].[ext]'
                         }
                     }]
+                }, {
+                    test: /\.js$/,
+                    use: ["source-map-loader"],
+                    enforce: "pre"
                 }]
         },
         resolve: {
@@ -87,6 +94,7 @@ module.exports = function (env) {
         resolveLoader: {
             modules: ["node_modules"]
         },
-        mode: isProduction ? "production" : "development"
+        mode: isProduction ? "production" : "development",
+        devtool: isProduction ? undefined : 'source-map'
     }
 };

@@ -286,7 +286,7 @@ void CSlaveMessageHandler::threadmain()
                 }
                 case smt_getPhysicalName:
                 {
-                    LOG(MCdebugProgress, unknownJob, "getPhysicalName called from node %d", sender-1);
+                    LOG(MCdebugProgress, thorJob, "getPhysicalName called from node %d", sender-1);
                     StringAttr logicalName;
                     unsigned partNo;
                     bool create;
@@ -305,7 +305,7 @@ void CSlaveMessageHandler::threadmain()
                 }
                 case smt_getFileOffset:
                 {
-                    LOG(MCdebugProgress, unknownJob, "getFileOffset called from node %d", sender-1);
+                    LOG(MCdebugProgress, thorJob, "getFileOffset called from node %d", sender-1);
                     StringAttr logicalName;
                     unsigned partNo;
                     msg.read(logicalName);
@@ -318,7 +318,7 @@ void CSlaveMessageHandler::threadmain()
                 }
                 case smt_actMsg:
                 {
-                    LOG(MCdebugProgress, unknownJob, "smt_actMsg called from node %d", sender-1);
+                    LOG(MCdebugProgress, thorJob, "smt_actMsg called from node %d", sender-1);
                     graph_id gid;
                     msg.read(gid);
                     activity_id id;
@@ -336,7 +336,7 @@ void CSlaveMessageHandler::threadmain()
                 {
                     unsigned slave;
                     msg.read(slave);
-                    LOG(MCdebugProgress, unknownJob, "smt_getresult called from slave %d", slave);
+                    LOG(MCdebugProgress, thorJob, "smt_getresult called from slave %d", slave);
                     graph_id gid;
                     msg.read(gid);
                     activity_id ownerId;
@@ -362,19 +362,19 @@ void CSlaveMessageHandler::threadmain()
 
 //////////////////////
 
-CMasterActivity::CMasterActivity(CGraphElementBase *_container) : CActivityBase(_container), threaded("CMasterActivity", this), timingInfo(_container->queryJob())
+CMasterActivity::CMasterActivity(CGraphElementBase *_container, const StatisticsMapping &statsMapping)
+    : CActivityBase(_container, statsMapping), threaded("CMasterActivity", this), statsCollection(statsMapping)
 {
     notedWarnings = createThreadSafeBitSet();
     mpTag = TAG_NULL;
     data = new MemoryBuffer[container.queryJob().querySlaves()];
     asyncStart = false;
     if (container.isSink())
-        progressInfo.append(*new ProgressInfo(queryJob()));
+        edgeStatsVector.push_back(new CThorEdgeCollection);
     else
     {
-        unsigned o=0;
-        for (; o<container.getOutputs(); o++)
-            progressInfo.append(*new ProgressInfo(queryJob()));
+        for (unsigned o=0; o<container.getOutputs(); o++)
+            edgeStatsVector.push_back(new CThorEdgeCollection);
     }
 }
 
@@ -515,27 +515,25 @@ void CMasterActivity::reset()
 void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(progressCrit); // don't think needed
-    unsigned __int64 localTimeNs;
-    mb.read(localTimeNs);
-    timingInfo.set(node, localTimeNs);
+    statsCollection.deserialize(node, mb);
     rowcount_t count;
-    ForEachItemIn(p, progressInfo)
+    for (auto &collection: edgeStatsVector)
     {
         mb.read(count);
-        progressInfo.item(p).set(node, count);
+        collection->set(node, count);
     }
 }
 
 void CMasterActivity::getActivityStats(IStatisticGatherer & stats)
 {
-    timingInfo.getStats(stats);
+    statsCollection.getStats(stats);
 }
 
 void CMasterActivity::getEdgeStats(IStatisticGatherer & stats, unsigned idx)
 {
     CriticalBlock b(progressCrit);
-    if (progressInfo.isItem(idx))
-        progressInfo.item(idx).getStats(stats);
+    if (idx < edgeStatsVector.size())
+        edgeStatsVector[idx]->getStats(stats);
 }
 
 void CMasterActivity::done()
@@ -552,7 +550,7 @@ void CMasterActivity::done()
 // CMasterGraphElement impl.
 //
 
-CMasterGraphElement::CMasterGraphElement(CGraphBase &_owner, IPropertyTree &_xgmml) : CGraphElementBase(_owner, _xgmml)
+CMasterGraphElement::CMasterGraphElement(CGraphBase &_owner, IPropertyTree &_xgmml) : CGraphElementBase(_owner, _xgmml, nullptr)
 {
 }
 
@@ -821,7 +819,7 @@ class CThorCodeContextMaster : public CThorCodeContextBase
         return getWorkUnitResult(workunit, name, sequence);
     }
     #define PROTECTED_GETRESULT(STEPNAME, SEQUENCE, KIND, KINDTEXT, ACTION) \
-        LOG(MCdebugProgress, unknownJob, "getResult%s(%s,%d)", KIND, STEPNAME?STEPNAME:"", SEQUENCE); \
+        LOG(MCdebugProgress, thorJob, "getResult%s(%s,%d)", KIND, STEPNAME?STEPNAME:"", SEQUENCE); \
         Owned<IConstWUResult> r = getResultForGet(STEPNAME, SEQUENCE); \
         try \
         { \
@@ -1056,7 +1054,7 @@ public:
             r->getResultUnicode(MemoryBuffer2IDataVal(result));
             tlen = result.length()/2;
             tgt = (UChar *)malloc(tlen*2);
-            memcpy(tgt, result.toByteArray(), tlen*2);
+            memcpy_iflen(tgt, result.toByteArray(), tlen*2);
         );
     }
     virtual char * getResultVarString(const char * stepname, unsigned sequence) override
@@ -1086,7 +1084,7 @@ public:
     {
         try
         {
-            LOG(MCdebugProgress, unknownJob, "getExternalResultRaw %s", stepname);
+            LOG(MCdebugProgress, thorJob, "getExternalResultRaw %s", stepname);
 
             Owned<IConstWUResult> r = getExternalResult(wuid, stepname, sequence);
             return r->getResultHash();
@@ -1128,7 +1126,7 @@ public:
         tgt = NULL;
         try
         {
-            LOG(MCdebugProgress, unknownJob, "getExternalResultRaw %s", stepname);
+            LOG(MCdebugProgress, thorJob, "getExternalResultRaw %s", stepname);
 
             Variable2IDataVal result(&tlen, &tgt);
             Owned<IConstWUResult> r = getExternalResult(wuid, stepname, sequence);
@@ -1350,7 +1348,11 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, ILoaded
     }
     sharedAllocator.setown(::createThorAllocator(globalMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
     Owned<IMPServer> mpServer = getMPServer();
-    addChannel(mpServer);
+    CJobChannel *channel = addChannel(mpServer);
+    channel->reservePortKind(TPORT_mp); 
+    channel->reservePortKind(TPORT_watchdog);
+    channel->reservePortKind(TPORT_debug);
+
     slavemptag = allocateMPTag();
     slaveMsgHandler.setown(new CSlaveMessageHandler(*this, slavemptag));
     tmpHandler.setown(createTempHandler(true));
@@ -1368,9 +1370,11 @@ void CJobMaster::endJob()
     PARENT::endJob();
 }
 
-void CJobMaster::addChannel(IMPServer *mpServer)
+CJobChannel *CJobMaster::addChannel(IMPServer *mpServer)
 {
-    jobChannels.append(*new CJobMasterChannel(*this, mpServer, jobChannels.ordinality()));
+    CJobChannel *channel = new CJobMasterChannel(*this, mpServer, jobChannels.ordinality());
+    jobChannels.append(*channel);
+    return channel;
 }
 
 
@@ -1391,7 +1395,7 @@ mptag_t CJobMaster::allocateMPTag()
 {
     mptag_t tag = allocateClusterMPTag();
     queryJobChannel(0).queryJobComm().flush(tag);
-    PROGLOG("allocateMPTag: tag = %d", (int)tag);
+    LOG(MCthorDetailedDebugInfo, thorJob, "allocateMPTag: tag = %d", (int)tag);
     return tag;
 }
 
@@ -1400,7 +1404,7 @@ void CJobMaster::freeMPTag(mptag_t tag)
     if (TAG_NULL != tag)
     {
         freeClusterMPTag(tag);
-        PROGLOG("freeMPTag: tag = %d", (int)tag);
+        LOG(MCthorDetailedDebugInfo, thorJob, "freeMPTag: tag = %d", (int)tag);
         queryJobChannel(0).queryJobComm().flush(tag);
     }
 }
@@ -1719,6 +1723,8 @@ bool CJobMaster::go()
                     Owned <IException> e = MakeThorException(code, "User signalled abort");
                     job.fireException(e);
                 }
+                else
+                    PROGLOG("CWorkunitPauseHandler [SubscribeOptionAbort] notifier called, workunit was not aborting");
             }
             if (flags & SubscribeOptionAction)
             {
@@ -1822,7 +1828,6 @@ bool CJobMaster::go()
         EXCLOG(e, NULL); 
         jobDoneException.setown(e);
     }
-    fatalHandler->clear();
     queryTempHandler()->clearTemps();
     slaveMsgHandler->stop();
     if (jobDoneException.get())
@@ -1961,6 +1966,11 @@ bool CJobMaster::fireException(IException *e)
         }
     }
     return true;
+}
+
+IFatalHandler *CJobMaster::clearFatalHandler()
+{
+    return fatalHandler.getClear();
 }
 
 // CJobMasterChannel
@@ -2139,7 +2149,7 @@ public:
 // CMasterGraph impl.
 //
 
-CMasterGraph::CMasterGraph(CJobChannel &jobChannel) : CGraphBase(jobChannel)
+CMasterGraph::CMasterGraph(CJobChannel &jobChannel) : CGraphBase(jobChannel), graphStats(graphStatistics)
 {
     jobM = (CJobMaster *)&jobChannel.queryJob();
     mpTag = queryJob().allocateMPTag();
@@ -2147,7 +2157,6 @@ CMasterGraph::CMasterGraph(CJobChannel &jobChannel) : CGraphBase(jobChannel)
     waitBarrierTag = queryJob().allocateMPTag();
     startBarrier = jobChannel.createBarrier(startBarrierTag);
     waitBarrier = jobChannel.createBarrier(waitBarrierTag);
-    statNumExecutions.setown(new CThorStats(queryJob(), StNumExecutions));
 }
 
 
@@ -2496,8 +2505,10 @@ void CMasterGraph::executeSubGraph(size32_t parentExtractSz, const byte *parentE
             fatalHandler->clear();
     }
     fatalHandler.clear();
+#ifndef _CONTAINERIZED
     Owned<IWorkUnit> wu = &job.queryWorkUnit().lock();
     queryJobManager().updateWorkUnitLog(*wu);
+#endif
 }
 
 void CMasterGraph::sendGraph()
@@ -2700,10 +2711,7 @@ bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(createdCrit);
 
-    unsigned numExecutions;
-    mb.read(numExecutions);
-    statNumExecutions->set(node, numExecutions);
-
+    graphStats.deserialize(node, mb);
     unsigned count;
     mb.read(count);
     if (count)
@@ -2768,9 +2776,11 @@ bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
 
 void CMasterGraph::getStats(IStatisticGatherer &stats)
 {
+    stats.addStatistic(StNumSlaves, queryClusterWidth());
+
     // graph specific stats
 
-    statNumExecutions->getStats(stats, false);
+    graphStats.getStats(stats);
 
     Owned<IThorActivityIterator> iter;
     if (queryOwner() && !isGlobal())
@@ -2824,162 +2834,17 @@ IThorResult *CMasterGraph::createGraphLoopResult(CActivityBase &activity, IThorR
 
 ///////////////////////////////////////////////////
 
-static bool suppressStatisticIfZero(StatisticKind kind)
+const StatisticsMapping CThorEdgeCollection::edgeStatsMapping({StNumRowsProcessed, StNumStarts, StNumStops});
+
+void CThorEdgeCollection::set(unsigned node, unsigned __int64 value)
 {
-    switch (kind)
-    {
-    case StNumSpills:
-    case StSizeSpillFile:
-    case StTimeSpillElapsed:
-    case StNumDiskRetries:
-        return true;
-    default:
-        break;
-    }
-    return false;
+    unsigned __int64 numRows = value & THORDATALINK_COUNT_MASK;
+    byte stop = (value & THORDATALINK_STOPPED) ? 1 : 0;
+    byte start = stop || (value & THORDATALINK_STARTED) ? 1 : 0; // start implied if stopped, keeping previous semantics
+    setStatistic(node, StNumRowsProcessed, numRows);
+    setStatistic(node, StNumStops, stop);
+    setStatistic(node, StNumStarts, start);
 }
-
-
-///////////////////////////////////////////////////
-
-CThorStats::CThorStats(CJobBase &_ctx, StatisticKind _kind) : ctx(_ctx), kind(_kind)
-{
-    unsigned c = queryClusterWidth();
-    while (c--) counts.append(0);
-    reset();
-}
-
-void CThorStats::extract(unsigned node, const CRuntimeStatisticCollection & stats)
-{
-    set(node, stats.getStatisticValue(kind));
-}
-
-void CThorStats::set(unsigned node, unsigned __int64 count)
-{
-    counts.replace(count, node);
-}
-
-void CThorStats::reset()
-{
-    tot = max = avg = 0;
-    min = (unsigned __int64) -1;
-    minNode = maxNode = maxSkew = minSkew = 0;
-}
-
-void CThorStats::calculateSkew()
-{
-    unsigned count = counts.ordinality();
-    double _avg = (double)tot/count;
-    if (_avg)
-    {
-        if (max > ctx.querySlaves()) // i.e. if small count, suppress skew stats.
-        {
-            //MORE: Range protection on maxSkew?
-            maxSkew = (unsigned)(10000.0 * (((double)max-_avg)/_avg));
-            minSkew = (unsigned)(10000.0 * ((_avg-(double)min)/_avg));
-        }
-        avg = (unsigned __int64)_avg;
-    }
-}
-
-void CThorStats::tallyValue(unsigned __int64 thiscount, unsigned n)
-{
-    tot += thiscount;
-    if (thiscount > max)
-    {
-        max = thiscount;
-        maxNode = n;
-    }
-    if (thiscount < min)
-    {
-        min = thiscount;
-        minNode = n;
-    }
-}
-
-void CThorStats::processTotal()
-{
-    reset();
-    ForEachItemIn(n, counts)
-    {
-        unsigned __int64 thiscount = counts.item(n);
-        tallyValue(thiscount, n+1);
-    }
-}
-
-void CThorStats::processInfo()
-{
-    processTotal();
-    calculateSkew();
-}
-
-void CThorStats::getTotalStat(IStatisticGatherer & stats)
-{
-    processTotal();
-    stats.addStatistic(kind, tot);
-}
-
-void CThorStats::getStats(IStatisticGatherer & stats, bool suppressMinMaxWhenEqual)
-{
-    processInfo();
-    if ((0 == tot) && suppressStatisticIfZero(kind))
-        return;
-
-    //MORE: For most measures (not time stamps etc.) it would be sensible to output the total here....
-    if (!suppressMinMaxWhenEqual || (maxSkew != minSkew))
-    {
-        stats.addStatistic((StatisticKind)(kind|StMinX), min);
-        stats.addStatistic((StatisticKind)(kind|StMaxX), max);
-        stats.addStatistic((StatisticKind)(kind|StAvgX), avg);
-    }
-
-    if (maxSkew != minSkew)
-    {
-        stats.addStatistic((StatisticKind)(kind|StSkewMin), -(__int64)minSkew); // Save minimum as a negative value so consistent
-        stats.addStatistic((StatisticKind)(kind|StSkewMax), maxSkew);
-        stats.addStatistic((StatisticKind)(kind|StNodeMin), minNode);
-        stats.addStatistic((StatisticKind)(kind|StNodeMax), maxNode);
-    }
-}
-
-///////////////////////////////////////////////////
-
-CTimingInfo::CTimingInfo(CJobBase &ctx) : CThorStats(ctx, StTimeLocalExecute)
-{
-}
-
-///////////////////////////////////////////////////
-
-ProgressInfo::ProgressInfo(CJobBase &ctx) : CThorStats(ctx, StNumRowsProcessed)
-{
-    startcount = stopcount = 0;
-}
-void ProgressInfo::processInfo() // reimplement as counts have special flags (i.e. stop/start)
-{
-    reset();
-    startcount = stopcount = 0;
-    ForEachItemIn(n, counts)
-    {
-        unsigned __int64 thiscount = counts.item(n);
-        if (thiscount & THORDATALINK_STARTED)
-            startcount++;
-        if (thiscount & THORDATALINK_STOPPED)
-            stopcount++;
-        thiscount = thiscount & THORDATALINK_COUNT_MASK;
-        tallyValue(thiscount, n+1);
-    }
-    calculateSkew();
-}
-
-void ProgressInfo::getStats(IStatisticGatherer & stats)
-{
-    CThorStats::getStats(stats, true);
-    stats.addStatistic(kind, tot);
-    stats.addStatistic(StNumSlaves, counts.ordinality());
-    stats.addStatistic(StNumStarts, startcount);
-    stats.addStatistic(StNumStops, stopcount);
-}
-
 
 ///////////////////////////////////////////////////
 

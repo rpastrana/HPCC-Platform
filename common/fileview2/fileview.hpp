@@ -139,6 +139,7 @@ interface IResultSetFactory : extends IInterface
 {
     virtual INewResultSet * createNewResultSet(IConstWUResult * wuResult, const char * wuid) = 0;
     virtual INewResultSet * createNewFileResultSet(const char * logicalFile, const char * cluster) = 0;
+    virtual INewResultSet * createNewFileResultSet(IDistributedFile * df, const char * cluster) = 0;
     virtual INewResultSet * createNewResultSet(const char * wuid, unsigned sequence, const char * name) = 0;
     virtual INewResultSet * createNewFileResultSet(const char * logicalFile) = 0;
     virtual IResultSetMetaData * createResultSetMeta(IConstWUResult * wuResult) = 0;
@@ -161,7 +162,8 @@ extern FILEVIEW_API int findResultSetColumn(const INewResultSet * results, const
 extern FILEVIEW_API unsigned getResultCursorXml(IStringVal & ret, IResultSetCursor * cursor, const char * name, unsigned start=0, unsigned count=0, const char * schemaName=NULL, const IProperties *xmlns=NULL);
 extern FILEVIEW_API unsigned getResultXml(IStringVal & ret, INewResultSet * cursor,  const char* name, unsigned start=0, unsigned count=0, const char * schemaName=NULL, const IProperties *xmlns=NULL);
 extern FILEVIEW_API unsigned getResultJSON(IStringVal & ret, INewResultSet * cursor,  const char* name, unsigned start=0, unsigned count=0, const char * schemaName=NULL);
-extern FILEVIEW_API unsigned writeResultCursorXml(IXmlWriter & writer, IResultSetCursor * cursor, const char * name, unsigned start=0, unsigned count=0, const char * schemaName=NULL, const IProperties *xmlns = NULL);
+extern FILEVIEW_API unsigned writeResultCursorXml(IXmlWriter & writer, IResultSetCursor * cursor, const char * name,
+    unsigned start=0, unsigned count=0, const char * schemaName=NULL, const IProperties *xmlns = NULL, bool flushContent = false);
 extern FILEVIEW_API unsigned writeResultXml(IXmlWriter & writer, INewResultSet * cursor,  const char* name, unsigned start=0, unsigned count=0, const char * schemaName=NULL, const IProperties *xmlns = NULL);
 
 extern FILEVIEW_API unsigned getResultCursorBin(MemoryBuffer & ret, IResultSetCursor * cursor, unsigned start=0, unsigned count=0);

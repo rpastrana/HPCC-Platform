@@ -38,13 +38,12 @@ class CLocalSortSlaveActivity : public CSlaveActivity
     ICompare *iCompare;
     Owned<IThorRowLoader> iLoader;
     Owned<IRowStream> out;
-    bool unstable, eoi;
-    CriticalSection statsCs;
-    CRuntimeStatisticCollection spillStats;
+    bool unstable, eoi = false;
+    CriticalSection loaderCs; // Ensure iLoader remains valid for the duration of mergeStats()
 
 public:
     CLocalSortSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), spillStats(spillStatistics)
+        : CSlaveActivity(_container, sortActivityStatistics)
     {
         helper = (IHThorSortArg *)queryHelper();
         iCompare = helper->queryCompare();
@@ -54,7 +53,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         unsigned spillPriority = container.queryGrouped() ? SPILL_PRIORITY_GROUPSORT : SPILL_PRIORITY_LARGESORT;
         iLoader.setown(createThorRowLoader(*this, queryRowInterfaces(input), iCompare, unstable ? stableSort_none : stableSort_earlyAlloc, rc_mixed, spillPriority));
@@ -66,14 +65,13 @@ public:
         if (0 == iLoader->numRows())
             eoi = true;
     }
-    void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-
-        CriticalBlock block(statsCs);
-        CRuntimeStatisticCollection mergedStats(spillStats);
-        mergeStats(mergedStats, iLoader);
-        mergedStats.serialize(mb);
+        {
+            CriticalBlock block(loaderCs);
+            mergeStats(stats, iLoader, spillStatistics);
+        }
+        PARENT::serializeStats(mb);
     }
 
     virtual void stop()
@@ -81,15 +79,17 @@ public:
         out.clear();
         if (hasStarted())
         {
-            CriticalBlock block(statsCs);
-            mergeStats(spillStats, iLoader);
+            {
+                CriticalBlock block(loaderCs);
+                mergeStats(stats, iLoader, spillStatistics);
+            }
             iLoader.clear();
         }
         PARENT::stop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon || eoi)
             return NULL;
         OwnedConstThorRow row = out->nextRow();
@@ -140,12 +140,12 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow ret = inputStream->nextRow();
         if (ret && prev && icompare->docompare(prev, ret) > 0)
         {
@@ -164,7 +164,7 @@ public:
     }
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret && prev && stepCompare->docompare(prev, ret, numFields) > 0)
         {

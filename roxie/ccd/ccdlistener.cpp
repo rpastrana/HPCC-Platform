@@ -22,6 +22,7 @@
 
 #include "wujobq.hpp"
 #include "thorplugin.hpp"
+#include "environment.hpp"
 
 #include "udptopo.hpp"
 
@@ -72,7 +73,7 @@ class CascadeManager : public CInterface
     UnsignedArray activeIdxes;
     bool entered;
     bool connected;
-    bool isMaster;
+    bool isOriginal;
     CriticalSection revisionCrit;
     int myEndpoint;
     const IRoxieContextLogger &logctx;
@@ -167,7 +168,7 @@ public:
         {
             ss.write(queryText, txtlen);
             bool dummy;
-            while (ss.readBlock(reply, WAIT_FOREVER, NULL, dummy, dummy, maxBlockSize)) {}
+            while (ss.readBlocktms(reply, WAIT_FOREVER, NULL, dummy, dummy, maxBlockSize)) {}
         }
     }
 
@@ -292,7 +293,7 @@ public:
     {
         entered = false;
         connected = false;
-        isMaster = false;
+        isOriginal = false;
         myEndpoint = -1;
         logctx.Link();
     }
@@ -307,7 +308,7 @@ public:
     {
         if (traceLevel > 5)
             DBGLOG("doLockChild: %s", logText);
-        isMaster = false;
+        isOriginal = false;
         bool unlock = xml->getPropBool("@unlock", false);
         if (unlock)
         {
@@ -352,7 +353,7 @@ public:
     {
         assertex(!entered);
         assertex(!connected);
-        isMaster = true;
+        isOriginal = true;
         myEndpoint = -1;
         unsigned attemptsLeft = maxLockAttempts;
         connectChild(0);
@@ -406,7 +407,7 @@ public:
     void doControlQuery(SocketEndpoint &ep, IPropertyTree *xml, const char *queryText, StringBuffer &reply)
     {
         if (logctx.queryTraceLevel() > 5)
-            logctx.CTXLOG("doControlQuery (%d): %.80s", isMaster, queryText);
+            logctx.CTXLOG("doControlQuery (%d): %.80s", isOriginal, queryText);
         // By this point we should have cascade-connected thanks to a prior <control:lock>
         // So do the query ourselves and in all child threads;
         const char *name = xml->queryName();
@@ -504,12 +505,12 @@ public:
                     reply.append(myReply);
             }
         } afor(xml, queryText, this, mergedReply, mergeType, reply, ep, activeChildren.ordinality(), logctx);
-        afor.For(activeChildren.ordinality()+(isMaster ? 0 : 1), 10);
+        afor.For(activeChildren.ordinality()+(isOriginal ? 0 : 1), 10);
         activeChildren.kill();
         if (mergedReply)
             toXML(mergedReply, reply, 0, (mergeType == CascadeMergeQueries) ? XML_Embed|XML_LineBreak|XML_SortTags : XML_Format);
         if (logctx.queryTraceLevel() > 5)
-            logctx.CTXLOG("doControlQuery (%d) finished: %.80s", isMaster, queryText);
+            logctx.CTXLOG("doControlQuery (%d) finished: %.80s", isOriginal, queryText);
     }
 
 };
@@ -964,11 +965,11 @@ public:
         worker->threadmain();
     }
 
-    virtual void noteQuery(IHpccProtocolMsgContext *msgctx, const char *peer, bool failed, unsigned bytesOut, unsigned elapsed, unsigned memused, unsigned slavesReplyLen, bool continuationNeeded)
+    virtual void noteQuery(IHpccProtocolMsgContext *msgctx, const char *peer, bool failed, unsigned bytesOut, unsigned elapsed, unsigned memused, unsigned agentsReplyLen, bool continuationNeeded)
     {
     }
 
-    virtual void onQueryMsg(IHpccProtocolMsgContext *msgctx, IPropertyTree *msg, IHpccProtocolResponse *protocol, unsigned flags, PTreeReaderOptions readFlags, const char *target, unsigned idx, unsigned &memused, unsigned &slaveReplyLen)
+    virtual void onQueryMsg(IHpccProtocolMsgContext *msgctx, IPropertyTree *msg, IHpccProtocolResponse *protocol, unsigned flags, PTreeReaderOptions readFlags, const char *target, unsigned idx, unsigned &memused, unsigned &agentReplyLen)
     {
         UNIMPLEMENTED;
     }
@@ -1010,8 +1011,15 @@ public:
         {
             if (daliHelper->connected())
             {
+#ifdef _CONTAINERIZED
+                VStringBuffer queueNames("%s.agent", topology->queryProp("@name"));
+#else
                 SCMStringBuffer queueNames;
-                getRoxieQueueNames(queueNames, topology->queryProp("@name"));
+                if (topology->hasProp("@queueNames")) // MORE - perhaps should be in the farmProcess(0) section
+                    queueNames.set(topology->queryProp("@queueNames"));
+                else
+                    getRoxieQueueNames(queueNames, topology->queryProp("@name"));
+#endif
                 if (queueNames.length())
                 {
                     if (traceLevel)
@@ -1118,11 +1126,11 @@ protected:
  * workunit via a job queue. A temporary IQueryFactory object is created for the
  * workunit and then executed.
  *
- * Any slaves that need to load the query do so using a lazy load mechanism, checking
+ * Any agents that need to load the query do so using a lazy load mechanism, checking
  * whether the wuid named in the logging prefix info can be loaded any time a query
- * is received for which no factory exists. Any query that a slave loads as a
+ * is received for which no factory exists. Any query that a agent loads as a
  * result is added to a cache to ensure that it stays around until the server's query
- * terminates - a ROXIE_UNLOAD message is broadcast at that time to allow the slaves
+ * terminates - a ROXIE_UNLOAD message is broadcast at that time to allow the agents
  * to release any cached IQueryFactory objects.
  *
  **/
@@ -1218,7 +1226,7 @@ public:
     {
         bool failed = true; // many paths to failure, only one to success...
         unsigned memused = 0;
-        unsigned slavesReplyLen = 0;
+        unsigned agentsReplyLen = 0;
         unsigned priority = (unsigned) -2;
         try
         {
@@ -1254,14 +1262,14 @@ public:
             {
                 ctx->process();
                 memused = (unsigned)(ctx->getMemoryUsage() / 0x100000);
-                slavesReplyLen = ctx->getSlavesReplyLen();
+                agentsReplyLen = ctx->getAgentsReplyLen();
                 ctx->done(false);
                 failed = false;
             }
             catch(...)
             {
                 memused = (unsigned)(ctx->getMemoryUsage() / 0x100000);
-                slavesReplyLen = ctx->getSlavesReplyLen();
+                agentsReplyLen = ctx->getAgentsReplyLen();
                 ctx->done(true);
                 throw;
             }
@@ -1284,7 +1292,7 @@ public:
 #endif
         unsigned elapsed = msTick() - qstart;
         noteQuery(failed, elapsed, priority);
-        queryFactory->noteQuery(startTime, failed, elapsed, memused, slavesReplyLen, 0);
+        queryFactory->noteQuery(startTime, failed, elapsed, memused, agentsReplyLen, 0);
         if (logctx.queryTraceLevel() && (logctx.queryTraceLevel() > 2 || logFullQueries || logctx.intercept))
         {
             StringBuffer s;
@@ -1305,7 +1313,7 @@ public:
                 txidInfo.append(']');
             }
 
-            logctx.CTXLOG("COMPLETE: %s%s complete in %d msecs memory=%d Mb priority=%d slavesreply=%d%s", wuid.get(), txidInfo.str(), elapsed, memused, priority, slavesReplyLen, s.str());
+            logctx.CTXLOG("COMPLETE: %s%s complete in %d msecs memory=%d Mb priority=%d agentsreply=%d%s", wuid.get(), txidInfo.str(), elapsed, memused, priority, agentsReplyLen, s.str());
         }
     }
 
@@ -1323,9 +1331,12 @@ private:
         StringBuffer error;
         E->errorMessage(error);
         logctx.CTXLOG("EXCEPTION: %s", error.str());
-        addWuException(wu, E);
-        WorkunitUpdate w(&wu->lock());
-        w->setState(WUStateFailed);
+        if (wu->getState() != WUStateFailed)
+        {
+            addWuException(wu, E);
+            WorkunitUpdate w(&wu->lock());
+            w->setState(WUStateFailed);
+        }
     }
 
     StringAttr wuid;
@@ -1562,12 +1573,12 @@ public:
         }
         combinedQueryStats.noteQuery(failed, elapsedTime);
     }
-    void noteQuery(const char *peer, bool failed, unsigned elapsed, unsigned memused, unsigned slavesReplyLen, unsigned bytesOut, bool continuationNeeded)
+    void noteQuery(const char *peer, bool failed, unsigned elapsed, unsigned memused, unsigned agentsReplyLen, unsigned bytesOut, bool continuationNeeded)
     {
         noteQueryStats(failed, elapsed);
         if (queryFactory)
         {
-            queryFactory->noteQuery(startTime, failed, elapsed, memused, slavesReplyLen, bytesOut);
+            queryFactory->noteQuery(startTime, failed, elapsed, memused, agentsReplyLen, bytesOut);
             queryFactory.clear();
         }
         if (logctx && logctx->queryTraceLevel() && (logctx->queryTraceLevel() > 2 || logFullQueries() || logctx->intercept))
@@ -1589,7 +1600,7 @@ public:
                 }
                 if (txIds.length())
                     txIds.insert(0, '[').append(']');
-                logctx->CTXLOG("COMPLETE: %s %s%s from %s complete in %d msecs memory=%d Mb priority=%d slavesreply=%d resultsize=%d continue=%d%s", queryName.get(), uid.get(), txIds.str(), peer, elapsed, memused, getQueryPriority(), slavesReplyLen, bytesOut, continuationNeeded, s.str());
+                logctx->CTXLOG("COMPLETE: %s %s%s from %s complete in %d msecs memory=%d Mb priority=%d agentsreply=%d resultsize=%d continue=%d%s", queryName.get(), uid.get(), txIds.str(), peer, elapsed, memused, getQueryPriority(), agentsReplyLen, bytesOut, continuationNeeded, s.str());
             }
         }
     }
@@ -1724,7 +1735,7 @@ public:
         return checkGetRoxieMsgContext(msgctx);
     }
 
-    virtual void onQueryMsg(IHpccProtocolMsgContext *msgctx, IPropertyTree *msg, IHpccProtocolResponse *protocol, unsigned flags, PTreeReaderOptions xmlReadFlags, const char *target, unsigned idx, unsigned &memused, unsigned &slavesReplyLen)
+    virtual void onQueryMsg(IHpccProtocolMsgContext *msgctx, IPropertyTree *msg, IHpccProtocolResponse *protocol, unsigned flags, PTreeReaderOptions xmlReadFlags, const char *target, unsigned idx, unsigned &memused, unsigned &agentsReplyLen)
     {
         RoxieProtocolMsgContext *roxieMsgCtx = checkGetRoxieMsgContext(msgctx, msg);
         IQueryFactory *f = roxieMsgCtx->queryQueryFactory();
@@ -1740,7 +1751,7 @@ public:
 
             protocol->finalize(idx);
             memused += (unsigned)(ctx->getMemoryUsage() / 0x100000);
-            slavesReplyLen += ctx->getSlavesReplyLen();
+            agentsReplyLen += ctx->getAgentsReplyLen();
         }
         else
         {
@@ -1748,13 +1759,13 @@ public:
             {
                 ctx->process();
                 memused = (unsigned)(ctx->getMemoryUsage() / 0x100000);
-                slavesReplyLen = ctx->getSlavesReplyLen();
+                agentsReplyLen = ctx->getAgentsReplyLen();
                 ctx->done(false);
             }
             catch(...)
             {
                 memused = (unsigned)(ctx->getMemoryUsage() / 0x100000);
-                slavesReplyLen = ctx->getSlavesReplyLen();
+                agentsReplyLen = ctx->getAgentsReplyLen();
                 ctx->done(true);
                 throw;
             }
@@ -1853,10 +1864,10 @@ public:
         roxieMsgCtx->ensureDebugCommandHandler().doDebugCommand(msg, &roxieMsgCtx->ensureDebuggerContext(uid), out);
     }
 
-    virtual void noteQuery(IHpccProtocolMsgContext *msgctx, const char *peer, bool failed, unsigned bytesOut, unsigned elapsed, unsigned memused, unsigned slavesReplyLen, bool continuationNeeded)
+    virtual void noteQuery(IHpccProtocolMsgContext *msgctx, const char *peer, bool failed, unsigned bytesOut, unsigned elapsed, unsigned memused, unsigned agentsReplyLen, bool continuationNeeded)
     {
         RoxieProtocolMsgContext *roxieMsgCtx = checkGetRoxieMsgContext(msgctx);
-        roxieMsgCtx->noteQuery(peer, failed, elapsed, memused, slavesReplyLen, bytesOut, continuationNeeded);
+        roxieMsgCtx->noteQuery(peer, failed, elapsed, memused, agentsReplyLen, bytesOut, continuationNeeded);
     }
 
 };
@@ -1929,6 +1940,7 @@ IHpccProtocolListener *createRoxieWorkUnitListener(unsigned poolSize, bool suspe
 {
     if (traceLevel)
         DBGLOG("Creating Roxie workunit listener, pool size %d%s", poolSize, suspended?" SUSPENDED":"");
+    adhocRoxie = true;
     return new RoxieWorkUnitListener(poolSize, suspended);
 }
 

@@ -55,6 +55,9 @@
 
 #define PWD_NEVER_EXPIRES (__int64)0x8000000000000000
 
+//Ldap extended control identifier LDAP_SERVER_SD_FLAGS_OID
+#define AAD_LDAP_SERVER_SD_FLAGS_OID "1.2.840.113556.1.4.801"
+
 #define UNK_PERM_VALUE (SecAccessFlags)-2	//used to initialize "default" permission, which we later try to deduce
 
 const char* UserFieldNames[] = { "@id", "@name", "@fullname", "@passwordexpiration", "@employeeid", "@employeenumber" };
@@ -214,19 +217,19 @@ public:
         return m_hostArray.item(m_curHostIdx);
     }
 
-    void blacklistHost(const char * blockedHost)
+    void rejectHost(const char * rejectedHost)
     {
         if (m_hostArray.ordinality() == 1)
         {
-            DBGLOG("Cannot blacklist the only configured ldap server %s", m_hostArray.item(m_curHostIdx));
+            DBGLOG("Cannot reject the only configured LDAP AD server %s", m_hostArray.item(m_curHostIdx));
             return;
         }
 
-        //If blockedHost is not already blacklisted, do so
+        //If rejectedHost is not already rejected, do so
         synchronized block(m_HMMutex);
-        if (0 == strcmp(blockedHost, m_hostArray.item(m_curHostIdx)))
+        if (0 == strcmp(rejectedHost, m_hostArray.item(m_curHostIdx)))
         {
-            DBGLOG("Blacklisting ldap server %s", m_hostArray.item(m_curHostIdx));
+            DBGLOG("Temporarily rejecting LDAP AD server %s", m_hostArray.item(m_curHostIdx));
             if (++m_curHostIdx == m_hostArray.ordinality())
                 m_curHostIdx = 0;//start over at begin of host array
         }
@@ -278,6 +281,7 @@ private:
     StringBuffer         m_sdfieldname;
 
     int                  m_timeout;
+    bool                 m_isAzureAD = false;
 public:
     IMPLEMENT_IINTERFACE
 
@@ -293,8 +297,14 @@ public:
         m_cfgServerType.set(cfg->queryProp(".//@serverType"));
         if (m_cfgServerType.length())
         {
+            PROGLOG("LDAP Server Type from config: %s", m_cfgServerType.str());
             if (0 == stricmp(m_cfgServerType, "ActiveDirectory"))
                 m_serverType = ACTIVE_DIRECTORY;
+            else if (strieq(m_cfgServerType, "AzureActiveDirectory"))
+            {
+                m_serverType = ACTIVE_DIRECTORY;
+                m_isAzureAD = true;
+            }
             else if (0 == stricmp(m_cfgServerType, "389DirectoryServer"))//uses iPlanet style ACI
                 m_serverType = OPEN_LDAP;
             else if (0 == stricmp(m_cfgServerType, "OpenLDAP"))
@@ -384,7 +394,7 @@ public:
             }
             if (rc != LDAP_SUCCESS)
             {
-                blacklistHost(hostbuf);
+                rejectHost(hostbuf);
             }
             else
                 break;
@@ -422,7 +432,10 @@ public:
         cfg->getProp(".//@adminGroupName", adminGrp);
         if(adminGrp.isEmpty())
         {
-            adminGrp.set(m_serverType == ACTIVE_DIRECTORY ? "cn=Administrators,cn=Builtin" : "cn=Directory Administrators");
+            if (m_isAzureAD)
+                adminGrp.clear().appendf("cn=%s,ou=%s", AAD_ADMINISTRATORS_GROUP, AAD_USERS_GROUPS_OU);
+            else
+                adminGrp.set(m_serverType == ACTIVE_DIRECTORY ? "cn=Administrators,cn=Builtin" : "cn=Directory Administrators");
         }
         else if (0 == stricmp("Administrators", adminGrp.str()))
         {
@@ -519,7 +532,9 @@ public:
 
         if(sysuser_basedn.length() == 0)
         {
-            if(m_serverType == ACTIVE_DIRECTORY)
+            if (m_isAzureAD)
+                m_sysuser_basedn.appendf("ou=%s", AAD_USERS_GROUPS_OU);
+            else if(m_serverType == ACTIVE_DIRECTORY)
                 LdapUtils::normalizeDn( "cn=Users", m_basedn.str(), m_sysuser_basedn);
             else if(m_serverType == IPLANET)
                 m_sysuser_basedn.append("ou=administrators,ou=topologymanagement,o=netscaperoot");
@@ -592,9 +607,9 @@ public:
         return hostbuf;
     }
 
-    virtual void blacklistHost(const char * host)
+    virtual void rejectHost(const char * host)
     {
-        s_hostManager.blacklistHost(host);
+        s_hostManager.rejectHost(host);
     }
 
     virtual void markDown(const char* ldaphost)
@@ -745,6 +760,11 @@ public:
     {
         return m_timeout;
     }
+
+    virtual bool isAzureAD()
+    {
+        return m_isAzureAD;
+    }
 };
 
 
@@ -868,7 +888,7 @@ public:
 
             if (rc != LDAP_SUCCESS)
             {
-                m_ldapconfig->blacklistHost(hostbuf);
+                m_ldapconfig->rejectHost(hostbuf);
             }
             else
                 break;
@@ -1779,6 +1799,21 @@ public:
                         DBGLOG("LDAP: User %s Must Reset Password", username);
                         user.setAuthenticateStatus(AS_PASSWORD_VALID_BUT_EXPIRED);
                     }
+                    else if (strstr(ldap_errstring, "data 533"))
+                    {
+                        DBGLOG("LDAP: User %s Account Disabled", username);
+                        user.setAuthenticateStatus(AS_ACCOUNT_DISABLED);
+                    }
+                    else if (strstr(ldap_errstring, "data 701"))
+                    {
+                        DBGLOG("LDAP: User %s Account Expired", username);
+                        user.setAuthenticateStatus(AS_ACCOUNT_EXPIRED);
+                    }
+                    else if (strstr(ldap_errstring, "data 775"))
+                    {
+                        DBGLOG("LDAP: User %s Account Locked Out", username);
+                        user.setAuthenticateStatus(AS_ACCOUNT_LOCKED);
+                    }
                     else
                     {
                         DBGLOG("LDAP: Authentication(1) (%c) for user %s failed - %s", isWorkunitDAToken(password) ? 't' :'f', username, ldap_err2string(rc));
@@ -2485,6 +2520,8 @@ public:
                 filter.append("uid=").append(act_name);
 
             basedn = m_ldapconfig->getUserBasedn();
+            if (m_ldapconfig->isAzureAD() && strieq(act_name, m_ldapconfig->getSysUser()))
+                basedn = m_ldapconfig->getSysUserBasedn();
             lookupSid(basedn, filter.str(), act_sid);
             if(act_sid.length() == 0)
             {
@@ -3814,9 +3851,12 @@ public:
             groups.append("Authenticated Users");
             managedBy.append("");
             descriptions.append("");
-            groups.append("Administrators");
-            managedBy.append("");
-            descriptions.append("");
+            if (!m_ldapconfig->isAzureAD())
+            {
+                groups.append("Administrators");
+                managedBy.append("");
+                descriptions.append("");
+            }
         }
         else
         {
@@ -4038,9 +4078,11 @@ public:
 
         attrs[1] = NULL;
 
+        SDServerCtlWrapper ctlwrapper(m_ldapconfig->isAzureAD());
+
         Owned<ILdapConnection> lconn = m_connections->getConnection();
         LDAP* ld = lconn.get()->getLd();
-        int rc = ldap_modify_ext_s(ld, (char*)normdnbuf.str(), attrs, NULL, NULL);
+        int rc = ldap_modify_ext_s(ld, (char*)normdnbuf.str(), attrs, ctlwrapper.ctls, NULL);
         if ( rc != LDAP_SUCCESS )
         {
             throw MakeStringException(-1, "ldap_modify_ext_s error: %d %s", rc, ldap_err2string( rc ));
@@ -4688,7 +4730,39 @@ public:
     }
 
 private:
+    class SDServerCtlWrapper
+    {
+    public:
+        LDAPControl **ctls = nullptr;
+        LDAPControl* ctl = nullptr;
+        StringBuffer oidbuf, valbuf;
 
+        SDServerCtlWrapper(bool isAzureAD)
+        {
+            if (isAzureAD)
+            {
+                oidbuf.append(AAD_LDAP_SERVER_SD_FLAGS_OID);
+                //48,3,2 are for ber-ans.1 encoding
+                //1 is the length of the data
+                //7 is the data, which is bit wise OR of owner info (0x1), group info (0x2) and discretionary ACL (0x4)
+                valbuf.appendf("%c%c%c%c%c", 48, 3, 2, 1, 7);
+                ctl = new LDAPControl;
+                ctl->ldctl_oid = (char*)oidbuf.str();
+                ctl->ldctl_value.bv_len = valbuf.length();
+                ctl->ldctl_value.bv_val = (char*)valbuf.str();
+                ctls = new LDAPControl*[2];
+                ctls[0] = ctl;
+                ctls[1] = nullptr;
+            }
+        }
+        ~SDServerCtlWrapper()
+        {
+            if (ctl)
+                delete ctl;
+            if (ctls)
+                delete []ctls;
+        }
+    };
     virtual void addDC(const char* dc)
     {
         if(dc == NULL || *dc == '\0')
@@ -5159,13 +5233,15 @@ private:
         }
         filter.append(")");
 
+        SDServerCtlWrapper ctlwrapper(m_ldapconfig->isAzureAD());
+
         TIMEVAL timeOut = {m_ldapconfig->getLdapTimeout(),0};
         
         char* attrs[] = {(char*)id_fieldname, (char*)des_fieldname, NULL};
         Owned<ILdapConnection> lconn = m_connections->getConnection();
         LDAP* ld = lconn.get()->getLd();
         CLDAPMessage searchResult;
-        int rc = ldap_search_ext_s(ld, (char*)basedn, LDAP_SCOPE_SUBTREE, (char*)filter.str(), attrs, 0, NULL, NULL, &timeOut, LDAP_NO_LIMIT, &searchResult.msg );     /* returned results */
+        int rc = ldap_search_ext_s(ld, (char*)basedn, LDAP_SCOPE_SUBTREE, (char*)filter.str(), attrs, 0, ctlwrapper.ctls, NULL, &timeOut, LDAP_NO_LIMIT, &searchResult.msg );     /* returned results */
         
         if ( rc != LDAP_SUCCESS )
         {
@@ -5329,13 +5405,15 @@ private:
         }
         filter.append(")");
 
+        SDServerCtlWrapper ctlwrapper(m_ldapconfig->isAzureAD());
+
         TIMEVAL timeOut = {m_ldapconfig->getLdapTimeout(),0};
         
         char* attrs[] = {sd_fieldname, NULL};
         Owned<ILdapConnection> lconn = m_connections->getConnection();
         LDAP* ld = lconn.get()->getLd();
         CLDAPMessage searchResult;
-        int rc = ldap_search_ext_s(ld, (char*)basedn, LDAP_SCOPE_SUBTREE, (char*)filter.str(), attrs, 0, NULL, NULL, &timeOut, LDAP_NO_LIMIT, &searchResult.msg );     /* returned results */
+        int rc = ldap_search_ext_s(ld, (char*)basedn, LDAP_SCOPE_SUBTREE, (char*)filter.str(), attrs, 0, ctlwrapper.ctls, NULL, &timeOut, LDAP_NO_LIMIT, &searchResult.msg );     /* returned results */
         
         if ( rc != LDAP_SUCCESS )
         {

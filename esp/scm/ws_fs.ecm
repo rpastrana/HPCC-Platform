@@ -22,6 +22,7 @@ ESPenum DFUWUActions : string
     Unprotect("Unprotect"),
     Restore("Restore"),
     SetToFailed("SetToFailed"),
+    Archive("Archive"),
 };
 
 ESPStruct [nil_remove] DFUWorkunit
@@ -319,6 +320,7 @@ ESPrequest [nil_remove] SprayFixed
     bool   compress(false);
     bool   push(false);
     bool   pull(false);
+    [min_ver("1.18")] bool noCommon(true);
 
     string encrypt;
     string decrypt;
@@ -370,6 +372,7 @@ ESPrequest [nil_remove] SprayVariable
     bool   compress(false);
     bool   push(false);
     bool   pull(false);
+    [min_ver("1.18")] bool noCommon(true);
 
     string encrypt;
     string decrypt;
@@ -383,6 +386,8 @@ ESPrequest [nil_remove] SprayVariable
     [min_ver("1.11")] bool isJSON(false);
     [min_ver("1.14")] int expireDays;
     [min_ver("1.14")] string DFUServerQueue;
+    [min_ver("1.19")] string srcUsername;
+    [min_ver("1.19")] string srcPassword;
 };
 
 ESPresponse [exceptions_inline]
@@ -467,6 +472,7 @@ ESPrequest [nil_remove] Copy
     bool   push(false);
     bool   pull(false);
     bool   ifnewer(false);
+    [min_ver("1.18")] bool noCommon(true);
 
     string encrypt;
     string decrypt;
@@ -681,7 +687,7 @@ ESPresponse [exceptions_inline, nil_remove] GetDFUServerQueuesResponse
 
 ESPservice [
     auth_feature("DEFERRED"),
-    version("1.17"),
+    version("1.20"),
     exceptions_inline("./smc_xslt/exceptions.xslt")] FileSpray
 {
     ESPmethod EchoDateTime(EchoDateTime, EchoDateTimeResponse);

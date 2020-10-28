@@ -45,7 +45,7 @@ using roxiemem::DataBuffer;
 
 /*
  *
- * There are 3 threads running to manage the data transfer from slave back to server:
+ * There are 3 threads running to manage the data transfer from agent back to server:
  * send_resend_flow
  *   - checks periodically that nothing is waiting for a "request to send" that timed out
  * send_receive_flow
@@ -59,12 +59,12 @@ using roxiemem::DataBuffer;
  *   - broadcasts "no longer "
  *   - sends "completed" or "completed but I want to send more" flow message to server
  *
- * Queueing up data packets is done by the slave worker threads.
+ * Queueing up data packets is done by the agent worker threads.
  * *
 
  *
  * Data races to watch for
- * 1. Two slave threads add data at same time - only one should sent rts (use atomic_inc for the count)
+ * 1. Two agent threads add data at same time - only one should sent rts (use atomic_inc for the count)
  * 2. We check for timeout and resend rts or fail just as permission comes in
  *    - resend rts is harmless ?
  *    - fail is acceptable
@@ -171,16 +171,15 @@ public:
         while (toSend.size() < maxPackets && packetsQueued.load(std::memory_order_relaxed))
         {
             DataBuffer *buffer = popQueuedData();
-            if (buffer) // Aborted slave queries leave NULL records on queue
-            {
-                UdpPacketHeader *header = (UdpPacketHeader*) buffer->data;
-                toSend.push_back(buffer);
-                totalSent += header->length;
+            if (!buffer)
+                break;  // Suggests data was aborted before we got to pop it
+            UdpPacketHeader *header = (UdpPacketHeader*) buffer->data;
+            toSend.push_back(buffer);
+            totalSent += header->length;
 #if defined(__linux__) || defined(__APPLE__)
-                if (isLocal && (totalSent> 100000))  // Avoids sending too fast to local node, for reasons lost in the mists of time
-                    break;
+            if (isLocal && (totalSent> 100000))  // Avoids sending too fast to local node, for reasons lost in the mists of time
+                break;
 #endif
-            }
         }
         for (DataBuffer *buffer: toSend)
         {
@@ -229,17 +228,16 @@ public:
     bool removeData(void *key, PKT_CMP_FUN pkCmpFn) 
     {
         // Used after receiving an abort, to avoid sending data that is no longer required
-        bool anyRemoved = false;
+        unsigned removed = 0;
         if (packetsQueued.load(std::memory_order_relaxed))
         {
-            // NOTE - removeData replaces entries by null (so value of packetsQueued is not affected)
             for (unsigned i = 0; i < numQueues; i++)
             {
-                if (output_queue[i].removeData(key, pkCmpFn))
-                    anyRemoved = true;
+                removed += output_queue[i].removeData(key, pkCmpFn);
             }
+            packetsQueued -= removed;
         }
-        return anyRemoved;
+        return removed > 0;
     }
 
     void abort()
@@ -266,49 +264,47 @@ public:
     DataBuffer *popQueuedData() 
     {
         DataBuffer *buffer;
-        while (1) 
+        for (unsigned i = 0; i < numQueues; i++)
         {
-            for (unsigned i = 0; i < numQueues; i++) 
+            if (udpOutQsPriority)
             {
-                if (udpOutQsPriority) 
+                buffer = output_queue[current_q].pop(false);
+                if (!buffer)
                 {
-                    if (output_queue[current_q].empty()) 
+                    if (udpTraceLevel >= 5)
+                        DBGLOG("UdpSender: ---------- Empty Q %d", current_q);
+                    currentQNumPkts = 0;
+                    current_q = (current_q + 1) % numQueues;
+                }
+                else
+                {
+                    currentQNumPkts++;
+                    if (udpTraceLevel >= 5)
+                        DBGLOG("UdpSender: ---------- Packet from Q %d", current_q);
+                    if (currentQNumPkts >= maxPktsPerQ[current_q])
                     {
-                        if (udpTraceLevel >= 5)
-                            DBGLOG("UdpSender: ---------- Empty Q %d", current_q);
                         currentQNumPkts = 0;
                         current_q = (current_q + 1) % numQueues;
                     }
-                    else 
-                    {
-                        buffer = output_queue[current_q].pop();
-                        currentQNumPkts++;
-                        if (udpTraceLevel >= 5) 
-                            DBGLOG("UdpSender: ---------- Packet from Q %d", current_q);
-                        if (currentQNumPkts >= maxPktsPerQ[current_q]) 
-                        {
-                            currentQNumPkts = 0;
-                            current_q = (current_q + 1) % numQueues;
-                        }
-                        packetsQueued--;
-                        return buffer;
-                    }
-                }
-                else 
-                {
-                    current_q = (current_q + 1) % numQueues;
-                    if (!output_queue[current_q].empty()) 
-                    {
-                        packetsQueued--;
-                        return output_queue[current_q].pop();
-                    }
+                    packetsQueued--;
+                    return buffer;
                 }
             }
-            // If we get here, it suggests we were told to get a buffer but no queue has one
-            // Should never happen
-            MilliSleep(10);
-            DBGLOG("UdpSender: ------------- this code should never execute --------------- ");
+            else
+            {
+                current_q = (current_q + 1) % numQueues;
+                buffer = output_queue[current_q].pop(false);
+                if (buffer)
+                {
+                    packetsQueued--;
+                    return buffer;
+                }
+            }
         }
+        // If we get here, it suggests we were told to get a buffer but no queue has one.
+        // This should be rare but possible if data gets removed following an abort, as
+        // there is a window in abort() between the remove and the decrement of packetsQueued.
+        return nullptr;
     }
 
     UdpReceiverEntry(const IpAddress &_ip, const IpAddress &_sourceIP, unsigned _numQueues, unsigned _queueSize, unsigned _sendFlowPort, unsigned _dataPort)
@@ -427,7 +423,7 @@ class CSendManager : implements ISendManager, public CInterface
                     unsigned expireTime = dest.requestExpiryTime;
                     if (expireTime)
                     {
-                        if (expireTime < now)
+                        if (expireTime <= now)
                         {
                             dest.timeouts++;
                             {
@@ -612,7 +608,7 @@ class CSendManager : implements ISendManager, public CInterface
         ~send_data()
         {
             running = false;
-            UdpPermitToSendMsg dummy;
+            UdpPermitToSendMsg dummy = {};
             send_queue.push(dummy);
             join();
             if (sniffer_socket) 
@@ -923,7 +919,8 @@ private:
                 maxMetaLength = DATA_PAYLOAD - sizeof(UdpPacketHeader);
                 part_buffer = bufferManager->allocate();
             }
-            memcpy(&part_buffer->data[sizeof(UdpPacketHeader)+data_used], metaData, metaLength);
+            if (metaLength)
+                memcpy(&part_buffer->data[sizeof(UdpPacketHeader)+data_used], metaData, metaLength);
             package_header.pktSeq |= UDP_PACKET_COMPLETE;
             put_package(part_buffer, data_used, metaLength);
         }

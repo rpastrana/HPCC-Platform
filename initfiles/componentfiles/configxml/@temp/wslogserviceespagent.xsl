@@ -22,10 +22,12 @@
 xmlns:set="http://exslt.org/sets">
     <xsl:import href="esp_logging_agent_basic.xsl"/>
     <xsl:import href="esp_logging_transid.xsl"/>
+    <xsl:import href="decoupled_logging.xsl"/>
 
     <xsl:template name="WsLogServiceESPAgent" type="DefaultLoggingAgent">
         <xsl:param name="agentName"/>
         <xsl:param name="agentNode"/>
+        <xsl:param name="disableFailSafe"/>
         <xsl:if test="not($agentNode)">
             <xsl:message terminate="yes">An WsLogService ESP Logging Agent <xsl:value-of select="$agentName"/> is undefined!</xsl:message>
         </xsl:if>
@@ -49,9 +51,15 @@ xmlns:set="http://exslt.org/sets">
         </xsl:variable>
         <LogAgent name="{$agentName}" type="LogAgent" services="{$Services}" plugin="wslogserviceespagent">
             <LoggingServer url="{$loggingServerUrl}" user="{$loggingServer/@User}" password="{$loggingServer/@Password}"/>
+            <xsl:call-template name="DecoupledLogging">
+                <xsl:with-param name="agentNode" select="$agentNode"/>
+            </xsl:call-template>
             <xsl:call-template name="EspLoggingAgentBasic">
                 <xsl:with-param name="agentNode" select="$agentNode"/>
             </xsl:call-template>
+            <xsl:if test="string($disableFailSafe) != ''">
+                <DisableFailSafe><xsl:value-of select="$disableFailSafe"/></DisableFailSafe>
+            </xsl:if>
             <xsl:if test="string($agentNode/@TransactionSeedType) != ''">
                 <TransactionSeedType><xsl:value-of select="$agentNode/@TransactionSeedType"/></TransactionSeedType>
             </xsl:if>

@@ -35,6 +35,7 @@
 #define WRN_MismatchCompressInfo            5405
 #define WRN_RemoteReadFailure               5406
 
+class EclGraph;
 struct IHThorGraphResult : extends IInterface
 {
     virtual void addRowOwn(const void * row) = 0;
@@ -90,7 +91,6 @@ struct IAgentContext : extends IGlobalCodeContext
 
     virtual IConstWorkUnit *queryWorkUnit() const = 0;
     virtual IWorkUnit *updateWorkUnit() const = 0;
-    virtual void unlockWorkUnit() = 0;
     
     virtual ILocalOrDistributedFile *resolveLFN(const char *logicalName, const char *errorTxt, bool optional, bool noteRead, bool write, StringBuffer * expandedlfn, bool isPrivilegedUser) = 0;
     virtual StringBuffer & getTempfileBase(StringBuffer & buff) = 0;
@@ -100,7 +100,7 @@ struct IAgentContext : extends IGlobalCodeContext
     virtual void reloadWorkUnit() = 0;
 
     virtual char *resolveName(const char *in, char *out, unsigned outlen) = 0;
-    virtual void logFileAccess(IDistributedFile * file, char const * component, char const * type) = 0;
+    virtual void logFileAccess(IDistributedFile * file, char const * component, char const * type, EclGraph & graph) = 0;
     virtual void addWuException(const char * text, unsigned code, unsigned severity, char const * source) = 0;
 
     virtual IHThorGraphResults * executeLibraryGraph(const char * libraryName, unsigned expectedInterfaceHash, unsigned activityId, const char * embeddedGraphName, const byte * parentExtract) = 0;
@@ -119,9 +119,10 @@ struct IAgentContext : extends IGlobalCodeContext
     
     virtual const char *queryWuid() = 0;
 
-    virtual void updateWULogfile() = 0;
+    virtual void updateWULogfile(IWorkUnit *outputWU) = 0;
     virtual bool forceNewDiskReadActivity() const = 0;
     virtual void addWuExceptionEx(const char * text, unsigned code, unsigned severity, unsigned audience, char const * source) = 0;
+    virtual cost_type queryAgentMachineCost() const = 0;
 };
 
 #endif // AGENTCTX_HPP_INCL

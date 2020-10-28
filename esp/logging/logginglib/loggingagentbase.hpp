@@ -146,6 +146,7 @@ interface IEspUpdateLogRequestWrap : extends IInterface
     virtual IPropertyTree* getUserContext()=0;
     virtual IPropertyTree* getUserRequest()=0;
     virtual IPropertyTree* getLogRequestTree()=0;
+    virtual IPropertyTree* getScriptValuesTree()=0;
     virtual IInterface* getExtraLog()=0;
     virtual const char* getBackEndRequest()=0;
     virtual const char* getBackEndResponse()=0;
@@ -159,6 +160,7 @@ interface IEspUpdateLogRequestWrap : extends IInterface
     virtual void setUserContext(IPropertyTree* val)=0;
     virtual void setUserRequest(IPropertyTree* val)=0;
     virtual void setLogRequestTree(IPropertyTree* val)=0;
+    virtual void setScriptValuesTree(IPropertyTree* val)=0;
     virtual void setExtraLog(IInterface* val)=0;
     virtual void setBackEndRequest(const char* val)=0;
     virtual void setBackEndResponse(const char* val)=0;
@@ -178,6 +180,7 @@ class CUpdateLogRequestWrap : implements IEspUpdateLogRequestWrap, public CInter
     Owned<IPropertyTree> userContext;
     Owned<IPropertyTree> userRequest;
     Owned<IPropertyTree> logRequestTree;
+    Owned<IPropertyTree> scriptValuesTree;
     Owned<IInterface> extraLog;
     StringAttr  backEndRequest, backEndResponse;
     StringAttr  userResponse;
@@ -218,6 +221,7 @@ public:
         backEndResponse.clear();
         updateLogRequest.clear();
         logRequestTree.clear();
+        scriptValuesTree.clear();
         extraLog.clear();
     };
 
@@ -228,6 +232,7 @@ public:
     IPropertyTree* getUserContext() {return userContext.getLink();};
     IPropertyTree* getUserRequest() {return userRequest.getLink();};
     IPropertyTree* getLogRequestTree() {return logRequestTree.getLink();};
+    IPropertyTree* getScriptValuesTree() override {return scriptValuesTree.getLink();};
     IInterface* getExtraLog() {return extraLog.getLink();};
     const char* getBackEndRequest() {return backEndRequest.get();};
     const char* getBackEndResponse() {return backEndResponse.get();};
@@ -241,6 +246,7 @@ public:
     void setUserContext(IPropertyTree* val) {userContext.setown(val);};
     void setUserRequest(IPropertyTree* val) {userRequest.setown(val);};
     void setLogRequestTree(IPropertyTree* val) {logRequestTree.setown(val);};
+    void setScriptValuesTree(IPropertyTree* val) override {scriptValuesTree.setown(val);};
     void setExtraLog(IInterface* val) {extraLog.setown(val);};
     void setBackEndRequest(const char* val) {backEndRequest.set(val);};
     void setBackEndResponse(const char* val) {backEndResponse.set(val);};
@@ -303,6 +309,7 @@ interface IEspLogAgentVariantIterator : extends IIteratorOf<const IEspLogAgentVa
 
 interface IEspLogAgent : extends IInterface
 {
+    virtual const char * getName() = 0;
     virtual bool init(const char * name, const char * type, IPropertyTree * cfg, const char * process) = 0;
     virtual bool initVariants(IPropertyTree* cfg) = 0;
     virtual bool getTransactionSeed(IEspGetTransactionSeedRequest& req, IEspGetTransactionSeedResponse& resp) = 0;
@@ -395,7 +402,7 @@ public:
     CLogAgentBase() { services[0] = LGSTterm; };
     virtual ~CLogAgentBase() {};
 
-public:
+    virtual const char * getName() { return agentName.get(); };
     bool initVariants(IPropertyTree* cfg) override;
     IEspLogAgentVariantIterator* getVariants() const override;
 protected:

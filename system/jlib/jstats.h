@@ -27,6 +27,7 @@
 #include "jstatcodes.h"
 
 typedef unsigned __int64 stat_type;
+typedef unsigned __int64 cost_type; // Decimal currency amount multiplied by 10^6
 const unsigned __int64 MaxStatisticValue = (unsigned __int64)0-1U;
 const unsigned __int64 AnyStatisticValue = MaxStatisticValue; // Use the maximum value to also represent unknown, since it is unlikely to ever occur.
 
@@ -35,12 +36,14 @@ inline constexpr stat_type msecs2StatUnits(stat_type ms) { return ms * 1000000; 
 inline constexpr stat_type statUnits2seconds(stat_type stat) {return stat / 1000000000; }
 inline constexpr stat_type statUnits2msecs(stat_type stat) {return stat / 1000000; }
 
-inline constexpr stat_type statSkewPercent(int value) { return (stat_type)value * 100; }            // Since 1 = 0.01% skew
-inline constexpr stat_type statSkewPercent(long double value) { return (stat_type)(value * 100); }
-inline constexpr stat_type statSkewPercent(stat_type  value) { return (stat_type)(value * 100); }
+inline constexpr stat_type statPercent(int value) { return (stat_type)value * 100; }            // Since 1 = 0.01% skew
+inline constexpr stat_type statPercent(double value) { return (stat_type)(value * 100); }
+inline constexpr stat_type statPercent(stat_type  value) { return (stat_type)(value * 100); }
+inline constexpr stat_type statPercentageOf(stat_type value, stat_type per) { return value * per / 10000; }
 
 inline StatisticKind queryStatsVariant(StatisticKind kind) { return (StatisticKind)(kind & ~StKindMask); }
-
+inline cost_type money2cost_type(double money) { return money * 1E6; }
+inline double cost_type2money(cost_type cost) { return ((double) cost) / 1E6; }
 //---------------------------------------------------------------------------------------------------------------------
 
 //Represents a single level of a scope
@@ -398,13 +401,32 @@ protected:
 class jlib_decl StatisticsMapping
 {
 public:
-    //Takes a list of StatisticKind
-    StatisticsMapping(const std::initializer_list<StatisticKind> &kinds);
-    //Takes an existing Mapping, and extends it with a list of StatisticKind
-    StatisticsMapping(const StatisticsMapping * from, const std::initializer_list<StatisticKind> &kinds);
-    //Accepts all StatisticKind values
-    StatisticsMapping();
-
+    //Takes a list of StatisticKind and a variable number of existing mappings and combines
+    template <typename... Mappings>
+    StatisticsMapping(const std::initializer_list<StatisticKind> &kinds, const Mappings &... mappings) : StatisticsMapping(&mappings...)
+    {
+        for (auto kind : kinds)
+        {
+            assert((kind != StKindNone) && (kind != StKindAll));
+            assert(!indexToKind.contains(kind));
+            indexToKind.append(kind);
+        }
+        createMappings();
+    }
+    StatisticsMapping(StatisticKind kind)
+    {
+        if (StKindAll == kind)
+        {
+            for (int i = StKindAll+1; i < StMax; i++)
+                indexToKind.append(i);
+        }
+        else
+        {
+            assert(kind != StKindNone);
+            indexToKind.append(kind);
+        }
+        createMappings();
+    }
     inline unsigned getIndex(StatisticKind kind) const
     {
         dbgassertex(kind >= StKindNone && kind < StMax);
@@ -414,11 +436,26 @@ public:
     inline unsigned numStatistics() const { return indexToKind.ordinality(); }
 
 protected:
+    StatisticsMapping() { }
+    template <typename Mapping>
+    StatisticsMapping(const Mapping *mapping)
+    {
+        ForEachItemIn(idx, mapping->indexToKind)
+            indexToKind.append(mapping->indexToKind.item(idx));
+    }
+    template <typename Mapping, typename... Mappings>
+    StatisticsMapping(const Mapping *mapping, const Mappings * ... mappings) : StatisticsMapping(mappings...)
+    {
+        ForEachItemIn(idx, mapping->indexToKind)
+            indexToKind.append(mapping->indexToKind.item(idx));
+    }
     void createMappings();
 
 protected:
     UnsignedArray kindToIndex;
     UnsignedArray indexToKind;
+private:
+    StatisticsMapping& operator=(const StatisticsMapping&) =delete;
 };
 
 extern const jlib_decl StatisticsMapping allStatistics;
@@ -458,6 +495,7 @@ public:
     }
     inline void clear() { set(0); }
     void merge(unsigned __int64 otherValue, StatsMergeAction mergeAction);
+    void sum(unsigned __int64 otherValue) { if (otherValue) addAtomic(otherValue); }
     inline void set(unsigned __int64 _value) { value = _value; }
 
 protected:
@@ -506,7 +544,8 @@ public:
     {
         queryStatistic(kind).addAtomic(value);
     }
-    virtual void mergeStatistic(StatisticKind kind, unsigned __int64 value);
+    void mergeStatistic(StatisticKind kind, unsigned __int64 value);
+    void sumStatistic(StatisticKind kind, unsigned __int64 value);      // Special more efficient version of mergeStatistic useful in time critical sections
     void setStatistic(StatisticKind kind, unsigned __int64 value)
     {
         queryStatistic(kind).set(value);
@@ -526,7 +565,7 @@ public:
     inline StatisticKind getKind(unsigned i) const { return mapping.getKind(i); }
     inline unsigned __int64 getValue(unsigned i) const { return values[i].get(); }
 
-    void merge(const CRuntimeStatisticCollection & other);
+    void merge(const CRuntimeStatisticCollection & other, unsigned node = 0);
     void updateDelta(CRuntimeStatisticCollection & target, const CRuntimeStatisticCollection & source);
     void rollupStatistics(IContextLogger * target) { rollupStatistics(1, &target); }
     void rollupStatistics(unsigned num, IContextLogger * const * targets) const;
@@ -540,6 +579,7 @@ public:
     // Print out collected stats to string as XML
     StringBuffer &toXML(StringBuffer &str) const;
     // Serialize/deserialize
+    virtual void mergeStatistic(StatisticKind kind, unsigned __int64 value, unsigned node);
     virtual bool serialize(MemoryBuffer & out) const;  // Returns true if any non-zero
     virtual void deserialize(MemoryBuffer & in);
     virtual void deserializeMerge(MemoryBuffer& in);
@@ -570,11 +610,12 @@ public:
     CRuntimeSummaryStatisticCollection(const StatisticsMapping & _mapping);
     ~CRuntimeSummaryStatisticCollection();
 
-    virtual void mergeStatistic(StatisticKind kind, unsigned __int64 value) override;
     virtual void recordStatistics(IStatisticGatherer & target) const override;
     virtual bool serialize(MemoryBuffer & out) const override;  // Returns true if any non-zero
     virtual void deserialize(MemoryBuffer & in) override;
     virtual void deserializeMerge(MemoryBuffer& in) override;
+
+    void mergeStatistic(StatisticKind kind, unsigned __int64 value, unsigned node);
 
 protected:
     struct DerivedStats
@@ -585,6 +626,7 @@ protected:
         unsigned __int64 max = 0;
         unsigned __int64 min = 0;
         unsigned __int64 count = 0;
+        double sum = 0;
         double sumSquares = 0;
         unsigned minNode = 0;
         unsigned maxNode = 0;
@@ -615,7 +657,7 @@ public:
     bool serialize(MemoryBuffer & out) const;  // Returns true if any non-zero
     void deserialize(MemoryBuffer & in);
     void deserializeMerge(MemoryBuffer& in);
-    void merge(const CNestedRuntimeStatisticCollection & other);
+    void merge(const CNestedRuntimeStatisticCollection & other, unsigned node);
     void recordStatistics(IStatisticGatherer & target) const;
     StringBuffer & toStr(StringBuffer &str) const;
     StringBuffer & toXML(StringBuffer &str) const;
@@ -636,7 +678,7 @@ public:
     bool serialize(MemoryBuffer & out) const;  // Returns true if any non-zero
     void deserialize(MemoryBuffer & in);
     void deserializeMerge(MemoryBuffer& in);
-    void merge(const CNestedRuntimeStatisticMap & other);
+    void merge(const CNestedRuntimeStatisticMap & other, unsigned node);
     void recordStatistics(IStatisticGatherer & target) const;
     StringBuffer & toStr(StringBuffer &str) const;
     StringBuffer & toXML(StringBuffer &str) const;
@@ -662,20 +704,27 @@ protected:
 //Some template helper classes for merging statistics from external sources.
 
 template <class INTERFACE>
-void mergeStats(CRuntimeStatisticCollection & stats, INTERFACE * source)
+void mergeStats(CRuntimeStatisticCollection & stats, INTERFACE * source, const StatisticsMapping & mapping)
 {
     if (!source)
         return;
 
-    ForEachItemIn(iStat, stats)
+    unsigned max = mapping.numStatistics();
+    for (unsigned i=0; i < max; i++)
     {
-        StatisticKind kind = stats.getKind(iStat);
+        StatisticKind kind = mapping.getKind(i);
         stats.mergeStatistic(kind, source->getStatistic(kind));
     }
 }
 
 template <class INTERFACE>
-void mergeStats(CRuntimeStatisticCollection & stats, Shared<INTERFACE> source) { mergeStats(stats, source.get()); }
+void mergeStats(CRuntimeStatisticCollection & stats, Shared<INTERFACE> source, const StatisticsMapping & mapping) { mergeStats(stats, source.get(), mapping); }
+
+template <class INTERFACE>
+void mergeStats(CRuntimeStatisticCollection & stats, INTERFACE * source)       { mergeStats(stats, source, stats.queryMapping()); }
+
+template <class INTERFACE>
+void mergeStats(CRuntimeStatisticCollection & stats, Shared<INTERFACE> source) { mergeStats(stats, source.get(), stats.queryMapping()); }
 
 template <class INTERFACE>
 void mergeStat(CRuntimeStatisticCollection & stats, INTERFACE * source, StatisticKind kind)
@@ -758,6 +807,7 @@ extern jlib_decl int compareScopeName(const char * left, const char * right);
 extern jlib_decl unsigned queryScopeDepth(const char * text);
 extern jlib_decl const char * queryScopeTail(const char * scope);
 extern jlib_decl bool getParentScope(StringBuffer & parent, const char * scope);
+extern jlib_decl bool isParentScope(const char *parent, const char *scope);
 extern jlib_decl void describeScope(StringBuffer & description, const char * scope);
 
 //This interface is primarily here to reduce the dependency between the different components.

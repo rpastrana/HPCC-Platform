@@ -59,6 +59,10 @@
 #include "reservedwords.hpp"
 #include "eclcc.hpp"
 
+#ifndef _CONTAINERIZED
+#include "environment.hpp"
+#endif
+
 #ifdef _USE_CPPUNIT
 #include <cppunit/extensions/TestFactoryRegistry.h>
 #include <cppunit/ui/text/TestRunner.h>
@@ -80,6 +84,7 @@
 
 //The following flag is used to speed up closedown by not freeing items
 static bool optReleaseAllMemory = false;
+static Owned<IPropertyTree> configuration;
 
 #if defined(_WIN32) && defined(_DEBUG)
 static HANDLE leakHandle;
@@ -246,7 +251,6 @@ public:
         cclogFilename.append("cc.").append((unsigned)GetCurrentProcessId()).append(".log");
         defaultAllowed[false] = true;  // May want to change that?
         defaultAllowed[true] = true;
-        optMetaLocation.set(".eclcc/metacache");
     }
     ~EclCC()
     {
@@ -305,9 +309,6 @@ protected:
     void setDebugOption(const char * name, bool value);
     void usage();
 
-    inline const char * queryTemplateDir() { return templatePath.length() ? templatePath.str() : NULL; }
-
-
 protected:
     Owned<IEclRepository> pluginsRepository;
     Owned<IEclRepository> libraryRepository;
@@ -322,7 +323,6 @@ protected:
     StringBuffer cppIncludePath;
     StringBuffer pluginsPath;
     StringBuffer hooksPath;
-    StringBuffer templatePath;
     StringBuffer eclLibraryPath;
     StringBuffer eclBundlePath;
     StringBuffer stdIncludeLibraryPath;
@@ -339,6 +339,7 @@ protected:
     StringAttr optComponentName;
     StringAttr optDFS;
     StringAttr optCluster;
+    StringAttr optConfig;
     StringAttr optScope;
     StringAttr optUser;
     StringAttr optPassword;
@@ -496,6 +497,17 @@ static int doMain(int argc, const char *argv[])
     return 0;
 }
 
+
+static constexpr const char * defaultYaml = R"!!(
+version: "1.0"
+eclccserver:
+    name: eclccserver
+    logging:
+      audiences: "USR+ADT"
+      classes: "ERR"
+)!!";
+
+
 int main(int argc, const char *argv[])
 {
     EnableSEHtoExceptionMapping();
@@ -503,11 +515,30 @@ int main(int argc, const char *argv[])
     InitModuleObjects();
     queryStderrLogMsgHandler()->setMessageFields(0);
 
-    // Turn logging down (we turn it back up if -v option seen)
-    Owned<ILogMsgFilter> filter = getCategoryLogMsgFilter(MSGAUD_user| MSGAUD_operator, MSGCLS_error);
-    queryLogMsgManager()->changeMonitorFilter(queryStderrLogMsgHandler(), filter);
-    unsigned exitCode = doMain(argc, argv);
-    stopPerformanceMonitor();
+    unsigned exitCode = 0;
+    try
+    {
+        configuration.setown(loadConfiguration(defaultYaml, argv, "eclccserver", "ECLCCSERVER", nullptr, nullptr));
+
+#ifndef _CONTAINERIZED
+        // Turn logging down (we turn it back up if -v option seen)
+        Owned<ILogMsgFilter> filter = getCategoryLogMsgFilter(MSGAUD_user| MSGAUD_operator, MSGCLS_error);
+        queryLogMsgManager()->changeMonitorFilter(queryStderrLogMsgHandler(), filter);
+#else
+        setupContainerizedLogMsgHandler();
+#endif
+        exitCode = doMain(argc, argv);
+        stopPerformanceMonitor();
+    }
+    catch (IException *E)
+    {
+        StringBuffer m("Error: ");
+        E->errorMessage(m);
+        fputs(m.newline().str(), stderr);
+        E->Release();
+        exitCode = 2;
+    }
+
     if (!optReleaseAllMemory)
     {
         //In release mode exit without calling all the clean up code.
@@ -516,6 +547,7 @@ int main(int argc, const char *argv[])
         _exit(exitCode);
     }
 
+    configuration.clear();
     releaseAtoms();
     ClearTypeCache();   // Clear this cache before the file hooks are unloaded
     removeFileHooks();
@@ -626,7 +658,6 @@ void EclCC::loadOptions()
             getAdditionalPluginsPath(libraryPath, syspath);
         }
         extractOption(hooksPath, globals, "HPCC_FILEHOOKS_PATH", "filehooks", syspath, "filehooks");
-        extractOption(templatePath, globals, "ECLCC_TPL_PATH", "templatePath", syspath, "componentfiles");
         extractOption(eclLibraryPath, globals, "ECLCC_ECLLIBRARY_PATH", "eclLibrariesPath", syspath, "share" PATHSEPSTR "ecllibrary" PATHSEPSTR);
         extractOption(eclBundlePath, globals, "ECLCC_ECLBUNDLE_PATH", "eclBundlesPath", homepath, PATHSEPSTR "bundles" PATHSEPSTR);
     }
@@ -797,12 +828,11 @@ void EclCC::instantECL(EclCompileInstance & instance, IWorkUnit *wu, const char 
     {
         try
         {
-            const char * templateDir = queryTemplateDir();
             bool optSaveTemps = wu->getDebugValueBool("saveEclTempFiles", false);
             bool optSaveCpp = optSaveTemps || optNoCompile || wu->getDebugValueBool("saveCppTempFiles", false) || wu->getDebugValueBool("saveCpp", false);
             //New scope - testing things are linked correctly
             {
-                Owned<IHqlExprDllGenerator> generator = createDllGenerator(&errorProcessor, processName.str(), NULL, wu, templateDir, optTargetClusterType, &instance, false, false);
+                Owned<IHqlExprDllGenerator> generator = createDllGenerator(&errorProcessor, processName.str(), NULL, wu, optTargetClusterType, &instance, false, false);
 
                 setWorkunitHash(wu, instance.query);
                 if (!optShared)
@@ -821,6 +851,20 @@ void EclCC::instantECL(EclCompileInstance & instance, IWorkUnit *wu, const char 
                 }
                 generator->setSaveGeneratedFiles(optSaveCpp);
 
+                if (optSaveQueryArchive && instance.wu && instance.archive)
+                {
+                    StringBuffer buf;
+                    toXML(instance.archive, buf);
+                    if (optWorkUnit)
+                    {
+                        Owned<IWUQuery> q = instance.wu->updateQuery();
+                        q->setQueryText(buf);
+                    }
+                    else
+                    {
+                        generator->addArchiveAsResource(buf);
+                    }
+                }
                 bool generateOk = generator->processQuery(instance.query, target);  // NB: May clear instance.query
                 instance.stats.cppSize = generator->getGeneratedSize();
                 if (generateOk && !optNoCompile)
@@ -838,7 +882,7 @@ void EclCC::instantECL(EclCompileInstance & instance, IWorkUnit *wu, const char 
                         if (optTargetClusterType==RoxieCluster)
                             generator->addLibrary("ccd");
                         else
-                            generator->addLibrary("hthor");
+                            generator->addLibrary("hthorlib");
 
 
                         compileOk = generator->generateExe(compiler);
@@ -1034,7 +1078,7 @@ void EclCC::evaluateResult(EclCompileInstance & instance)
         query = query->queryChild(0);
     if (query->getOperator()==no_createdictionary)
         query = query->queryChild(0);
-    OwnedHqlExpr folded = foldHqlExpression(instance.queryErrorProcessor(), query, NULL, HFOthrowerror|HFOloseannotations|HFOforcefold|HFOfoldfilterproject|HFOconstantdatasets);
+    OwnedHqlExpr folded = foldHqlExpression(instance.queryErrorProcessor(), query, HFOthrowerror|HFOloseannotations|HFOforcefold|HFOfoldfilterproject|HFOconstantdatasets);
     StringBuffer out;
     IValue *result = folded->queryValue();
     if (result)
@@ -1142,6 +1186,7 @@ void EclCC::processSingleQuery(EclCompileInstance & instance,
     //The only exception would be a dll created for a one-time query.  (Currently handled by eclserver.)
     instance.wu->setCloneable(true);
 
+    recordQueueFilePrefixes(instance.wu, configuration);
     applyDebugOptions(instance.wu);
     applyApplicationOptions(instance.wu);
 
@@ -1244,7 +1289,8 @@ void EclCC::processSingleQuery(EclCompileInstance & instance,
         if (neverSimplifyRegEx)
             parseCtx.setNeverSimplify(neverSimplifyRegEx.str());
 
-        if (optFastSyntax)
+        //Allow fastsyntax to be specified in the archive to aid with regression testing
+        if (optFastSyntax || (instance.srcArchive && instance.srcArchive->getPropBool("@fastSyntax", false)))
             parseCtx.setFastSyntax();
         parseCtx.timeParser = instance.wu->getDebugValueBool("timeParser", false);
 
@@ -1400,14 +1446,6 @@ void EclCC::processSingleQuery(EclCompileInstance & instance,
     if (syntaxChecking || optGenerateMeta || optEvaluateResult)
         return;
 
-    if (optSaveQueryArchive && instance.wu && instance.archive)
-    {
-        Owned<IWUQuery> q = instance.wu->updateQuery();
-        StringBuffer buf;
-        toXML(instance.archive, buf);
-        q->setQueryText(buf);
-    }
-
     StringBuffer targetFilename;
     const char * outputFilename = instance.outputFilename;
     if (!outputFilename)
@@ -1456,6 +1494,12 @@ void EclCC::processSingleQuery(EclCompileInstance & instance,
         systemIoFinishInfo.setown(new OsDiskStats(true));
     instance.stats.generateTime = (unsigned)nanoToMilli(totalTimeNs) - instance.stats.parseTime;
     updateWorkunitStat(instance.wu, SSTcompilestage, "compile", StTimeElapsed, NULL, totalTimeNs);
+
+    IPropertyTree *costs = queryCostsConfiguration();
+    const cost_type machineCost = costs ? money2cost_type(costs->getPropReal("@eclcc")) : 0;
+    const cost_type cost = calcCost(machineCost, nanoToMilli(totalTimeNs));
+    if (cost)
+        instance.wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTcompilestage, "compile", StCostExecute, NULL, cost, 1, 0, StatsMergeReplace);
 
     if (systemFinishTime.getTotal())
     {
@@ -1647,23 +1691,32 @@ void EclCC::processFile(EclCompileInstance & instance)
 {
     clearTransformStats();
 
-    const char * curFilename = instance.inputFile->queryFilename();
+    Linked<IFile> inputFile = instance.inputFile;
+    const char * curFilename = inputFile->queryFilename();
     assertex(curFilename);
     bool inputFromStdIn = streq(curFilename, "stdin:");
+
+    //Ensure the filename is fully expanded, but do not recreate the IFile if it was already absolute
     StringBuffer expandedSourceName;
-    if (!inputFromStdIn && !optNoSourcePath)
+    if (!inputFromStdIn && !optNoSourcePath && !isAbsolutePath(curFilename))
+    {
         makeAbsolutePath(curFilename, expandedSourceName);
+        inputFile.setown(createIFile(expandedSourceName));
+    }
     else
         expandedSourceName.append(curFilename);
 
     Owned<ISourcePath> sourcePath = (optNoSourcePath||inputFromStdIn) ? NULL : createSourcePath(expandedSourceName);
-    Owned<IFileContents> queryText = createFileContentsFromFile(expandedSourceName, sourcePath, false, NULL);
+    Owned<IFileContents> queryText = createFileContents(inputFile, sourcePath, false, NULL);
 
     const char * queryTxt = queryText->getText();
     if (optArchive || optGenerateDepend || optSaveQueryArchive)
         instance.archive.setown(createAttributeArchive());
 
     instance.wu.setown(createLocalWorkUnit(NULL));
+    //Record the version of the compiler in the workunit, but not when regression testing (to avoid spurious differences)
+    if (!optBatchMode)
+        instance.wu->setDebugValue("eclcc_compiler_version", LANGUAGE_VERSION, true);
     if (optSaveQueryText)
     {
         Owned<IWUQuery> q = instance.wu->updateQuery();
@@ -2034,7 +2087,6 @@ bool EclCC::processFiles()
         printf("ECLCC_INCLUDE_PATH=%s\n", cppIncludePath.str());
         printf("ECLCC_LIBRARY_PATH=%s\n", libraryPath.str());
         printf("ECLCC_PLUGIN_PATH=%s\n", pluginsPath.str());
-        printf("ECLCC_TPL_PATH=%s\n", templatePath.str());
         printf("HPCC_FILEHOOKS_PATH=%s\n", hooksPath.str());
         return true;
     }
@@ -2276,8 +2328,10 @@ bool EclCC::checkDaliConnected() const
 unsigned EclCC::lookupClusterSize() const
 {
     CriticalBlock b(dfsCrit);  // Overkill at present but maybe one day codegen will start threading? If it does the stack is also iffy!
+#ifndef _CONTAINERIZED
     if (!optDFS || disconnectReported || !checkDaliConnected())
         return 0;
+#endif
     if (prevClusterSize != -1)
         return (unsigned) prevClusterSize;
     const char *cluster = clusters ? clusters.tos() : optCluster.str();
@@ -2285,8 +2339,17 @@ unsigned EclCC::lookupClusterSize() const
         prevClusterSize = 0;
     else
     {
+#ifdef _CONTAINERIZED
+        VStringBuffer xpath("queues[@name=\"%s\"]", cluster);
+        IPropertyTree * queue = configuration->queryPropTree(xpath);
+        if (queue)
+            prevClusterSize = queue->getPropInt("@width", 1);
+        else
+            prevClusterSize = 0;
+#else
         Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(cluster);
         prevClusterSize = clusterInfo ? clusterInfo->getSize() : 0;
+#endif
     }
     DBGLOG("Cluster %s has size %d", cluster, prevClusterSize);
     return prevClusterSize;
@@ -2490,6 +2553,13 @@ int EclCC::parseCommandLineOptions(int argc, const char* argv[])
         }
         else if (iter.matchOption(optCluster, "-cluster"))
         {
+        }
+        else if (iter.matchOption(optConfig, "--config"))
+        {
+        }
+        else if (iter.matchOption(tempArg, "--daemon"))
+        {
+            //Ignore any --daemon option supplied to eclccserver which may be passed onto eclcc
         }
         else if (iter.matchOption(optDFS, "-dfs") || /*deprecated*/ iter.matchOption(optDFS, "-dali"))
         {
@@ -2806,6 +2876,9 @@ int EclCC::parseCommandLineOptions(int argc, const char* argv[])
         }
         else if (arg[0] == '-')
         {
+            //If --config has been specified, then ignore any unknown options beginning with -- since they will be added to the globals.
+            if ((arg[1] == '-') && optConfig)
+                continue;
             UERRLOG("Error: unrecognised option %s",arg);
             usage();
             return 1;

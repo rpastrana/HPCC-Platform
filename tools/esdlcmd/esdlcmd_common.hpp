@@ -106,6 +106,8 @@ typedef IEsdlCommand *(*EsdlCommandFactory)(const char *cmdname);
 #define ESDLOPT_NO_EXPORT               "--no-export"
 #define ESDLOPT_HIDE_GETDATAFROM        "--hide-get-data-from"
 #define ESDLOPT_WSDL_ADDRESS            "--wsdl-address"
+#define ESDLOPT_UNVERSIONED_NAMESPACE   "--unversioned-ns"
+#define ESDLOPT_UNVERSIONED_NAMESPACE_S "-uvns"
 
 #define DEFAULT_NAMESPACE_BASE          "urn:hpccsystems:ws"
 #define ESDLOPTLIST_DELIMITER           ";"
@@ -161,9 +163,11 @@ class EsdlCmdCommon : public CInterface, implements IEsdlCommand
 {
 public:
     using TraceFlags = IEsdlDefReporter::Flags;
-    static const TraceFlags defaultSuccinctTraceFlags = IEsdlDefReporter::ReportErrorClass | IEsdlDefReporter::ReportWarningClass;
-    static const TraceFlags defaultVerboseTraceFlags = defaultSuccinctTraceFlags | IEsdlDefReporter::ReportProgressClass | IEsdlDefReporter::ReportInfoClass;
-
+    enum : TraceFlags
+    {
+        defaultSuccinctTraceFlags = IEsdlDefReporter::ReportErrorClass | IEsdlDefReporter::ReportWarningClass,
+        defaultVerboseTraceFlags = defaultSuccinctTraceFlags | IEsdlDefReporter::ReportProgressClass | IEsdlDefReporter::ReportInfoClass,
+    };
     IMPLEMENT_IINTERFACE;
     EsdlCmdCommon() : optVerbose(false)
     {}
@@ -319,7 +323,7 @@ protected:
         serviceDefFile.setown( createIFile(sourceFileName) );
         if( serviceDefFile->exists() )
         {
-            if( serviceDefFile->isFile() )
+            if( serviceDefFile->isFile()==fileBool::foundYes )
             {
                 if( serviceDefFile->size() > 0 )
                 {

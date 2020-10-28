@@ -282,7 +282,7 @@ static void CopyDirectory(const char *source, const char *target, unsigned numSl
     ForEach (*dir)
     {
         IFile &sourceFile = dir->query();
-        if (sourceFile.isFile())
+        if (sourceFile.isFile()==fileBool::foundYes)
         {
             if (includeFile(sourceFile, numSlaves))
             {
@@ -310,7 +310,7 @@ static void CopyDirectory(const char *source, const char *target, unsigned numSl
             else if (verbose)
                 println("Skipping file %s (cluster size mismatch)", sourceFile.queryFilename());
         }
-        else if (sourceFile.isDirectory())
+        else if (sourceFile.isDirectory()==fileBool::foundYes)
         {
             StringBuffer newSource(source);
             StringBuffer newTarget(target);
@@ -334,7 +334,7 @@ static void CompressDirectory(const char *target, unsigned numSlaves, bool compr
     ForEach (*dir)
     {
         IFile &targetFile = dir->query();
-        if (targetFile.isFile())
+        if (targetFile.isFile() == fileBool::foundYes)
         {
             if (includeFile(targetFile, numSlaves))
             {
@@ -373,7 +373,7 @@ static void CompressDirectory(const char *target, unsigned numSlaves, bool compr
                 }
             }
         }
-        else if (targetFile.isDirectory())
+        else if (targetFile.isDirectory() == fileBool::foundYes)
         {
             StringBuffer newTarget(target);
             newTarget.append(PATHSEPCHAR);

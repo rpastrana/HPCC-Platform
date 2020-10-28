@@ -1,17 +1,17 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
 
     "hpcc/GridDetailsWidget",
     "src/ESPWorkunit",
-    "hpcc/DelayLoadWidget",
     "src/ESPUtil"
 
-], function (declare, lang, i18n, nlsHPCC, arrayUtil,
-                GridDetailsWidget, ESPWorkunit, DelayLoadWidget, ESPUtil) {
+], function (declare, lang, nlsHPCCMod, arrayUtil,
+    GridDetailsWidget, ESPWorkunit, ESPUtil) {
+
+    var nlsHPCC = nlsHPCCMod.default;
     return declare("VariablesWidget", [GridDetailsWidget], {
         i18n: nlsHPCC,
 

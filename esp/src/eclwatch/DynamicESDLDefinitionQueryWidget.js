@@ -1,18 +1,13 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
     "dojo/dom",
 
     "dijit/registry",
-    "dijit/Menu",
-    "dijit/MenuItem",
     "dijit/MenuSeparator",
-    "dijit/PopupMenuItem",
     "dijit/Dialog",
-    "dijit/form/CheckBox",
     "dijit/ToolbarSeparator",
     "dijit/form/Button",
     "dijit/form/TextBox",
@@ -26,10 +21,12 @@ define([
     "hpcc/DynamicESDLDefinitionDetailsWidget",
     "src/Utility"
 
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, dom,
-    registry, Menu, MenuItem, MenuSeparator, PopupMenuItem, Dialog, Checkbox, ToolbarSeparator, Button, TextBox,
+], function (declare, lang, nlsHPCCMod, arrayUtil, dom,
+    registry, MenuSeparator, Dialog, ToolbarSeparator, Button, TextBox,
     selector,
     GridDetailsWidget, TargetSelectWidget, WsESDLConfig, ESPUtil, DynamicESDLDefinitionDetailsWidget, Utility) {
+
+    var nlsHPCC = nlsHPCCMod.default;
     return declare("DynamicESDLWidget", [GridDetailsWidget], {
         i18n: nlsHPCC,
 
@@ -55,9 +52,9 @@ define([
 
         addContextMenuItems: function () {
             var context = this;
-            this.appendContextMenuItem(this.i18n.Delete, function () { context._onDelete()});
+            this.appendContextMenuItem(this.i18n.Delete, function () { context._onDelete() });
             this.contextMenu.addChild(new MenuSeparator());
-            this.appendContextMenuItem(this.i18n.Bind, function () { context._onBind()});
+            this.appendContextMenuItem(this.i18n.Bind, function () { context._onBind() });
         },
 
         _onBind: function () {
@@ -235,12 +232,12 @@ define([
             if (confirm(this.i18n.DeleteSelectedDefinitions + "\n" + list)) {
                 var context = this;
                 WsESDLConfig.DeleteESDLDefinition({
-                    request:{
+                    request: {
                         Id: selections[0].Name,
                         Name: name[0],
                         Version: name[1]
                     }
-                }).then(function(response){
+                }).then(function (response) {
                     if (lang.exists("DeleteESDLRegistryEntryResponse.status", response)) {
                         dojo.publish("hpcc/brToaster", {
                             Severity: "Message",
@@ -267,8 +264,8 @@ define([
                     EsdlDefinitionID: dom.byId("DefId").value,
                     EsdlServiceName: dom.byId("ServiceNameTB").value,
                     Overwrite: true
-                }                
-             }).then(function(response){
+                }
+            }).then(function (response) {
                 if (lang.exists("PublishESDLBindingResponse.status", response)) {
                     if (response.PublishESDLBindingResponse.status.Code === 0) {
                         dojo.publish("hpcc/brToaster", {
@@ -293,7 +290,7 @@ define([
                     }
                 }
                 context.dialog.hide();
-             });
+            });
         },
 
         refreshGrid: function (args) {

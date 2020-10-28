@@ -31,7 +31,11 @@ include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
 set (    SRCS
          ${ESPSCM_GENERATED_DIR}/common_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_workunits_struct_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_workunits_req_resp_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_workunits_queryset_req_resp_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_workunits_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_codesign_esp.cpp
          eclcmd.hpp
          ecl.cpp
          eclcmd_common.hpp
@@ -39,6 +43,7 @@ set (    SRCS
          eclcmd_common.cpp
          eclcmd_core.hpp
          eclcmd_core.cpp
+         eclcmd_sign.cpp
     )
 
 include_directories (
@@ -64,6 +69,7 @@ include_directories (
          ./../../esp/smc/SMCLib
          ./../../system/jlib
          ./../../system/xmllib
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )

@@ -346,7 +346,6 @@ void CChildDatasetColumnInfo::setColumn(HqlCppTranslator & translator, BuildCtx 
     OwnedHqlExpr lengthTarget = convertAddressToValue(addressSize, sizetType);
 
     ITypeInfo * columnType = column->queryType();
-    IHqlExpression * record = column->queryRecord();
     OwnedHqlExpr value = addDatasetLimits(translator, ctx, selector, _value);
     ITypeInfo * valueType = value->queryType();
     assertRecordTypesMatch(valueType, columnType);
@@ -470,7 +469,7 @@ void CChildLimitedDatasetColumnInfo::buildDeserializeChildLoop(HqlCppTranslator 
     CHqlBoundExpr bound;
     translator.buildTempExpr(loopctx, mappedCount, bound);
 
-    OwnedHqlExpr test = createValue(no_postdec, LINK(bound.expr));
+    OwnedHqlExpr test = createValue(no_postdec, bound.getType(), LINK(bound.expr));
     loopctx.addLoop(test, NULL, false);
 }
 
@@ -522,7 +521,7 @@ bool CChildLimitedDatasetColumnInfo::buildReadAhead(HqlCppTranslator & translato
             CHqlBoundExpr bound;
             translator.buildTempExpr(loopctx, replacedCount, bound);
 
-            OwnedHqlExpr test = createValue(no_postdec, LINK(bound.expr));
+            OwnedHqlExpr test = createValue(no_postdec, bound.getType(), LINK(bound.expr));
             loopctx.addLoop(test, NULL, false);
 
             StringBuffer helperCpp;

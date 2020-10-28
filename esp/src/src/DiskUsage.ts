@@ -1,27 +1,37 @@
-import { Palette } from "@hpcc-js/common";
 import { Gauge } from "@hpcc-js/chart";
+import { Palette } from "@hpcc-js/common";
 import { GetTargetClusterUsageEx, MachineService } from "@hpcc-js/comms";
-import { FlexGrid } from "@hpcc-js/layout";
 import { ColumnFormat, Table } from "@hpcc-js/dgrid";
-import "dojo/i18n";
-// @ts-ignore
-import * as nlsHPCC from "dojo/i18n!hpcc/nls/hpcc";
+import { FlexGrid } from "@hpcc-js/layout";
+import nlsHPCC from "./nlsHPCC";
 
 Palette.rainbow("DiskUsage", ["green", "green", "green", "green", "green", "green", "green", "green", "orange", "red", "red"]);
 
+const connection = new MachineService({ baseUrl: "", timeoutSecs: 360 });
+
+interface CompontentT {
+    rowCount: number;
+    inUse: number;
+    total: number;
+    max: number;
+}
+
+type DetailsT = GetTargetClusterUsageEx.TargetClusterUsage | CompontentT;
+
+const calcPct = (val, tot) => Math.round((val / tot) * 100);
+
 export class Summary extends FlexGrid {
 
-    private _connection = new MachineService({ baseUrl: "", timeoutSecs: 360 });
     private _loadingMsg;
-    private _usage: { [id: string]: { details: GetTargetClusterUsageEx.TargetClusterUsage, gauge: Gauge } } = {};
+    private _usage: { [id: string]: { details: DetailsT, gauge: Gauge } } = {};
 
-    constructor() {
+    constructor(readonly _targetCluster?: string) {
         super();
         this
             .itemMinHeight(100)
             .itemMinWidth(100)
             .forceYScroll(true)
-            .widgetsFlexGrow([1, 1, 1])
+            .widgetsFlexGrow([1, 1, 1]);
     }
 
     enter(domNode, element) {
@@ -44,7 +54,7 @@ export class Summary extends FlexGrid {
         this
             .widgets(widgets)
             .flexBasis(`${100 / widgets.length}%`)
-            .flexBasis(`100px`)
+            .flexBasis("100px")
             ;
 
         super.update(domNode, element);
@@ -65,43 +75,88 @@ export class Summary extends FlexGrid {
                 .text(nlsHPCC.loadingMessage)
                 ;
         }
-        this._connection.GetTargetClusterUsageEx(undefined, bypassCachedResult).then(response => {
+        connection.GetTargetClusterUsageEx(this._targetCluster !== undefined ? [this._targetCluster] : undefined, bypassCachedResult).then(response => {
             this._loadingMsg && this._loadingMsg
-                .html(`<i class="fa fa-database"></i>`)
+                .html('<i class="fa fa-database"></i>')
                 ;
-            response.forEach(details => {
-                if (!this._usage[details.Name]) {
-                    this._usage[details.Name] = {
-                        details,
-                        gauge: new Gauge()
-                            .title(details.Name)
-                            .showTick(true)
-                            .on("click", (gauge: Gauge) => {
-                                this.click(gauge, details);
-                            })
-                    };
-                }
-                this._usage[details.Name].gauge
-                    .value((details.max || 0) / 100)
-                    .valueDescription(nlsHPCC.Max)
-                    .tickValue((details.mean || 0) / 100)
-                    .tickValueDescription(nlsHPCC.Mean)
-                    .tooltip(details.ComponentUsagesDescription)
-                    ;
-            });
+            if (!this._targetCluster) {
+                response.forEach(details => {
+                    if (!this._usage[details.Name]) {
+                        this._usage[details.Name] = {
+                            details,
+                            gauge: new Gauge()
+                                .title(details.Name)
+                                .showTick(true)
+                                .on("click", (gauge: Gauge) => {
+                                    this.click(gauge, details);
+                                })
+                        };
+                    }
+                    this._usage[details.Name].gauge
+                        .value((details.max || 0) / 100)
+                        .valueDescription(nlsHPCC.Max)
+                        .tickValue((details.mean || 0) / 100)
+                        .tickValueDescription(nlsHPCC.Mean)
+                        .tooltip(details.ComponentUsagesDescription)
+                        ;
+                });
+            } else {
+                response.filter(details => details.Name === this._targetCluster).forEach(_details => {
+                    const data: { [key: string]: CompontentT } = {};
+                    _details.ComponentUsages.forEach(cu => {
+                        cu.MachineUsages.forEach(mu => {
+                            mu.DiskUsages.filter(du => !isNaN(du.InUse) || !isNaN(du.Total)).forEach(du => {
+                                if (data[du.Name] === undefined) {
+                                    data[du.Name] = {
+                                        rowCount: 0,
+                                        inUse: 0,
+                                        total: 0,
+                                        max: 0
+                                    };
+                                }
+                                const details = data[du.Name];
+                                details.rowCount++;
+                                details.inUse += du.InUse;
+                                details.total += du.Total;
+                                const usage = calcPct(du.InUse, du.Total);
+                                details.max = details.max < usage ? usage : details.max;
+                            });
+                        });
+                    });
+                    for (const key in data) {
+                        const details = data[key];
+                        if (!this._usage[key]) {
+                            this._usage[key] = {
+                                details,
+                                gauge: new Gauge()
+                                    .title(key)
+                                    .showTick(true)
+                            };
+                        }
+
+                        const totalMean = details.total / details.rowCount;
+                        const inUseMean = details.inUse / details.rowCount;
+                        this._usage[key].gauge
+                            .value(details.max / 100)
+                            .valueDescription(nlsHPCC.Max)
+                            .tickValue(inUseMean / totalMean)
+                            .tickValueDescription(nlsHPCC.Mean)
+                            .tooltip(key)
+                            ;
+                    }
+                });
+            }
             this.render();
         });
         return this;
     }
 
     //  Events
-    click(gauge: Gauge, details: GetTargetClusterUsageEx.TargetClusterUsage) {
+    click(gauge: Gauge, details: DetailsT) {
     }
 }
 
 export class Details extends Table {
-
-    private _connection = new MachineService({ baseUrl: "" });
 
     constructor(readonly _targetCluster: string) {
         super();
@@ -117,17 +172,26 @@ export class Details extends Table {
     }
 
     private _details: GetTargetClusterUsageEx.TargetClusterUsage;
-    details(_: GetTargetClusterUsageEx.TargetClusterUsage) {
+    private details(_: GetTargetClusterUsageEx.TargetClusterUsage) {
         this._details = _;
         const data = [];
+        this
+            .sortByDescending(false)
+            .data([])
+            .render()
+            ;
         this._details.ComponentUsages.forEach(cu => {
             cu.MachineUsages.forEach(mu => {
                 mu.DiskUsages.forEach(du => {
-                    data.push([du.PercentUsed, cu.Name, du.Name, mu.NetAddress !== "." ? mu.NetAddress : mu.Name, du.Path, du.InUse, du.Total]);
+                    data.push([calcPct(du.InUse, du.Total), cu.Name, du.Name, mu.NetAddress !== "." ? mu.NetAddress : mu.Name, du.Path, du.InUse, du.Total]);
                 });
             });
         });
-        this.data(data);
+        this
+            .sortBy(nlsHPCC.PercentUsed)
+            .sortByDescending(true)
+            .data(data)
+            ;
         return this;
     }
 
@@ -137,7 +201,7 @@ export class Details extends Table {
             .data([])
             .render()
             ;
-        this._connection.GetTargetClusterUsageEx([this._targetCluster]).then(details => {
+        connection.GetTargetClusterUsageEx([this._targetCluster]).then(details => {
             this
                 .noDataMessage(nlsHPCC.noDataMessage)
                 .details(details[0])

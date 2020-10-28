@@ -140,6 +140,14 @@ hr.dashedLine {
     margin-top: 6px;
 }
 
+.flat .envrionmentText {
+    float:left;
+    margin-top: 12px;
+    width:40%;
+    text-align: center;
+    font: bold 22px Lucida Sans, Lucida Grande, Arial;
+}
+
 .flat .glow :hover{
     background-color:rgb(118, 157, 192);
     border-radius: 4px;
@@ -176,6 +184,12 @@ hr.dashedLine {
     padding: 0px;
 }
 
+.flat .resetBtn .dijitButtonNode {
+    background-color: #ff0000;
+    font-weight: bold;
+    color: #fff;
+}
+
 .flat .glow .dijitToggleButton .dijitButtonNode {
     background: none;
     border:none;
@@ -185,9 +199,7 @@ hr.dashedLine {
 }
 
 .flat .hpccTitlebar .dijitToggleButtonChecked .dijitButtonNode {
-    border-width: 1px;
-    border-style: solid;
-    border-color: #759dc0;
+    border-width: 0px;
     margin: 0px;
     align-content:center;
 }
@@ -339,16 +351,40 @@ hr.dashedLine {
     padding-bottom:10px;
 }
 
-@media (max-width: 959px){
+@media screen and (max-width: 1920px){
     .flat .hpccTitlebar {
-        height:100px;
+        height:50px;
     }
-    .searchUserMoreComponents{
-        width:100%;
+
+    #BannerEnvironmentText{
+        width:25%;
+        display: none;
         margin-top:10px;
+        border:solid 1px white;
     }
-    .seperator:first-child{
-        display:none;
+
+    .flat .envrionmentText {
+        width: 25%;
+    }
+}
+
+@media screen and (max-width: 1400px){
+    .flat .envrionmentText {
+        display: none;
+    }
+}
+
+@media screen and (max-width: 1040px){
+    #userAccount {
+        display: none;
+    }
+
+    #MonitorStatus {
+        display: none;
+    }
+
+    .seperator {
+        display: none;
     }
 }
 
@@ -1663,6 +1699,13 @@ span.dijitReset.dijitInline.dijitIcon.fa {
     min-height: 16px;
 }
 
+span.dijitReset.dijitInline.dijitIcon.fa.disabled {
+    font-family: "FontAwesome";
+    color:darkgray;
+    min-width: 16px;
+    min-height: 16px;
+}
+
 .eclwatch_DPReport.report-col-count-2 .ddCell:nth-child(4n+3),
 .eclwatch_DPReport.report-col-count-2 .ddCell:nth-child(4n+4),
 .eclwatch_DPReport.report-col-count-3 .ddCell:nth-child(6n+4),
@@ -1681,4 +1724,8 @@ span.dijitReset.dijitInline.dijitIcon.fa {
     -webkit-box-shadow: 0px 0px 0px 6px rgba(243,243,243,1);
     -moz-box-shadow: 0px 0px 0px 6px rgba(243,243,243,1);
     box-shadow: 0px 0px 0px 6px rgba(243,243,243,1);
+}
+
+.dijitTab.tabStripButton {
+    background-color: transparent;
 }

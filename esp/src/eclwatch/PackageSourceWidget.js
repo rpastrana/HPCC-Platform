@@ -2,28 +2,31 @@ define([
     "dojo/_base/declare",
     "dojo/_base/lang",
     "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/dom",
     "dojo/topic",
 
     "dijit/layout/_LayoutWidget",
     "dijit/_TemplatedMixin",
     "dijit/_WidgetsInTemplateMixin",
-    "dijit/layout/BorderContainer",
-    "dijit/layout/ContentPane",
     "dijit/registry",
 
     "src/CodeMirror",
 
     "src/WsPackageMaps",
 
-    "dojo/text!../templates/PackageSourceWidget.html"
+    "dojo/text!../templates/PackageSourceWidget.html",
+
+    "dijit/layout/BorderContainer",
+    "dijit/layout/ContentPane"
 ],
-    function (declare, lang, i18n, nlsHPCC, dom, topic,
+    function (declare, lang, i18n, nlsHPCCMod, dom, topic,
         _LayoutWidget, _TemplatedMixin, _WidgetsInTemplateMixin,
-        BorderContainer, ContentPane, registry,
+        registry,
         CodeMirror,
         WsPackageMaps, template) {
+
+        var nlsHPCC = nlsHPCCMod.default;
         return declare("PackageSourceWidget", [_LayoutWidget, _TemplatedMixin, _WidgetsInTemplateMixin], {
             templateString: template,
             baseClass: "PackageSourceWidget",

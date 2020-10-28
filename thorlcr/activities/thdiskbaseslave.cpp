@@ -139,7 +139,7 @@ void CDiskPartHandlerBase::open()
         }
     }
 
-    ActPrintLog(&activity, "%s[part=%d]: Base offset to %" I64F "d", kindStr, which, fileBaseOffset);
+    ActPrintLog(&activity, thorDetailedLogLevel, "%s[part=%d]: Base offset to %" I64F "d", kindStr, which, fileBaseOffset);
 
     if (compressed)
     {
@@ -149,10 +149,10 @@ void CDiskPartHandlerBase::open()
             checkFileCrc = false;
             if (activity.crcCheckCompressed) // applies to encrypted too, (optional, default off)
             {
-                ActPrintLog(&activity, "Calculating crc for file: %s", filename.get());
+                ActPrintLog(&activity, thorDetailedLogLevel, "Calculating crc for file: %s", filename.get());
                 unsigned calcCrc = iFile->getCRC();
                 // NB: for compressed files should always be ~0
-                ActPrintLog(&activity, "Calculated crc = %x, storedCrc = %x", calcCrc, storedCrc);
+                ActPrintLog(&activity, thorDetailedLogLevel, "Calculated crc = %x, storedCrc = %x", calcCrc, storedCrc);
                 if (calcCrc != storedCrc)
                 {
                     IThorException *e = MakeActivityException(&activity, TE_FileCrc, "CRC Failure validating compressed file: %s", iFile->queryFilename());
@@ -202,7 +202,7 @@ const char * CDiskPartHandlerBase::queryLogicalFilename(const void * row)
 
 //////////////////////////////////////////////
 
-CDiskReadSlaveActivityBase::CDiskReadSlaveActivityBase(CGraphElementBase *_container, IHThorArg *_helper) : CSlaveActivity(_container)
+CDiskReadSlaveActivityBase::CDiskReadSlaveActivityBase(CGraphElementBase *_container, IHThorArg *_helper) : CSlaveActivity(_container, diskReadActivityStatistics)
 {
     if (_helper)
         baseHelper.set(_helper);
@@ -292,13 +292,14 @@ IThorRowInterfaces * CDiskReadSlaveActivityBase::queryProjectedDiskRowInterfaces
 
 void CDiskReadSlaveActivityBase::serializeStats(MemoryBuffer &mb)
 {
-    CSlaveActivity::serializeStats(mb);
-    mb.append(diskProgress);
-
     CRuntimeStatisticCollection activeStats(diskReadRemoteStatistics);
     if (partHandler)
+    {
         partHandler->gatherStats(activeStats);
-    activeStats.serialize(mb);
+        stats.merge(activeStats);
+    }
+    stats.setStatistic(StNumDiskRowsRead, diskProgress);
+    PARENT::serializeStats(mb);
 }
 
 
@@ -366,7 +367,7 @@ void CDiskWriteSlaveActivityBase::open()
     Owned<IFileIO> partOutputIO = createMultipleWrite(this, *partDesc, diskRowMinSz, twFlags, compress, ecomp, this, &abortSoon, (external&&!query) ? &tempExternalName : NULL);
 
     {
-        CriticalBlock block(statsCs);
+        CriticalBlock block(outputCs);
         outputIO.setown(partOutputIO.getClear());
     }
 
@@ -392,6 +393,8 @@ void CDiskWriteSlaveActivityBase::open()
             rwFlags |= rw_crc;
         out.setown(createRowWriter(stream, ::queryRowInterfaces(input), rwFlags));
     }
+
+    //If writing to an external file, each of the slaves appends to th file in turn.
     if (extend || (external && !query))
         stream->seek(0,IFSend);
     ActPrintLog("Created output stream for %s, calcFileCrc=%s", fName.get(), calcFileCrc?"true":"false");
@@ -430,11 +433,13 @@ void CDiskWriteSlaveActivityBase::close()
             outraw.clear();
         }
 
+        Owned<IFileIO> tmpFileIO;
         {
-            CriticalBlock block(statsCs);
-            mergeStats(fileStats, outputIO);
-            outputIO.clear();
+            CriticalBlock block(outputCs);
+            // ensure it is released/destroyed after releasing crit, since the IFileIO might involve a final copy and take considerable time.
+            tmpFileIO.setown(outputIO.getClear());
         }
+        mergeStats(stats, tmpFileIO, diskWriteRemoteStatistics);
 
         if (!rfsQueryParallel && dlfn.isExternal() && !lastNode())
         {
@@ -458,7 +463,7 @@ void CDiskWriteSlaveActivityBase::close()
 }
 
 CDiskWriteSlaveActivityBase::CDiskWriteSlaveActivityBase(CGraphElementBase *container)
-: ProcessSlaveActivity(container), fileStats(diskWriteRemoteStatistics)
+    : ProcessSlaveActivity(container, diskWriteActivityStatistics)
 {
     diskHelperBase = static_cast <IHThorDiskWriteArg *> (queryHelper());
     grouped = false;
@@ -508,14 +513,12 @@ void CDiskWriteSlaveActivityBase::abort()
 
 void CDiskWriteSlaveActivityBase::serializeStats(MemoryBuffer &mb)
 {
-    CriticalBlock block(statsCs);
-
-    ProcessSlaveActivity::serializeStats(mb);
-    mb.append(replicateDone);
-
-    CRuntimeStatisticCollection activeStats(fileStats);
-    mergeStats(activeStats, outputIO);
-    activeStats.serialize(mb);
+    {
+        CriticalBlock block(outputCs);
+        mergeStats(stats, outputIO, diskWriteRemoteStatistics);
+    }
+    stats.setStatistic(StPerReplicated, replicateDone);
+    PARENT::serializeStats(mb);
 }
 
 // ICopyFileProgress

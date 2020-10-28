@@ -31,6 +31,9 @@
 
 #define TRACE_INTERVAL 100
 
+const unsigned lineIDStringLength = 8; //line ID: 00009902
+const unsigned lineIDBufferSize = lineIDStringLength + 1; //line ID: 00009902
+
 CLogSerializer::CLogSerializer()
 {
     Init();
@@ -70,11 +73,21 @@ CLogSerializer::~CLogSerializer()
     Close();
 }
 
-void CLogSerializer::Append(const char* GUID, const char* Data, CLogRequestInFile* reqInFile)
+void CLogSerializer::Append(const char* GUID, IPropertyTree* scriptValues, const char* Data, CLogRequestInFile* reqInFile)
 {
     StringBuffer toWrite,size;
 
-    toWrite.appendf("%s\t%s\r\n",GUID,Data);
+    toWrite.appendf("%s\t", GUID);
+    if (scriptValues)
+    {
+        appendXMLOpenTag(toWrite, logRequestScriptValues);
+        toXML(scriptValues, toWrite);
+        appendXMLCloseTag(toWrite, logRequestScriptValues);
+        toWrite.append("\t");
+    }
+    toWrite.append(Data);
+    toWrite.append("\r\n");
+
     size.appendf("%d",toWrite.length());
     while (size.length() < 8)
         size.insert(0,'0');
@@ -176,6 +189,24 @@ void CLogSerializer::SafeRollover(const char*Directory,const char* NewFileName,c
     Close();
     Init();
     Open(Directory, NewFileName, Prefix);
+}
+
+bool CLogSerializer::readALogLine(IFileIO* fileIO, offset_t& readPos, MemoryBuffer& data)
+{
+    char dataSize[lineIDBufferSize];
+    memset(dataSize, 0, lineIDBufferSize);
+    size32_t bytesRead = fileIO->read(readPos, lineIDStringLength, dataSize);
+    if (bytesRead < lineIDStringLength)
+        return false;
+
+    int dataLength = atoi(dataSize);
+    readPos += lineIDBufferSize;
+    bytesRead = fileIO->read(readPos, dataLength, data.reserveTruncate(dataLength));
+    if (bytesRead < dataLength)
+        return false;
+
+    readPos += dataLength;
+    return true;
 }
 
 void CLogSerializer::splitLogRecord(MemoryBuffer& rawdata, StringBuffer& GUID, StringBuffer& line)//
@@ -287,17 +318,8 @@ void CLogSerializer::loadSendLogs(GuidSet& ackSet, GuidMap& missedLogs, unsigned
         total_missed = 0;
         while(true)
         {
-            char dataSize[9];
-            memset(dataSize, 0, 9);
-            size32_t bytesRead = m_fileio->read(finger,8,dataSize);
-            if(bytesRead==0)
-                break;
-
             MemoryBuffer data;
-            int dataLen = atoi(dataSize);
-            finger+=9;
-            bytesRead = m_fileio->read(finger,dataLen,data.reserveTruncate(dataLen));
-            if(bytesRead==0)
+            if (!readALogLine(m_fileio, finger, data))
                 break;
 
             StringBuffer GUID,lostlogStr;
@@ -310,7 +332,6 @@ void CLogSerializer::loadSendLogs(GuidSet& ackSet, GuidMap& missedLogs, unsigned
                 missedLogs[GUID.str()] = lostlogStr.str();
                 total_missed++;
             }
-            finger+=dataLen;
         }
     }
     catch(IException* ex)
@@ -341,25 +362,14 @@ void CLogSerializer::loadAckedLogs(GuidSet& ackedLogs)//
         m_ItemCount = 0;
         while(true)
         {
-            char dataSize[9];
-            memset(dataSize, 0, 9);
-            size32_t bytesRead = m_fileio->read(finger,8,dataSize);
-            if(bytesRead==0)
-                break;
-
             MemoryBuffer data;
-            int dataLen = atoi(dataSize);
-            finger+=9;
-            bytesRead = m_fileio->read(finger,dataLen,data.reserveTruncate(dataLen));
-            if(bytesRead==0)
+            if (!readALogLine(m_fileio, finger, data))
                 break;
 
             StringBuffer GUID, line;
             splitLogRecord(data, GUID, line);
             ackedLogs.insert(GUID.str());
             m_ItemCount++;
-
-            finger+=dataLen;
         }
         fileSize = finger;
         DBGLOG("Total acks loaded %lu", m_ItemCount);

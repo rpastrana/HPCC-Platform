@@ -124,6 +124,7 @@ void fetchRemoteWorkunit(IClientWsWorkunits *_ws, IEspContext *ctx, const char *
         req->setQuery(query);
     if (wuid && *wuid)
         req->setWuid(wuid);
+    req->setErrorMessageFormat(CErrorMessageFormat_XML);
     req->setType("xml");
     Owned<IClientWULogFileResponse> resp = ws->WUFile(req);
     if (!resp || resp->getExceptions().ordinality() || !resp->getThefile().length())
@@ -725,12 +726,17 @@ public:
     void init(IEspContext &context, bool allowForeignFiles)
     {
         files.setown(createReferencedFileList(context.queryUserId(), context.queryPassword(), allowForeignFiles, false));
+#ifndef _CONTAINERIZED
         clusterInfo.setown(getTargetClusterInfo(target));
         StringBufferAdaptor sba(process);
         if (clusterInfo && clusterInfo->getPlatform()==RoxieCluster)
             clusterInfo->getRoxieProcess(sba);
         if (!process.length())
             return;
+#else
+        StringBuffer process(target);
+#endif
+
         ps.setown(createPackageSet(process.str()));
         if (ps)
             pm = ps->queryActiveMap(target);
@@ -745,7 +751,9 @@ public:
         StringBuffer defReplicateFolder;
         getConfigurationDirectory(NULL, "data2", "roxie", process.str(), defReplicateFolder);
         Owned<IDFUhelper> helper = createIDFUhelper();
+#ifndef _CONTAINERIZED
         files->cloneAllInfo(updateFlags, helper, true, true, clusterInfo->getRoxieRedundancy(), clusterInfo->getChannelsPerNode(), clusterInfo->getRoxieReplicateOffset(), defReplicateFolder);
+#endif
     }
 
     void gatherFileErrors(IArrayOf<IConstLogicalFileError> &errors)
@@ -754,7 +762,9 @@ public:
     }
 
 private:
+#ifndef _CONTAINERIZED
     Owned <IConstWUClusterInfo> clusterInfo;
+#endif
     Owned<IHpccPackageSet> ps;
     const IHpccPackageMap *pm = nullptr;
     StringAttr target;
@@ -1482,8 +1492,24 @@ bool CWsWorkunitsEx::onWUListQueries(IEspContext &context, IEspWUListQueriesRequ
         addWUQSQueryFilterInt(filters, filterCount, filterBuf, req.getPriorityHigh(), (WUQuerySortField) (WUQSFpriorityHi | WUQSFnumeric));
     if (!req.getActivated_isNull())
         addWUQSQueryFilterInt(filters, filterCount, filterBuf, req.getActivated(), (WUQuerySortField) (WUQSFActivited | WUQSFnumeric));
-    if (!req.getSuspendedByUser_isNull())
-        addWUQSQueryFilterInt(filters, filterCount, filterBuf, req.getSuspendedByUser(), (WUQuerySortField) (WUQSFSuspendedByUser | WUQSFnumeric));
+
+    MapStringTo<bool> suspendedQueriesByCluster;
+    CWUQueryFilterSuspendedType suspendedType = req.getSuspendedFilter();
+    if (suspendedType != WUQueryFilterSuspendedType_Undefined)
+    {
+        addWUQSQueryFilterInt(filters, filterCount, filterBuf, suspendedType, (WUQuerySortField) (WUQSFSuspendedFilter | WUQSFnumeric));
+        if (suspendedType == CWUQueryFilterSuspendedType_SUSPDBYFirstNode)
+        {
+            getSuspendedQueriesByCluster(suspendedQueriesByCluster, req.getQuerySetName(), req.getQueryID(), false);
+        }
+        else if ((suspendedType == CWUQueryFilterSuspendedType_SUSPDBYAnyNode) || (suspendedType == CWUQueryFilterSuspendedType_NOTSUSPD)
+            || (suspendedType == CWUQueryFilterSuspendedType_SUSPD))
+        {
+            getSuspendedQueriesByCluster(suspendedQueriesByCluster, req.getQuerySetName(), req.getQueryID(), true);
+        }
+    }
+    else if (!req.getSuspendedByUser_isNull()) //For the client before version 1.78
+        addWUQSQueryFilterInt(filters, filterCount, filterBuf, CWUQueryFilterSuspendedType_SUSPDBYUSER, (WUQuerySortField) (WUQSFSuspendedFilter | WUQSFnumeric));
     filters[filterCount] = WUQSFterm;
 
     unsigned numberOfQueries = 0;
@@ -1517,7 +1543,8 @@ bool CWsWorkunitsEx::onWUListQueries(IEspContext &context, IEspWUListQueriesRequ
 
     PROGLOG("WUListQueries: getQuerySetQueriesSorted");
     Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
-    Owned<IConstQuerySetQueryIterator> it = factory->getQuerySetQueriesSorted(sortOrder, filters, filterBuf.bufferBase(), pageStartFrom, pageSize, &cacheHint, &numberOfQueries, queriesUsingFileMap);
+    Owned<IConstQuerySetQueryIterator> it = factory->getQuerySetQueriesSorted(sortOrder, filters, filterBuf.bufferBase(),
+        pageStartFrom, pageSize, &cacheHint, &numberOfQueries, queriesUsingFileMap, &suspendedQueriesByCluster);
     resp.setCacheHint(cacheHint);
     PROGLOG("WUListQueries: getQuerySetQueriesSorted done");
 
@@ -1570,6 +1597,52 @@ bool CWsWorkunitsEx::onWUListQueries(IEspContext &context, IEspWUListQueriesRequ
     resp.setNumberOfQueries(numberOfQueries);
 
     return true;
+}
+
+void CWsWorkunitsEx::getSuspendedQueriesByCluster(MapStringTo<bool> &suspendedQueries, const char *querySet, const char *queryID, bool checkAllNodes)
+{
+    StringArray queryIDs;
+    if (!isEmptyString(queryID))
+        queryIDs.append(queryID);
+
+    if (!isEmptyString(querySet))
+    {
+        Owned<IPropertyTree> queriesOnCluster = getQueriesOnCluster(querySet, querySet, &queryIDs, checkAllNodes);
+        addSuspendedQueryIDs(suspendedQueries, queriesOnCluster, querySet);
+    }
+    else
+    {
+        Owned<IStringIterator> targets = getTargetClusters("RoxieCluster", nullptr);
+        ForEach(*targets)
+        {
+            SCMStringBuffer target;
+            targets->str(target);
+
+            Owned<IPropertyTree> queriesOnCluster = getQueriesOnCluster(target.str(), target.str(), &queryIDs, checkAllNodes);
+            addSuspendedQueryIDs(suspendedQueries, queriesOnCluster, target.str());
+        }
+    }
+}
+
+void CWsWorkunitsEx::addSuspendedQueryIDs(MapStringTo<bool> &suspendedQueryIDs, IPropertyTree *queriesOnCluster, const char *querySet)
+{
+    if (!queriesOnCluster)
+        throw makeStringExceptionV(ECLWATCH_INTERNAL_ERROR, "getQueriesOnCluster() returns nullptr for target <%s>", querySet);
+
+    Owned<IPropertyTreeIterator> queries = queriesOnCluster->getElements("Endpoint/Queries/Query");
+    ForEach(*queries)
+    {
+        IPropertyTree &query = queries->query();
+        const char *id = query.queryProp("@id");
+        if (isEmptyString(id))
+            continue; //Should not happen
+
+        if (query.getPropInt("@suspended"))
+        {
+            VStringBuffer suspendedID("%s/%s", querySet, id);
+            suspendedQueryIDs.setValue(suspendedID, true);
+        }
+    }
 }
 
 bool CWsWorkunitsEx::onWUListQueriesUsingFile(IEspContext &context, IEspWUListQueriesUsingFileRequest &req, IEspWUListQueriesUsingFileResponse &resp)
@@ -1864,32 +1937,41 @@ bool CWsWorkunitsEx::onWURecreateQuery(IEspContext &context, IEspWURecreateQuery
     return true;
 }
 
-
 bool CWsWorkunitsEx::onWUQueryDetails(IEspContext &context, IEspWUQueryDetailsRequest & req, IEspWUQueryDetailsResponse & resp)
 {
-    const char* querySet = req.getQuerySet();
-    const char* queryIdOrAlias = req.getQueryId();
-    bool  includeStateOnClusters = req.getIncludeStateOnClusters();
-    if (!querySet || !*querySet)
-        throw MakeStringException(ECLWATCH_QUERYSET_NOT_FOUND, "QuerySet not specified");
-    if (!queryIdOrAlias || !*queryIdOrAlias)
-        throw MakeStringException(ECLWATCH_QUERYID_NOT_FOUND, "QueryId not specified");
+    try
+    {
+        CWUQueryDetailsReq request(req);
+        getWUQueryDetails(context, request, resp);
+    }
+    catch(IException* e)
+    {
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+    }
+    return true;
+}
+
+void CWsWorkunitsEx::getWUQueryDetails(IEspContext &context, CWUQueryDetailsReq &req, IEspWUQueryDetailsResponse &resp)
+{
+    const char *querySet = req.getQuerySet();
+    if (isEmptyString(querySet))
+        throw makeStringException(ECLWATCH_QUERYSET_NOT_FOUND, "QuerySet not specified");
+    const char *queryIdOrAlias = req.getQueryIdOrAlias();
+    if (isEmptyString(queryIdOrAlias))
+        throw makeStringException(ECLWATCH_QUERYID_NOT_FOUND, "QueryId not specified");
 
     Owned<IPropertyTree> queryRegistry = getQueryRegistry(querySet, false);
     Owned<IPropertyTree> query = resolveQueryAlias(queryRegistry, queryIdOrAlias);
     if (!query)
-    {
-        DBGLOG("No matching Query");
-        throw MakeStringException(ECLWATCH_QUERYID_NOT_FOUND,"No matching query for given id or alias %s.", queryIdOrAlias);
-    }
+        throw makeStringExceptionV(ECLWATCH_QUERYID_NOT_FOUND, "No matching query for given id or alias %s.", queryIdOrAlias);
+
     const char* queryId = query->queryProp("@id");
     resp.setQueryId(queryId);
     resp.setQuerySet(querySet);
     PROGLOG("WUQueryDetails: QuerySet %s, query %s", querySet, queryId);
 
-    const char* queryName = query->queryProp("@name");
     const char* wuid = query->queryProp("@wuid");
-    resp.setQueryName(queryName);
+    resp.setQueryName(query->queryProp("@name"));
     resp.setWuid(wuid);
     resp.setDll(query->queryProp("@dll"));
     resp.setPublishedBy(query->queryProp("@publishedBy"));
@@ -1899,47 +1981,76 @@ bool CWsWorkunitsEx::onWUQueryDetails(IEspContext &context, IEspWUQueryDetailsRe
     double version = context.getClientVersion();
     if (version >= 1.46)
     {
-        Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
-        Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
-        if(!cw)
-            throw MakeStringException(ECLWATCH_CANNOT_UPDATE_WORKUNIT,"Cannot open workunit %s.",wuid);
-        ensureWsWorkunitAccess(context, *cw, SecAccess_Read);
-
         if (query->hasProp("@priority"))
             resp.setPriority(getQueryPriorityName(query->getPropInt("@priority")));
         resp.setIsLibrary(query->getPropBool("@isLibrary"));
-        SCMStringBuffer s;
-        resp.setWUSnapShot(cw->getSnapshot(s).str()); //Label
 
-        stat_type whenCompiled;
-        if (cw->getStatistic(whenCompiled, "", StWhenCompiled))
-        {
-            formatStatistic(s.s.clear(), whenCompiled, StWhenCompiled);
-            resp.setCompileTime(s.str());
-        }
-
-        StringArray libUsed, graphIds;
-        Owned<IConstWULibraryIterator> libs = &cw->getLibraries();
-        ForEach(*libs)
-            libUsed.append(libs->query().getName(s).str());
-        if (libUsed.length())
-            resp.setLibrariesUsed(libUsed);
         if (version < 1.64)
         {
+            StringArray graphIds;
             unsigned numGraphIds = getGraphIdsByQueryId(querySet, queryId, graphIds);
             resp.setCountGraphs(numGraphIds);
             if (numGraphIds > 0)
                 resp.setGraphIds(graphIds);
         }
+
+        if (req.getIncludeWUDetails())
+        {
+            Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
+            Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
+            if (!cw)
+                throw MakeStringException(ECLWATCH_CANNOT_UPDATE_WORKUNIT,"Cannot open workunit %s.",wuid);
+            ensureWsWorkunitAccess(context, *cw, SecAccess_Read);
+    
+            SCMStringBuffer s;
+            resp.setWUSnapShot(cw->getSnapshot(s).str()); //Label
+    
+            stat_type whenCompiled;
+            if (cw->getStatistic(whenCompiled, "", StWhenCompiled))
+            {
+                formatStatistic(s.s.clear(), whenCompiled, StWhenCompiled);
+                resp.setCompileTime(s.str());
+            }
+    
+            StringArray libUsed;
+            Owned<IConstWULibraryIterator> libs = &cw->getLibraries();
+            ForEach(*libs)
+                libUsed.append(libs->query().getName(s).str());
+            if (libUsed.length())
+                resp.setLibrariesUsed(libUsed);
+
+            if (version >= 1.50)
+            {
+                WsWuInfo winfo(context, cw);
+                resp.setResourceURLCount(winfo.getResourceURLCount());
+                if (version >= 1.64)
+                {
+                    IArrayOf<IEspECLTimer> timers;
+                    winfo.doGetTimers(timers); //Graph Duration
+                    if (timers.length())
+                        resp.setWUTimers(timers);
+
+                    IArrayOf<IEspECLGraph> graphs;
+                    winfo.doGetGraphs(graphs); //Graph Name, Label, Started, Finished, Type
+                    unsigned numGraphIds = graphs.length();
+                    resp.setCountGraphs(numGraphIds);
+                    if (numGraphIds > 0)
+                        resp.setWUGraphs(graphs);
+                }
+            }
+        }
     }
 
-    StringArray logicalFiles;
-    IArrayOf<IEspQuerySuperFile> superFiles;
-    getQueryFiles(context, wuid, queryId, querySet, logicalFiles, req.getIncludeSuperFiles() ? &superFiles : NULL);
-    if (logicalFiles.length())
-        resp.setLogicalFiles(logicalFiles);
-    if (superFiles.length())
-        resp.setSuperFiles(superFiles);
+    if (req.getIncludeWUQueryFiles())
+    {
+        StringArray logicalFiles;
+        IArrayOf<IEspQuerySuperFile> superFiles;
+        getQueryFiles(context, wuid, queryId, querySet, logicalFiles, req.getIncludeSuperFiles() ? &superFiles : nullptr);
+        if (logicalFiles.length())
+            resp.setLogicalFiles(logicalFiles);
+        if (superFiles.length())
+            resp.setSuperFiles(superFiles);
+    }
 
     if (version >= 1.42)
     {
@@ -1950,7 +2061,8 @@ bool CWsWorkunitsEx::onWUQueryDetails(IEspContext &context, IEspWUQueryDetailsRe
         else
             resp.setActivated(true);
     }
-    if (includeStateOnClusters && (version >= 1.43))
+    
+    if (req.getIncludeStateOnClusters() && (version >= 1.43))
     {
         StringArray queryIds;
         queryIds.append(queryId);
@@ -1963,25 +2075,7 @@ bool CWsWorkunitsEx::onWUQueryDetails(IEspContext &context, IEspWUQueryDetailsRe
             resp.setClusters(clusterStates);
         }
     }
-    if (version >= 1.50)
-    {
-        WsWuInfo winfo(context, wuid);
-        resp.setResourceURLCount(winfo.getResourceURLCount());
-        if (version >= 1.64)
-        {
-            IArrayOf<IEspECLTimer> timers;
-            winfo.doGetTimers(timers); //Graph Duration
-            if (timers.length())
-                resp.setWUTimers(timers);
 
-            IArrayOf<IEspECLGraph> graphs;
-            winfo.doGetGraphs(graphs); //Graph Name, Label, Started, Finished, Type
-            unsigned numGraphIds = graphs.length();
-            resp.setCountGraphs(numGraphIds);
-            if (numGraphIds > 0)
-                resp.setWUGraphs(graphs);
-        }
-    }
     if (req.getIncludeWsEclAddresses())
     {
         StringArray wseclAddresses;
@@ -2034,8 +2128,44 @@ bool CWsWorkunitsEx::onWUQueryDetails(IEspContext &context, IEspWUQueryDetailsRe
         }
         resp.setWsEclAddresses(wseclAddresses);
     }
+}
 
+bool CWsWorkunitsEx::onWUQueryDetailsLightWeight(IEspContext &context, IEspWUQueryDetailsLightWeightRequest & req, IEspWUQueryDetailsResponse & resp)
+{
+    try
+    {
+        CWUQueryDetailsReq request(req);
+        getWUQueryDetails(context, request, resp);
+    }
+    catch(IException* e)
+    {
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+    }
     return true;
+}
+
+CWUQueryDetailsReq::CWUQueryDetailsReq(IEspWUQueryDetailsRequest &req)
+{
+    querySet = req.getQuerySet();
+    queryIdOrAlias = req.getQueryId();
+    includeWUDetails = req.getIncludeWUDetails();
+    IncludeWUQueryFiles = req.getIncludeWUQueryFiles();
+    includeSuperFiles = req.getIncludeSuperFiles();
+    includeWsEclAddresses = req.getIncludeWsEclAddresses();
+    includeStateOnClusters = req.getIncludeStateOnClusters();
+    checkAllNodes = req.getCheckAllNodes();
+}
+
+CWUQueryDetailsReq::CWUQueryDetailsReq(IEspWUQueryDetailsLightWeightRequest &req)
+{
+    querySet = req.getQuerySet();
+    queryIdOrAlias = req.getQueryId();
+    includeWUDetails = req.getIncludeWUDetails();
+    IncludeWUQueryFiles = req.getIncludeWUQueryFiles();
+    includeSuperFiles = req.getIncludeSuperFiles();
+    includeWsEclAddresses = req.getIncludeWsEclAddresses();
+    includeStateOnClusters = req.getIncludeStateOnClusters();
+    checkAllNodes = req.getCheckAllNodes();
 }
 
 int EspQuerySuperFileCompareFunc(IInterface * const *i1, IInterface * const *i2)
@@ -2123,6 +2253,7 @@ bool CWsWorkunitsEx::getQueryFiles(IEspContext &context, const char* wuid, const
         if (!cw)
             return false;
 
+        double version = context.getClientVersion();
         StringArray superFileNames;
         Owned<IHpccPackageSet> ps = createPackageSet(process.str());
         Owned<IReferencedFileList> wufiles = createReferencedFileList(context.queryUserId(),
@@ -2136,8 +2267,10 @@ bool CWsWorkunitsEx::getQueryFiles(IEspContext &context, const char* wuid, const
             const char *lfn = rf.getLogicalName();
             if (lfn && *lfn)
             {
-                logicalFiles.append(lfn);
-                if (respSuperFiles && (rf.getFlags() & RefFileSuper))
+                bool isSuper = rf.getFlags() & RefFileSuper;
+                if (!isSuper || (version < 1.78))
+                    logicalFiles.append(lfn);
+                if (respSuperFiles && isSuper)
                     readSuperFiles(context, &rf, lfn, wufiles, respSuperFiles);
             }
         }

@@ -20,6 +20,7 @@
 
 #include "ws_packageprocess_esp.ipp"
 #include "dasds.hpp"
+#include "environment.hpp"
 
 #define THORCLUSTER "thor"
 #define HTHORCLUSTER "hthor"
@@ -131,6 +132,11 @@ public:
 
     virtual void getNavigationData(IEspContext &context, IPropertyTree & data)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+        {
+            CHttpSoapBinding::getNavigationData(context, data);
+            return;
+        }
         //Add navigation link here
         IPropertyTree *folderQueryset = ensureNavFolder(data, "Queries", NULL);
         CEspBinding::ensureNavLink(*folderQueryset, "Package Maps", "/esp/files/stub.htm?Widget=PackageMapQueryWidget", "Browse Package Maps", NULL, NULL, 2);
@@ -146,6 +152,8 @@ class CWsPackageProcessEx : public CWsPackageProcess
     void getPkgInfoById(const char *target, const char *packageMapId, IPropertyTree* tree);
     void getPkgInfoById(const char *packageMapId, IPropertyTree* tree);
     void deletePackage(const char *packageMap, const char *target, const char *process, bool globalScope, StringBuffer &returnMsg, int &returnCode);
+    void validatePackage(IEspContext &context, IEspValidatePackageRequest &req, IPropertyTree *packageMapTree, IConstWUClusterInfo *clusterInfo,
+        StringArray &queriesToVerify, StringArray &queriesToIgnore, IEspValidatePackageResponse *resp, IArrayOf<IEspValidateResult>& results);
 public:
     IMPLEMENT_IINTERFACE;
     virtual ~CWsPackageProcessEx()

@@ -29,6 +29,9 @@ include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 set (    SRCS 
          ../../esp/bindings/bindutil.cpp 
          ${ESPSCM_GENERATED_DIR}/common_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_workunits_struct_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_workunits_req_resp_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_workunits_queryset_req_resp_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_workunits_esp.cpp 
          DeleteHelper.cpp 
          DumpHelper.cpp 
@@ -56,6 +59,7 @@ include_directories (
          ./../../esp/platform 
          ./../../system/jlib 
          ./../../system/xmllib 
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 ADD_DEFINITIONS( -DECLPLUS_EXPORTS -D_CONSOLE )

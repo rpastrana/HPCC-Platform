@@ -29,7 +29,7 @@
 #include "dasds.hpp"
 #include "dautils.hpp"
 #include "danqs.hpp"
-#include "dalienv.hpp"
+#include "environment.hpp"
 #include "anawu.hpp"
 
 #ifdef _USE_CPPUNIT
@@ -220,8 +220,7 @@ static void process(IConstWorkUnit &w, IProperties *globals, const StringArray &
     }
     else if (stricmp(action, "analyze")==0)
     {
-        WuAnalyseOptions options; // TODO: allow options to be set from from command line parameters
-        analyseAndPrintIssues(&w, options);
+        analyseAndPrintIssues(&w, globals->getPropBool("UPDATEWU"));
     }
     else if (stricmp(action, "dump")==0)
     {
@@ -258,7 +257,7 @@ static void process(IConstWorkUnit &w, IProperties *globals, const StringArray &
         ScopeDumper dumper;
         WuScopeFilter filter;
         filter.addFilter(args.item(0));
-        if (filter.properties == PTnone)
+        if (!filter.outputDefined())
             filter.addOutputProperties(PTall);
         filter.finishedFilter();
 
@@ -392,7 +391,6 @@ int main(int argc, const char *argv[])
         {
             Owned<IGroup> serverGroup = createIGroup(daliServers.str(), DALI_SERVER_PORT);
             initClientProcess(serverGroup, DCR_Testing);
-            setPasswordsFromSDS();
         }
         else if (!serverSpecified)
         {
@@ -1345,7 +1343,7 @@ protected:
                 ex->setTimeStamp("2001");
             }
 
-            wu->addProcess("ptype", "pInstance", 54321, "mylog");
+            wu->addProcess("ptype", "pInstance", 54321, 50, "pPattern", false, "mylog");
             wu->setAction(WUActionCompile);
             wu->setApplicationValue("app1", "av1", "value", true);
             wu->setApplicationValueInt("app2", "av2", 42, true);

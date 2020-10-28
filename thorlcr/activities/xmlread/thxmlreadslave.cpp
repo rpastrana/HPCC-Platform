@@ -80,7 +80,7 @@ class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase
                 partFileIO.setown(iFile->open(IFOread));
 
             {
-                CriticalBlock block(statsCs);
+                CriticalBlock block(inputCs);
                 iFileIO.setown(partFileIO.getClear());
             }
 
@@ -108,7 +108,7 @@ class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase
             }
             Owned<IFileIO> partFileIO;
             {
-                CriticalBlock block(statsCs);
+                CriticalBlock block(inputCs);
                 partFileIO.setown(iFileIO.getClear());
             }
             mergeStats(fileStats, partFileIO);
@@ -198,7 +198,7 @@ class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase
     
         virtual void gatherStats(CRuntimeStatisticCollection & merged)
         {
-            CriticalBlock block(statsCs);
+            CriticalBlock block(inputCs);
             CDiskPartHandlerBase::gatherStats(merged);
             mergeStats(merged, iFileIO);
         }
@@ -237,7 +237,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         CDiskReadSlaveActivityBase::start();
         out = createSequentialPartHandler(partHandler, partDescs, false);
     }
@@ -253,7 +253,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow row = out->nextRow();
         if (!row)
             return NULL;

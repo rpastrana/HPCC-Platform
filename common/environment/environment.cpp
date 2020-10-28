@@ -30,6 +30,7 @@
 #include "dafdesc.hpp"
 #include "dasds.hpp"
 #include "dalienv.hpp"
+#include "daqueue.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -1024,6 +1025,54 @@ public:
 
 //==========================================================================================
 
+extern ENVIRONMENT_API unsigned __int64 readSizeSetting(const char * sizeStr, const unsigned long defaultSize)
+{
+    StringBuffer buf(sizeStr);
+    buf.trim();
+
+    if (buf.isEmpty())
+        return defaultSize;
+
+    const char* ptrStart = buf;
+    const char* ptrAfterDigit = ptrStart;
+    while (*ptrAfterDigit && isdigit(*ptrAfterDigit))
+        ptrAfterDigit++;
+
+    if (!*ptrAfterDigit)
+        return atol(buf);
+
+    const char* ptr = ptrAfterDigit;
+    while (*ptr && (ptr[0] == ' '))
+        ptr++;
+
+    char c = ptr[0];
+    buf.setLength(ptrAfterDigit - ptrStart);
+    unsigned __int64 size = atoll(buf);
+    switch (c)
+    {
+    case 'k':
+    case 'K':
+        size *= 1000;
+        break;
+    case 'm':
+    case 'M':
+        size *= 1000000;
+        break;
+    case 'g':
+    case 'G':
+        size *= 1000000000;
+        break;
+    case 't':
+    case 'T':
+        size *= 1000000000000;
+        break;
+    default:
+        break;
+    }
+    return size;
+}
+
+
 class CConstInstanceInfo : public CConstEnvBase, implements IConstInstanceInfo
 {
 public:
@@ -1887,7 +1936,6 @@ void CLocalEnvironment::clearCache()
     keyGroupMap.clear();
     keyPairMap.clear();
     init();
-    resetPasswordsFromSDS();
 }
 
 IConstDropZoneInfo * CLocalEnvironment::getDropZoneByAddressPath(const char * netaddress, const char *targetFilePath) const
@@ -2469,7 +2517,6 @@ extern ENVIRONMENT_API void closeEnvironment()
             pFactory = factory;
             factory = nullptr;
         }
-        clearPasswordsFromSDS();
         if (pFactory)
         {
             removeShutdownHook(*pFactory);
@@ -2481,53 +2528,6 @@ extern ENVIRONMENT_API void closeEnvironment()
     {
         EXCLOG(e);
     }
-}
-
-extern ENVIRONMENT_API unsigned __int64 readSizeSetting(const char * sizeStr, const unsigned long defaultSize)
-{
-    StringBuffer buf(sizeStr);
-    buf.trim();
-
-    if (buf.isEmpty())
-        return defaultSize;
-
-    const char* ptrStart = buf;
-    const char* ptrAfterDigit = ptrStart;
-    while (*ptrAfterDigit && isdigit(*ptrAfterDigit))
-        ptrAfterDigit++;
-
-    if (!*ptrAfterDigit)
-        return atol(buf);
-
-    const char* ptr = ptrAfterDigit;
-    while (*ptr && (ptr[0] == ' '))
-        ptr++;
-
-    char c = ptr[0];
-    buf.setLength(ptrAfterDigit - ptrStart);
-    unsigned __int64 size = atoll(buf);
-    switch (c)
-    {
-    case 'k':
-    case 'K':
-        size *= 1000;
-        break;
-    case 'm':
-    case 'M':
-        size *= 1000000;
-        break;
-    case 'g':
-    case 'G':
-        size *= 1000000000;
-        break;
-    case 't':
-    case 'T':
-        size *= 1000000000000;
-        break;
-    default:
-        break;
-    }
-    return size;
 }
 
 unsigned getAccessibleServiceURLList(const char *serviceType, std::vector<std::string> &list)
@@ -2579,4 +2579,639 @@ unsigned getAccessibleServiceURLList(const char *serviceType, std::vector<std::s
     return added;
 }
 
+//------------------- Moved from workunit.cpp -------------
 
+IPropertyTree *queryRoxieProcessTree(IPropertyTree *environment, const char *process)
+{
+    if (!process || !*process)
+        return NULL;
+    VStringBuffer xpath("Software/RoxieCluster[@name=\"%s\"]", process);
+    return environment->queryPropTree(xpath.str());
+}
+
+void getRoxieProcessServers(IPropertyTree *roxie, SocketEndpointArray &endpoints)
+{
+    if (!roxie)
+        return;
+    Owned<IPropertyTreeIterator> servers = roxie->getElements("RoxieServerProcess");
+    ForEach(*servers)
+    {
+        IPropertyTree &server = servers->query();
+        const char *netAddress = server.queryProp("@netAddress");
+        if (netAddress && *netAddress)
+        {
+            SocketEndpoint ep(netAddress, server.getPropInt("@port", 9876));
+            endpoints.append(ep);
+        }
+    }
+}
+
+void getRoxieProcessServers(const char *process, SocketEndpointArray &servers)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    getRoxieProcessServers(queryRoxieProcessTree(root, process), servers);
+}
+
+#define WUERR_MismatchClusterSize               5008
+
+class CEnvironmentClusterInfo: implements IConstWUClusterInfo, public CInterface
+{
+    StringAttr name;
+    StringAttr alias;
+    StringAttr serverQueue;
+    StringAttr agentQueue;
+    StringAttr agentName;
+    StringArray eclServerNames;
+    bool legacyEclServer = false;
+    StringAttr eclSchedulerName;
+    StringAttr roxieProcess;
+    SocketEndpointArray roxieServers;
+    StringAttr thorQueue;
+    StringArray thorProcesses;
+    StringArray primaryThorProcesses;
+    StringAttr prefix;
+    StringAttr ldapUser;
+    StringBuffer ldapPassword;
+    ClusterType platform;
+    unsigned clusterWidth;
+    unsigned roxieRedundancy;
+    unsigned channelsPerNode;
+    unsigned numberOfSlaveLogs;
+    int roxieReplicateOffset;
+
+public:
+    IMPLEMENT_IINTERFACE;
+    CEnvironmentClusterInfo(const char *_name, const char *_prefix, const char *_alias, IPropertyTree *agent,
+        IArrayOf<IPropertyTree> &eclServers, bool _legacyEclServer, IPropertyTree *eclScheduler, IArrayOf<IPropertyTree> &thors, IPropertyTree *roxie)
+        : name(_name), prefix(_prefix), alias(_alias), roxieRedundancy(0), channelsPerNode(0), numberOfSlaveLogs(0), roxieReplicateOffset(1), legacyEclServer(_legacyEclServer)
+    {
+        StringBuffer queue;
+        if (thors.ordinality())
+        {
+            thorQueue.set(getClusterThorQueueName(queue.clear(), name));
+            clusterWidth = 0;
+            bool isMultiThor = (thors.length() > 1);
+            ForEachItemIn(i,thors)
+            {
+                IPropertyTree &thor = thors.item(i);
+                const char* thorName = thor.queryProp("@name");
+                thorProcesses.append(thorName);
+                if (!isMultiThor)
+                    primaryThorProcesses.append(thorName);
+                else
+                {
+                    const char *nodeGroup = thor.queryProp("@nodeGroup");
+                    if (!nodeGroup || strieq(nodeGroup, thorName))
+                        primaryThorProcesses.append(thorName);
+                }
+                unsigned nodes = thor.getCount("ThorSlaveProcess");
+                unsigned slavesPerNode = thor.getPropInt("@slavesPerNode", 1);
+                unsigned channelsPerSlave = thor.getPropInt("@channelsPerSlave", 1);
+                unsigned ts = nodes * slavesPerNode * channelsPerSlave;
+                numberOfSlaveLogs = nodes * slavesPerNode;
+                if (clusterWidth && (ts!=clusterWidth))
+                    throw MakeStringException(WUERR_MismatchClusterSize,"CEnvironmentClusterInfo: mismatched thor sizes in cluster");
+                clusterWidth = ts;
+            }
+            platform = ThorLCRCluster;
+        }
+        else if (roxie)
+        {
+            roxieProcess.set(roxie->queryProp("@name"));
+            platform = RoxieCluster;
+            getRoxieProcessServers(roxie, roxieServers);
+            clusterWidth = roxieServers.length();
+            ldapUser.set(roxie->queryProp("@ldapUser"));
+            StringBuffer encPassword (roxie->queryProp("@ldapPassword"));
+            if (encPassword.length())
+                decrypt(ldapPassword, encPassword);
+            const char *redundancyMode = roxie->queryProp("@slaveConfig");
+            if (redundancyMode && *redundancyMode)
+            {
+                unsigned dataCopies = roxie->getPropInt("@numDataCopies", 1);
+                if (strieq(redundancyMode, "overloaded"))
+                    channelsPerNode = roxie->getPropInt("@channelsPernode", 1);
+                else if (strieq(redundancyMode, "full redundancy"))
+                {
+                    roxieRedundancy = dataCopies-1;
+                    roxieReplicateOffset = 0;
+                }
+                else if (strieq(redundancyMode, "cyclic redundancy"))
+                {
+                    roxieRedundancy = dataCopies-1;
+                    channelsPerNode = dataCopies;
+                    roxieReplicateOffset = roxie->getPropInt("@cyclicOffset", 1);
+                }
+            }
+        }
+        else
+        {
+            clusterWidth = 1;
+            platform = HThorCluster;
+        }
+
+#ifdef _CONTAINERIZED
+        if (agent || roxie)
+        {
+            agentQueue.set(getClusterEclAgentQueueName(queue.clear(), name));
+            if (agent)
+                agentName.set(agent->queryProp("@name"));
+        }
+#else
+        if (agent)
+        {
+            assertex(!roxie);
+            agentQueue.set(getClusterEclAgentQueueName(queue.clear(), name));
+            agentName.set(agent->queryProp("@name"));
+        }
+        else if (roxie)
+            agentQueue.set(getClusterRoxieQueueName(queue.clear(), name));
+#endif
+        if (eclScheduler)
+            eclSchedulerName.set(eclScheduler->queryProp("@name"));
+        ForEachItemIn(j, eclServers)
+        {
+            const IPropertyTree &eclServer = eclServers.item(j);
+            eclServerNames.append(eclServer.queryProp("@name"));
+        }
+
+        // MORE - does this need to be conditional?
+        serverQueue.set(getClusterEclCCServerQueueName(queue.clear(), name));
+    }
+
+    IStringVal & getName(IStringVal & str) const
+    {
+        str.set(name.get());
+        return str;
+    }
+    const char *getAlias() const
+    {
+        return alias;
+    }
+    IStringVal & getScope(IStringVal & str) const
+    {
+        str.set(prefix.get());
+        return str;
+    }
+    IStringVal & getAgentQueue(IStringVal & str) const
+    {
+        str.set(agentQueue);
+        return str;
+    }
+    IStringVal & getAgentName(IStringVal & str) const
+    {
+        str.set(agentName);
+        return str;
+    }
+    const StringArray & getECLServerNames() const
+    {
+        return eclServerNames;
+    }
+    bool isLegacyEclServer() const
+    {
+        return legacyEclServer;
+    }
+    IStringVal & getECLSchedulerName(IStringVal & str) const
+    {
+        str.set(eclSchedulerName);
+        return str;
+    }
+    virtual IStringVal & getServerQueue(IStringVal & str) const
+    {
+        str.set(serverQueue);
+        return str;
+    }
+    IStringVal & getThorQueue(IStringVal & str) const
+    {
+        str.set(thorQueue);
+        return str;
+    }
+    unsigned getSize() const
+    {
+        return clusterWidth;
+    }
+    unsigned getNumberOfSlaveLogs() const
+    {
+        return numberOfSlaveLogs;
+    }
+    virtual ClusterType getPlatform() const
+    {
+        return platform;
+    }
+    IStringVal & getRoxieProcess(IStringVal & str) const
+    {
+        str.set(roxieProcess.get());
+        return str;
+    }
+    const StringArray & getThorProcesses() const
+    {
+        return thorProcesses;
+    }
+    const StringArray & getPrimaryThorProcesses() const
+    {
+        return primaryThorProcesses;
+    }
+
+    const SocketEndpointArray & getRoxieServers() const
+    {
+        return roxieServers;
+    }
+    unsigned getRoxieRedundancy() const
+    {
+        return roxieRedundancy;
+    }
+    unsigned getChannelsPerNode() const
+    {
+        return channelsPerNode;
+    }
+    int getRoxieReplicateOffset() const
+    {
+        return roxieReplicateOffset;
+    }
+    const char *getLdapUser() const
+    {
+        return ldapUser.get();
+    }
+    virtual const char *getLdapPassword() const
+    {
+        return ldapPassword.str();
+    }
+};
+
+IStringVal &getProcessQueueNames(IStringVal &ret, const char *process, const char *type, const char *suffix)
+{
+    if (process)
+    {
+        Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+        Owned<IConstEnvironment> env = factory->openEnvironment();
+        Owned<IPropertyTree> root = &env->getPTree();
+        StringBuffer queueNames;
+        StringBuffer xpath;
+        xpath.appendf("%s[@process=\"%s\"]", type, process);
+        Owned<IPropertyTreeIterator> targets = root->getElements("Software/Topology/Cluster");
+        ForEach(*targets)
+        {
+            IPropertyTree &target = targets->query();
+            if (target.hasProp(xpath))
+            {
+                if (queueNames.length())
+                    queueNames.append(',');
+                queueNames.append(target.queryProp("@name")).append(suffix);
+            }
+        }
+        ret.set(queueNames);
+    }
+    return ret;
+}
+
+extern void getDFUServerQueueNames(StringArray &ret, const char *process)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+
+    StringBuffer xpath ("Software/DfuServerProcess");
+    if (!isEmptyString(process))
+        xpath.appendf("[@name=\"%s\"]", process);
+
+    Owned<IPropertyTree> root = &env->getPTree();
+    Owned<IPropertyTreeIterator> targets = root->getElements(xpath.str());
+    ForEach(*targets)
+    {
+        IPropertyTree &target = targets->query();
+        if (target.hasProp("@queue"))
+            ret.appendListUniq(target.queryProp("@queue"), ",");
+    }
+    return;
+}
+
+extern IStringVal &getEclCCServerQueueNames(IStringVal &ret, const char *process)
+{
+    return getProcessQueueNames(ret, process, "EclCCServerProcess", ECLCCSERVER_QUEUE_EXT);
+}
+
+extern IStringVal &getEclServerQueueNames(IStringVal &ret, const char *process)
+{
+    return getProcessQueueNames(ret, process, "EclServerProcess", ECLSERVER_QUEUE_EXT); // shares queue name with EclCCServer
+}
+
+extern IStringVal &getEclSchedulerQueueNames(IStringVal &ret, const char *process)
+{
+    return getProcessQueueNames(ret, process, "EclSchedulerProcess", ECLSCHEDULER_QUEUE_EXT); // Shares deployment/config with EclCCServer
+}
+
+extern IStringVal &getAgentQueueNames(IStringVal &ret, const char *process)
+{
+    return getProcessQueueNames(ret, process, "EclAgentProcess", ECLAGENT_QUEUE_EXT);
+}
+
+extern IStringVal &getRoxieQueueNames(IStringVal &ret, const char *process)
+{
+    return getProcessQueueNames(ret, process, "RoxieCluster", ROXIE_QUEUE_EXT);
+}
+
+extern IStringVal &getThorQueueNames(IStringVal &ret, const char *process)
+{
+    return getProcessQueueNames(ret, process, "ThorCluster", THOR_QUEUE_EXT);
+}
+
+extern StringBuffer &getClusterThorGroupName(StringBuffer &ret, const char *cluster)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    StringBuffer path;
+    path.append("Software/ThorCluster[@name=\"").append(cluster).append("\"]");
+    IPropertyTree * child = root->queryPropTree(path);
+    if (child)
+        getClusterGroupName(*child, ret);
+
+    return ret;
+}
+
+extern StringBuffer &getClusterGroupName(StringBuffer &ret, const char *cluster)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    StringBuffer path;
+    path.set("Software/ThorCluster[@name=\"").append(cluster).append("\"]");
+    IPropertyTree * child = root->queryPropTree(path);
+    if (child)
+    {
+        return getClusterGroupName(*child, ret);
+    }
+    path.set("Software/RoxieCluster[@name=\"").append(cluster).append("\"]");
+    child = root->queryPropTree(path);
+    if (child)
+    {
+        return getClusterGroupName(*child, ret);
+    }
+    path.set("Software/EclAgentProcess[@name=\"").append(cluster).append("\"]");
+    child = root->queryPropTree(path);
+    if (child)
+    {
+        return ret.setf("hthor__%s", cluster);
+    }
+
+    return ret;
+}
+
+extern ClusterType getClusterTypeByClusterName(const char *cluster)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    StringBuffer path;
+    path.set("Software/ThorCluster[@name=\"").append(cluster).append("\"]");
+    if (root->hasProp(path))
+        return ThorLCRCluster;
+
+    path.set("Software/RoxieCluster[@name=\"").append(cluster).append("\"]");
+    if (root->hasProp(path))
+        return RoxieCluster;
+
+    path.set("Software/EclAgentProcess[@name=\"").append(cluster).append("\"]");
+    if (root->hasProp(path))
+        return HThorCluster;
+
+    return NoCluster;
+}
+
+extern IStringIterator *getTargetClusters(const char *processType, const char *processName)
+{
+    Owned<CStringArrayIterator> ret = new CStringArrayIterator;
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    StringBuffer xpath;
+    xpath.appendf("%s", processType ? processType : "*");
+    if (processName && *processName)
+        xpath.appendf("[@process=\"%s\"]", processName);
+    Owned<IPropertyTreeIterator> targets = root->getElements("Software/Topology/Cluster");
+    ForEach(*targets)
+    {
+        IPropertyTree &target = targets->query();
+        if (target.hasProp(xpath))
+        {
+            ret->append(target.queryProp("@name"));
+        }
+    }
+    return ret.getClear();
+}
+
+extern bool isProcessCluster(const char *process)
+{
+    if (!process || !*process)
+        return false;
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    VStringBuffer xpath("Software/*Cluster[@name=\"%s\"]", process);
+    return root->hasProp(xpath.str());
+}
+
+extern bool isProcessCluster(const char *remoteDali, const char *process)
+{
+    if (!remoteDali || !*remoteDali)
+        return isProcessCluster(process);
+    if (!process || !*process)
+        return false;
+    Owned<INode> remote = createINode(remoteDali, 7070);
+    if (!remote)
+        return false;
+
+    //Cannot use getEnvironmentFactory() since it is using a remotedali
+    VStringBuffer xpath("Environment/Software/*Cluster[@name=\"%s\"]/@name", process);
+    try
+    {
+        Owned<IPropertyTreeIterator> clusters = querySDS().getElementsRaw(xpath, remote, 1000*60*1);
+        return clusters->first();
+    }
+    catch (IException *E)
+    {
+        StringBuffer msg;
+        E->errorMessage(msg);
+        DBGLOG("Exception validating cluster %s/%s: %s", remoteDali, xpath.str(), msg.str());
+        E->Release();
+    }
+    return true;
+}
+
+static void getTargetClusterProcesses(const IPropertyTree *environment, const IPropertyTree *cluster, const char *clustName, const char *processType, IArrayOf<IPropertyTree> &processes)
+{
+    StringBuffer xpath;
+    Owned<IPropertyTreeIterator> processItr = cluster->getElements(processType);
+    ForEach(*processItr)
+    {
+        const char *processName = processItr->query().queryProp("@process");
+        if (isEmptyString(processName))
+            throw MakeStringException(-1, "Empty %s/@process for %s", processType, clustName);
+
+        xpath.setf("Software/%s[@name=\"%s\"]", processType, processName);
+        if (environment->hasProp(xpath))
+            processes.append(*environment->getPropTree(xpath.str()));
+        else
+            WARNLOG("%s %s not found", processType, processName);
+    }
+}
+
+IConstWUClusterInfo* getTargetClusterInfo(IPropertyTree *environment, IPropertyTree *cluster)
+{
+    const char *clustname = cluster->queryProp("@name");
+
+    // MORE - at the moment configenv specifies eclagent and thor queues by (in effect) placing an 'example' thor or eclagent in the topology
+    // that uses the queue that will be used.
+    // We should and I hope will change that, at which point the code below gets simpler
+
+    StringBuffer prefix(cluster->queryProp("@prefix"));
+    prefix.toLowerCase();
+
+    StringBuffer xpath;
+    StringBuffer querySetName;
+
+    IPropertyTree *agent = NULL;
+    const char *agentName = cluster->queryProp("EclAgentProcess/@process");
+    if (!isEmptyString(agentName))
+    {
+        xpath.clear().appendf("Software/EclAgentProcess[@name=\"%s\"]", agentName);
+        agent = environment->queryPropTree(xpath.str());
+    }
+    IPropertyTree *eclScheduler = nullptr;
+    const char *eclSchedulerName = cluster->queryProp("EclSchedulerProcess/@process");
+    if (!isEmptyString(eclSchedulerName))
+    {
+        xpath.setf("Software/EclSchedulerProcess[@name=\"%s\"]", eclSchedulerName);
+        eclScheduler = environment->queryPropTree(xpath);
+    }
+    bool isLegacyEclServer = false;
+    IArrayOf<IPropertyTree> eclServers;
+    getTargetClusterProcesses(environment, cluster, clustname, "EclServerProcess", eclServers);
+    if (eclServers.ordinality())
+        isLegacyEclServer = true;
+    else
+        getTargetClusterProcesses(environment, cluster, clustname, "EclCCServerProcess", eclServers);
+
+    Owned<IPropertyTreeIterator> ti = cluster->getElements("ThorCluster");
+    IArrayOf<IPropertyTree> thors;
+    ForEach(*ti)
+    {
+        const char *thorName = ti->query().queryProp("@process");
+        if (thorName)
+        {
+            xpath.clear().appendf("Software/ThorCluster[@name=\"%s\"]", thorName);
+            if (environment->hasProp(xpath.str()))
+                thors.append(*environment->getPropTree(xpath.str()));
+        }
+    }
+    const char *roxieName = cluster->queryProp("RoxieCluster/@process");
+    return new CEnvironmentClusterInfo(clustname, prefix, cluster->queryProp("@alias"), agent, eclServers, isLegacyEclServer, eclScheduler, thors, queryRoxieProcessTree(environment, roxieName));
+}
+
+IPropertyTree* getTopologyCluster(Owned<IPropertyTree> &envRoot, const char *clustname)
+{
+    if (!clustname || !*clustname)
+        return NULL;
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    envRoot.setown(&env->getPTree());
+    StringBuffer xpath;
+    xpath.appendf("Software/Topology/Cluster[@name=\"%s\"]", clustname);
+    return envRoot->getPropTree(xpath.str());
+}
+
+bool validateTargetClusterName(const char *clustname)
+{
+    Owned<IPropertyTree> envRoot;
+    Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
+    return (cluster.get()!=NULL);
+}
+
+IConstWUClusterInfo* getTargetClusterInfo(const char *clustname)
+{
+    Owned<IPropertyTree> envRoot;
+    Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
+    if (!cluster)
+        return NULL;
+    return getTargetClusterInfo(envRoot, cluster);
+}
+
+unsigned getEnvironmentClusterInfo(CConstWUClusterInfoArray &clusters)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    return getEnvironmentClusterInfo(root, clusters);
+}
+
+unsigned getEnvironmentClusterInfo(IPropertyTree* environmentRoot, CConstWUClusterInfoArray &clusters)
+{
+    if (!environmentRoot)
+        return 0;
+
+    Owned<IPropertyTreeIterator> clusterIter = environmentRoot->getElements("Software/Topology/Cluster");
+    ForEach(*clusterIter)
+    {
+        IPropertyTree &node = clusterIter->query();
+        Owned<IConstWUClusterInfo> cluster = getTargetClusterInfo(environmentRoot, &node);
+        clusters.append(*cluster.getClear());
+    }
+    return clusters.ordinality();
+}
+
+const char *getTargetClusterComponentName(const char *clustname, const char *processType, StringBuffer &name)
+{
+    if (!clustname)
+        return NULL;
+
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    StringBuffer xpath;
+
+    xpath.appendf("Software/Topology/Cluster[@name=\"%s\"]", clustname);
+    Owned<IPropertyTree> cluster = root->getPropTree(xpath.str());
+    if (!cluster)
+        return NULL;
+
+    StringBuffer xpath1;
+    xpath1.appendf("%s/@process", processType);
+    name.append(cluster->queryProp(xpath1.str()));
+    return name.str();
+}
+
+unsigned getEnvironmentThorClusterNames(StringArray &thorNames, StringArray &groupNames, StringArray &targetNames, StringArray &queueNames)
+{
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> env = factory->openEnvironment();
+    Owned<IPropertyTree> root = &env->getPTree();
+    Owned<IPropertyTreeIterator> allTargets = root->getElements("Software/Topology/Cluster");
+    ForEach(*allTargets)
+    {
+        IPropertyTree &target = allTargets->query();
+        const char *targetName = target.queryProp("@name");
+        if (targetName && *targetName)
+        {
+            Owned<IPropertyTreeIterator> thorClusters = target.getElements("ThorCluster");
+            ForEach(*thorClusters)
+            {
+                const char *thorName = thorClusters->query().queryProp("@process");
+                VStringBuffer query("Software/ThorCluster[@name=\"%s\"]",thorName);
+                IPropertyTree *thorCluster = root->queryPropTree(query.str());
+                if (thorCluster)
+                {
+                    const char *groupName = thorCluster->queryProp("@nodeGroup");
+                    if (!groupName||!*groupName)
+                        groupName = thorName;
+                    thorNames.append(thorName);
+                    groupNames.append(groupName);
+                    targetNames.append(targetName);
+                    StringBuffer queueName(targetName);
+                    queueNames.append(queueName.append(THOR_QUEUE_EXT));
+                }
+            }
+        }
+    }
+    return thorNames.ordinality();
+}

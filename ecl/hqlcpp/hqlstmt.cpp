@@ -796,9 +796,9 @@ void BuildCtx::walkAssociations(AssocKind searchMask, IAssociationVisitor & visi
         if (searchStmts->associationMask & searchMask)
         {
             CIArray & defs = searchStmts->defs;
-            ForEachItemInRev(idx, searchStmts->defs)
+            ForEachItemInRev(idx, defs)
             {
-                HqlExprAssociation & cur = (HqlExprAssociation &)searchStmts->defs.item(idx);
+                HqlExprAssociation & cur = (HqlExprAssociation &)defs.item(idx);
                 if (cur.getKind() & searchMask)
                 {
                     if (visitor.visit(cur))
@@ -1215,6 +1215,8 @@ HqlStmt::HqlStmt(StmtKind _kind, HqlStmts * _container)
     incomplete = false;
     included = true;
     priority = 0;
+    optimize = false;
+    noOptimize = false;
 }
 
 void HqlStmt::addExpr(IHqlExpression * expr)
@@ -1222,6 +1224,11 @@ void HqlStmt::addExpr(IHqlExpression * expr)
     //Only allocate a single extra expression at a time, since statements generally have very few (1) expressions
     exprs.ensure(exprs.ordinality()+1);
     exprs.append(*expr);
+}
+
+void HqlStmt::addOption(IAtom * name)
+{
+    addExpr(createAttribute(name));
 }
 
 StmtKind HqlStmt::getStmt() const
@@ -1246,6 +1253,20 @@ static bool isEmptyGroup(IHqlStmt * stmt)
     }
     return false;
 }
+
+StringBuffer & HqlStmt::appendTextPrefix(StringBuffer & out) const
+{
+    if (hasAttribute(externAtom, exprs))
+        out.append("extern ");
+    if (hasAttribute(externCAtom, exprs))
+        out.append("extern \"C\" ECL_API ");
+    if (noOptimize)
+        out.append("NOOPTIMIZE ");
+    if (optimize)
+        out.append("OPTIMIZE ");
+    return out;
+}
+
 
 bool HqlStmt::hasChildren() const
 {
@@ -1299,6 +1320,12 @@ IHqlExpression * HqlStmt::queryExpr(unsigned index) const
     if (exprs.isItem(index))
         return &exprs.item(index);
     return NULL;
+}
+
+void HqlStmt::setForceOptimize(bool value)
+{
+    optimize = value;
+    noOptimize = !value;
 }
 
 
@@ -1371,13 +1398,13 @@ StringBuffer & HqlQuoteLiteralStmt::getTextExtra(StringBuffer & out) const
 
 StringBuffer & HqlQuoteCompoundStmt::getTextExtra(StringBuffer & out) const
 {
-    return out.append(text);
+    return appendTextPrefix(out).append(text);
 }
 
 
 StringBuffer & HqlQuoteLiteralCompoundStmt::getTextExtra(StringBuffer & out) const
 {
-    return out.append(text);
+    return appendTextPrefix(out).append(text);
 }
 
 

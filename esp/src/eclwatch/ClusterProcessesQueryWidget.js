@@ -1,20 +1,9 @@
 define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
-    "dojo/_base/array",
-    "dojo/on",
-    "dojo/dom",
-    "dojo/dom-class",
-    "dojo/dom-construct",
+    "src/nlsHPCC",
     "dojo/topic",
 
     "dijit/registry",
-    "dijit/form/Button",
-    "dijit/ToolbarSeparator",
-    "dijit/Dialog",
-    "dijit/form/TextBox",
 
     "dgrid/tree",
     "dgrid/selector",
@@ -29,10 +18,12 @@ define([
     "hpcc/PreflightDetailsWidget",
     "hpcc/MachineInformationWidget",
     "hpcc/IFrameWidget"
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, on, dom, domClass, domConstruct, topic,
-    registry, Button, ToolbarSeparator, Dialog, TextBox,
+], function (declare, nlsHPCCMod, topic,
+    registry,
     tree, selector,
     GridDetailsWidget, ESPPreflight, ESPRequest, WsTopology, Utility, ESPUtil, DelayLoadWidget, PreflightDetailsWidget, MachineInformationWidget, IFrameWidget) {
+
+    var nlsHPCC = nlsHPCCMod.default;
     return declare("CluserProcessesQueryWidget", [GridDetailsWidget, ESPUtil.FormHelper], {
         i18n: nlsHPCC,
 
@@ -42,26 +33,12 @@ define([
         machineFilterLoaded: null,
 
         postCreate: function (args) {
-            var context = this;
             this.inherited(arguments);
             this.openButton = registry.byId(this.id + "Open");
             this.refreshButton = registry.byId(this.id + "Refresh");
-            this.configurationButton = registry.byId(this.id + "Configuration");
 
             this.machineFilter = new MachineInformationWidget({});
-
-            this.configurationButton = new Button({
-                label: this.i18n.OpenConfiguration,
-                onClick: function(event) {
-                    context._onOpenConfiguration()
-                }
-            });
-
             this.machineFilter.placeAt(this.openButton.domNode, "after");
-            this.configurationButton.placeAt(this.openButton.domNode, "after");
-
-            new ToolbarSeparator().placeAt(this.machineFilter.domNode, "before");
-
             this.machineFilter.machineForm.set("style", "width:500px;");
             this.machineFilter.disable(true);
 
@@ -88,7 +65,7 @@ define([
                     var data = context.grid.row(selection[i].hpcc_id).data;
                     selections.push(data);
                 }
-                context.machineFilter._onSubmitRequest("machine",  selections);
+                context.machineFilter._onSubmitRequest("machine", selections);
             });
 
             topic.subscribe("createClusterProcessPreflightTab", function (topic) {
@@ -187,6 +164,11 @@ define([
                         sortable: false,
                         width: 100
                     },
+                    Channel: {
+                        label: this.i18n.Channel,
+                        sortable: false,
+                        width: 100
+                    },
                     Directory: {
                         label: this.i18n.Directory,
                         sortable: false,
@@ -213,13 +195,10 @@ define([
             });
 
             retVal.on(".dgrid-row:dblclick", function (evt) {
-                if (context._onRowDblClick) {
-                    var item = retVal.row(evt).data;
-                    context._onRowDblClick(item);
-                }
+                event.preventDefault();
             });
 
-            retVal.on(".dgrid-cell:click", function(evt){
+            retVal.on(".dgrid-cell:click", function (evt) {
                 var cell = retVal.cell(evt)
             });
 
@@ -250,8 +229,8 @@ define([
                     Directory: data.Directory,
                     OsType: data.OS
                 }
-            }).then(function(response) {
-                var tab = context.ensureConfigurationPane(data.Component + "_" + data.Name , {
+            }).then(function (response) {
+                var tab = context.ensureConfigurationPane(data.Component + "_" + data.Name, {
                     Component: data.Component,
                     Name: data.Name,
                     Usergenerated: response
@@ -279,29 +258,13 @@ define([
         refreshActionState: function () {
             var selection = this.grid.getSelected();
             var isTarget = false;
-            var isProcess = false;
 
             for (var i = 0; i < selection.length; ++i) {
-                if (selection.length > 1) {
-                    if (selection[i].type) {
-                        isTarget = false;
-                        isProcess = false;
-                    } else if (!selection[i].type) {
-                        isTarget = true;
-                        isProcess = false;
-                    }    
-                } else {
-                    if (selection[i] && selection[i].type === "targetClusterProcess") {
-                        isTarget = true;
-                        isProcess = false;
-                    } else {
-                        isTarget = false;
-                        isProcess = true;
-                    }
+                if (selection) {
+                    isTarget = true;
                 }
             }
             this.machineFilter.disable(!isTarget);
-            this.configurationButton.set("disabled", !isProcess);
         },
 
         ensureConfigurationPane: function (id, params) {

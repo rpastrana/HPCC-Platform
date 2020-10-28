@@ -204,6 +204,13 @@ void replaceSelectors(HqlExprArray & exprs, unsigned first, IHqlExpression * old
     }
 }
 
+IHqlExpression * replaceSelectorWithNull(IHqlExpression * expr, IHqlExpression * selector)
+{
+    NewSelectorReplacingTransformer transformer;
+    transformer.initNullMapping(selector);
+    return transformer.transformRoot(expr);
+}
+
 
 //NB: This can not be derived from NewHqlTransformer since it is called before the tree is normalised, and it creates
 //inconsistent expression trees.
@@ -1162,8 +1169,8 @@ protected:
     void checkMatch(IHqlExpression * select);
 
 protected:
-    LinkedHqlExpr selector;
     HqlExprCopyArray & selects;
+    LinkedHqlExpr selector;
 };
 
 

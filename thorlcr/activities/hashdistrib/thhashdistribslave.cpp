@@ -599,7 +599,7 @@ protected:
             if (owner.sendBlock(target, msg))
                 return;
             markStopped(target); // Probably a bit pointless if target is 'self' - process loop will have done already
-            owner.ActPrintLog("CSender::sendBlock stopped slave %d (finished=%d)", target+1, atomic_read(&numFinished));
+            ::ActPrintLog(owner.activity, thorDetailedLogLevel, "CSender::sendBlock stopped slave %d (finished=%d)", target+1, atomic_read(&numFinished));
         }
         void closeWrite()
         {
@@ -1076,7 +1076,7 @@ public:
         }
         else
             compressHandler = queryDefaultCompressHandler();
-        ActPrintLog("Using compressor: %s", compressHandler ? compressHandler->queryType() : "NONE");
+        ::ActPrintLog(activity, thorDetailedLogLevel, "Using compressor: %s", compressHandler ? compressHandler->queryType() : "NONE");
 
         allowSpill = activity->getOptBool(THOROPT_HDIST_SPILL, true);
         if (allowSpill)
@@ -1084,12 +1084,12 @@ public:
         writerPoolSize = activity->getOptUInt(THOROPT_HDIST_WRITE_POOL_SIZE, DEFAULT_WRITEPOOLSIZE);
         if (writerPoolSize>(numnodes*2))
             writerPoolSize = numnodes*2; // limit to 2 per target
-        ActPrintLog("Writer thread pool size : %d", writerPoolSize);
+        ::ActPrintLog(activity, thorDetailedLogLevel, "Writer thread pool size : %d", writerPoolSize);
         candidateLimit = activity->getOptUInt(THOROPT_HDIST_CANDIDATELIMIT);
-        ActPrintLog("candidateLimit : %d", candidateLimit);
-        ActPrintLog("inputBufferSize : %d, bucketSendSize = %d, pullBufferSize=%d", inputBufferSize, bucketSendSize, pullBufferSize);
+        ::ActPrintLog(activity, thorDetailedLogLevel, "candidateLimit : %d", candidateLimit);
+        ::ActPrintLog(activity, thorDetailedLogLevel, "inputBufferSize : %d, bucketSendSize = %d, pullBufferSize=%d", inputBufferSize, bucketSendSize, pullBufferSize);
         targetWriterLimit = activity->getOptUInt(THOROPT_HDIST_TARGETWRITELIMIT);
-        ActPrintLog("targetWriterLimit : %d", targetWriterLimit);
+        ::ActPrintLog(activity, thorDetailedLogLevel, "targetWriterLimit : %d", targetWriterLimit);
     }
 
     virtual void beforeDispose()
@@ -1133,7 +1133,7 @@ public:
 
     virtual IRowStream *connect(IThorRowInterfaces *_rowIf, IRowStream *_input, IHash *_ihash, ICompare *_iCompare, ICompare *_keepBestCompare)
     {
-        ActPrintLog("HASHDISTRIB: connect");
+        ::ActPrintLog(activity, thorDetailedLogLevel, "HASHDISTRIB: connect");
 
         rowIf.set(_rowIf);
         allocator = _rowIf->queryRowAllocator();
@@ -1164,7 +1164,7 @@ public:
         sendException.clear();
         recvException.clear();
         start();
-        ActPrintLog("HASHDISTRIB: connected");
+        ::ActPrintLog(activity, thorDetailedLogLevel, "HASHDISTRIB: connected");
         return piperd.getLink();
     }
 
@@ -1215,7 +1215,7 @@ public:
         MemoryBuffer tempMb;
         try
         {
-            ActPrintLog("Read loop start");
+            ::ActPrintLog(activity, thorDetailedLogLevel, "Read loop start");
             CMessageBuffer recvMb;
             Owned<ISerialStream> stream = createMemoryBufferSerialStream(tempMb);
             CThorStreamDeserializerSource rowSource;
@@ -1224,14 +1224,12 @@ public:
             Owned<IExpander> expander = getExpander();
             while (left && !aborted)
             {
-#ifdef _FULL_TRACE
-                ActPrintLog("HDIST: Receiving block");
-#endif
+                ::ActPrintLog(activity, thorDetailedLogLevel, "HDIST: Receiving block");
                 unsigned n = recvBlock(recvMb);
                 if (n==(unsigned)-1)
                     break;
 #ifdef _FULL_TRACE
-                ActPrintLog("HDIST: Received block %d from slave %d",recvMb.length(),n+1);
+                ::ActPrintLog(activity, thorDetailedLogLevel, "HDIST: Received block %d from slave %d",recvMb.length(),n+1);
 #endif
                 if (recvMb.length())
                 {
@@ -1276,20 +1274,16 @@ public:
                 else
                 {
                     left--;
-                    ActPrintLog("HDIST: finished slave %d, %d left",n+1,left);
+                    ::ActPrintLog(activity, thorDetailedLogLevel, "HDIST: finished slave %d, %d left",n+1,left);
                 }
-#ifdef _FULL_TRACE
-                ActPrintLog("HDIST: Put block %d from slave %d",recvMb.length(),n+1);
-#endif
+                ::ActPrintLog(activity, thorDetailedLogLevel, "HDIST: Put block %d from slave %d",recvMb.length(),n+1);
             }
         }
         catch (IException *e)
         {
             setRecvExc(e);
         }
-#ifdef _FULL_TRACE
-        ActPrintLog("HDIST: waiting localFinishedSem");
-#endif
+        ::ActPrintLog(activity, thorDetailedLogLevel, "HDIST: waiting localFinishedSem");
     }
 
     void recvloopdone()
@@ -2081,7 +2075,7 @@ public:
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         mptag = container.queryJobChannel().deserializeMPTag(data);
-        ActPrintLog("HASHDISTRIB: %sinit tag %d",mergecmp?"merge, ":"",(int)mptag);
+        ::ActPrintLog(this, thorDetailedLogLevel, "HASHDISTRIB: %sinit tag %d",mergecmp?"merge, ":"",(int)mptag);
 
         if (mergecmp)
             distributor = createPullHashDistributor(this, queryJobChannel().queryJobComm(), mptag, false, this);
@@ -2100,7 +2094,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         eofin = false;
         instrm.set(inputStream);
@@ -2109,7 +2103,7 @@ public:
     }
     virtual void stop() override
     {
-        ActPrintLog("HASHDISTRIB: stopping");
+        ::ActPrintLog(this, thorDetailedLogLevel, "HASHDISTRIB: stopping");
         if (out)
         {
             out->stop();
@@ -2123,11 +2117,6 @@ public:
         instrm.clear();
         PARENT::stop();
     }
-    virtual void kill() override
-    {
-        ActPrintLog("HASHDISTRIB: kill");
-        CSlaveActivity::kill();
-    }
     virtual void abort() override
     {
         CSlaveActivity::abort();
@@ -2136,7 +2125,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities); // careful not to call again in derivatives
+        ActivityTimer t(slaveTimerStats, timeActivities); // careful not to call again in derivatives
         if (abortSoon||eofin)
         {
             eofin = true;
@@ -2373,18 +2362,19 @@ public:
             if (i==self)
                 sizes[i] = s;
         }
-        for (i=0;i<n;i++) {
 #ifdef _DEBUG
-            ActPrintLog(activity, "after Node %d has %" I64F "d",i, insz[i]);
+        for (i=0;i<n;i++)
+            ::ActPrintLog(activity, thorDetailedLogLevel, "after Node %d has %" I64F "d",i, insz[i]);
 #endif
-        }
         tot = 0;
-        for (i=0;i<n;i++) {
-            if (sizes[i]) {
+        for (i=0;i<n;i++)
+        {
+            if (sizes[i])
+            {
                 if (i==self)
-                    ActPrintLog(activity, "Keep %" I64F "d local",sizes[i]);
+                    ::ActPrintLog(activity, thorDetailedLogLevel, "Keep %" I64F "d local",sizes[i]);
                 else
-                    ActPrintLog(activity, "Redistribute %" I64F "d to %d",sizes[i],i);
+                    ::ActPrintLog(activity, thorDetailedLogLevel, "Redistribute %" I64F "d to %d",sizes[i],i);
             }
             tot += sizes[i];
         }
@@ -2440,7 +2430,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         bool passthrough;
         Owned<IRowStream> calcStream = partitioner->calc(this, input, inputStream, passthrough);  // may return NULL
@@ -2515,7 +2505,7 @@ public:
         // NB: this TLK is an in-memory TLK serialized from the master - the name is for tracing by the key code only
         VStringBuffer name("index");
         name.append(queryId()).append("_tlk");
-        lookup = new CKeyLookup(*this, helper, createKeyIndex(name.str(), 0, *iFileIO, true, false)); // MORE - crc is not 0...
+        lookup = new CKeyLookup(*this, helper, createKeyIndex(name.str(), 0, *iFileIO, (unsigned) -1, true, false)); // MORE - crc is not 0...
         ihash = lookup;
     }
 };
@@ -3115,7 +3105,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         eos = lastEog = false;
         ThorDataLinkMetaInfo info;
@@ -3142,7 +3132,6 @@ public:
     }
     void kill()
     {
-        ActPrintLog("kill");
         currentInput.clear();
         bucketHandler.clear();
         bucketHandlerStack.kill();
@@ -3150,7 +3139,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eos)
             return NULL;
 
@@ -3333,7 +3322,7 @@ void CHashTableRowTable::rehash(const void **newRows)
     }
 
     if (maxRows)
-        ActPrintLog(&activity, "Rehashed bucket %d - old size = %d, new size = %d, elements = %d", owner->queryBucketNumber(), maxRows, newMaxRows, htElements);
+        ::ActPrintLog(&activity, thorDetailedLogLevel, "Rehashed bucket %d - old size = %d, new size = %d, elements = %d", owner->queryBucketNumber(), maxRows, newMaxRows, htElements);
 
     const void **oldRows = rows;
     rows = (const void **)_newRows.getClear();
@@ -3420,7 +3409,7 @@ bool CBucket::flush(bool critical)
         {
             if (clearHashTable(critical))
             {
-                PROGLOG("Flushed%s bucket %d - %d elements", critical?"(critical)":"", queryBucketNumber(), count);
+                LOG(MCthorDetailedDebugInfo, thorJob, "Flushed%s bucket %d - %d elements", critical?"(critical)":"", queryBucketNumber(), count);
                 return true;
             }
         }
@@ -3686,7 +3675,7 @@ void CBucketHandler::init(unsigned _numBuckets, IRowStream *keyStream)
         buckets[i] = new CBucket(owner, rowIf, keyIf, extractKey, i, &htRows);
         htRows.setOwner(buckets[i]);
     }
-    ActPrintLog(&owner, "Max %d buckets, current depth = %d", numBuckets, depth+1);
+    ::ActPrintLog(&owner, thorDetailedLogLevel, "Max %d buckets, current depth = %d", numBuckets, depth+1);
     initCallbacks();
     if (keyStream)
     {
@@ -3719,7 +3708,7 @@ CBucketHandler *CBucketHandler::getNextBucketHandler(Owned<IRowStream> &nextInpu
             Owned<IRowStream> keyStream = bucket->getSpillKeyStream(&keyCount);
             dbgassertex(keyStream);
             Owned<CBucketHandler> newBucketHandler = new CBucketHandler(owner, rowIf, keyIf, iRowHash, iKeyHash, iCompare, extractKey, depth+1, div*numBuckets);
-            ActPrintLog(&owner, "Created bucket handler %d, depth %d", currentBucket, depth+1);
+            ::ActPrintLog(&owner, thorDetailedLogLevel, "Created bucket handler %d, depth %d", currentBucket, depth+1);
             nextInput.setown(bucket->getSpillRowStream(&count));
             dbgassertex(nextInput);
             // Use peak in mem keys as estimate for next round of buckets.
@@ -3789,14 +3778,13 @@ public:
     virtual void start() override
     {
         HashDedupSlaveActivityBase::start();
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         Owned<IThorRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
         instrm.setown(distributor->connect(myRowIf, distInput, iHash, iCompare, keepBestCompare));
         distInput = instrm.get();
     }
     virtual void stop() override
     {
-        ActPrintLog("stopping");
         if (instrm)
         {
             instrm->stop();
@@ -3844,8 +3832,6 @@ class HashJoinSlaveActivity : public CSlaveActivity, implements IStopInput
 
     IThorDataLink *inL = nullptr;
     IThorDataLink *inR = nullptr;
-    IEngineRowStream *leftInputStream = nullptr;
-    IEngineRowStream *rightInputStream = nullptr;
     MemoryBuffer ptrbuf;
     IHThorHashJoinArg *joinargs;
     Owned<IJoinHelper> joinhelper;
@@ -3863,7 +3849,7 @@ class HashJoinSlaveActivity : public CSlaveActivity, implements IStopInput
 
 public:
     HashJoinSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container)
+        : CSlaveActivity(_container, hashJoinActivityStatistics)
     {
         lhsProgressCount = rhsProgressCount = 0;
         mptag = TAG_NULL;
@@ -3881,15 +3867,14 @@ public:
         joinargs = (IHThorHashJoinArg *)queryHelper();
         mptag = container.queryJobChannel().deserializeMPTag(data);
         mptag2 = container.queryJobChannel().deserializeMPTag(data);
-        ActPrintLog("HASHJOIN: init tags %d,%d",(int)mptag,(int)mptag2);
+        ::ActPrintLog(this, thorDetailedLogLevel, "HASHJOIN: init tags %d,%d",(int)mptag,(int)mptag2);
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         startAllInputs();
         leftdone = false;
         eof = false;
-        ActPrintLog("HASHJOIN: starting");
         inL = queryInput(0);
         inR = queryInput(1);
         IHash *ihashL = joinargs->queryHashLeft();
@@ -3898,7 +3883,7 @@ public:
         ICompare *icompareR = joinargs->queryCompareRight();
         if (!lhsDistributor)
             lhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), mptag, false, false, this, "LHS"));
-        Owned<IRowStream> reader = lhsDistributor->connect(queryRowInterfaces(inL), leftInputStream, ihashL, icompareL, nullptr);
+        Owned<IRowStream> reader = lhsDistributor->connect(queryRowInterfaces(inL), queryInputStream(0), ihashL, icompareL, nullptr);
         Owned<IThorRowLoader> loaderL = createThorRowLoader(*this, ::queryRowInterfaces(inL), icompareL, stableSort_earlyAlloc, rc_allDisk, SPILL_PRIORITY_HASHJOIN);
         loaderL->setTracingPrefix("Join left");
         strmL.setown(loaderL->load(reader, abortSoon));
@@ -3910,9 +3895,9 @@ public:
         leftdone = true;
         if (!rhsDistributor)
             rhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), mptag2, false, false, this, "RHS"));
-        reader.setown(rhsDistributor->connect(queryRowInterfaces(inR), rightInputStream, ihashR, icompareR, nullptr));
+        reader.setown(rhsDistributor->connect(queryRowInterfaces(inR), queryInputStream(1), ihashR, icompareR, nullptr));
         Owned<IThorRowLoader> loaderR = createThorRowLoader(*this, ::queryRowInterfaces(inR), icompareR, stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_HASHJOIN);;
-        loaderL->setTracingPrefix("Join right");
+        loaderR->setTracingPrefix("Join right");
         strmR.setown(loaderR->load(reader, abortSoon));
         loaderR.clear();
         reader.clear();
@@ -3959,7 +3944,6 @@ public:
     }
     virtual void stop()
     {
-        ActPrintLog("HASHJOIN: stopping");
         stopInputL();
         stopInputR();
         if (joinhelper)
@@ -3975,11 +3959,6 @@ public:
         }
         PARENT::stop();
     }
-    void kill()
-    {
-        ActPrintLog("HASHJOIN: kill");
-        CSlaveActivity::kill();
-    }
     void abort()
     {
         CSlaveActivity::abort();
@@ -3992,7 +3971,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!eof) {
             OwnedConstThorRow row = joinhelper->nextRow();
             if (row) {
@@ -4010,20 +3989,22 @@ public:
         info.canStall = true;
         info.unknownRowsOutput = true;
     }
-    void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-        CriticalBlock b(joinHelperCrit);
-        if (!joinhelper) // bit odd, but will leave as was for now.
         {
-            mb.append(lhsProgressCount);
-            mb.append(rhsProgressCount);
-        }
-        else
-        {
-            mb.append(joinhelper->getLhsProgress());
-            mb.append(joinhelper->getRhsProgress());
-        }
+            CriticalBlock b(joinHelperCrit);
+            if (!joinhelper) // bit odd, but will leave as was for now.
+            {
+                stats.setStatistic(StNumLeftRows, lhsProgressCount);
+                stats.setStatistic(StNumRightRows, rhsProgressCount);
+            }
+            else
+            {
+                stats.setStatistic(StNumLeftRows, joinhelper->getLhsProgress());
+                stats.setStatistic(StNumRightRows, joinhelper->getRhsProgress());
+            }
+        }    
+        PARENT::serializeStats(mb);
     }
 };
 #ifdef _MSC_VER
@@ -4295,7 +4276,7 @@ IAggregateTable *createRowAggregator(CActivityBase &activity, IHThorHashAggregat
     return new CAggregateHT(activity, extra, helper);
 }
 
-IRowStream *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBase &activity, IHThorRowAggregator &helper, IHThorHashAggregateExtra &helperExtra, IRowStream *localAggStream, mptag_t mptag)
+IRowStream *mergeLocalAggs(Owned<IHashDistributor> &distributor, CSlaveActivity &activity, IHThorRowAggregator &helper, IHThorHashAggregateExtra &helperExtra, IRowStream *localAggStream, mptag_t mptag)
 {
     Owned<IRowStream> strm;
     ICompare *elementComparer = helperExtra.queryCompareElements();
@@ -4315,9 +4296,10 @@ IRowStream *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBase &
         ICompare &cmp;
         IHThorRowAggregator &helper;
         IHashDistributor &distributor;
+        CSlaveActivity &activity;
     public:
-        CAggregatingStream(IHThorRowAggregator &_helper, IEngineRowAllocator &_rowAllocator, ICompare &_cmp, IHashDistributor &_distributor)
-            : helper(_helper), rowAllocator(_rowAllocator), cmp(_cmp), distributor(_distributor), rowBuilder(_rowAllocator)
+        CAggregatingStream(IHThorRowAggregator &_helper, IEngineRowAllocator &_rowAllocator, ICompare &_cmp, IHashDistributor &_distributor, CSlaveActivity &_activity)
+            : helper(_helper), rowAllocator(_rowAllocator), cmp(_cmp), distributor(_distributor), rowBuilder(_rowAllocator), activity(_activity)
         {
         }
         void start(IRowStream *_input)
@@ -4329,7 +4311,11 @@ IRowStream *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBase &
         {
             for (;;)
             {
-                OwnedConstThorRow row = input->nextRow();
+                OwnedConstThorRow row;
+                {
+                    BlockedActivityTimer t(activity.slaveTimerStats, activity.queryTimeActivities());
+                    row.setown(input->nextRow());
+                }
                 if (!row)
                 {
                     if (sz)
@@ -4362,11 +4348,12 @@ IRowStream *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBase &
             rowBuilder.clear();
             input->stop();
             input.clear();
+            BlockedActivityTimer t(activity.slaveTimerStats, activity.queryTimeActivities());
             distributor.disconnect(true);
             distributor.join();
         }
     };
-    CAggregatingStream *mergeStrm = new CAggregatingStream(helper, *rowAllocator, *elementComparer, *distributor.get());
+    CAggregatingStream *mergeStrm = new CAggregatingStream(helper, *rowAllocator, *elementComparer, *distributor.get(), activity);
     mergeStrm->start(strm.getClear());
     return mergeStrm;
 }
@@ -4430,18 +4417,18 @@ public:
         if (!container.queryLocalOrGrouped())
         {
             mptag = container.queryJobChannel().deserializeMPTag(data);
-            ActPrintLog("HASHAGGREGATE: init tags %d",(int)mptag);
+            ::ActPrintLog(this, thorDetailedLogLevel, "HASHAGGREGATE: init tags %d",(int)mptag);
         }
         localAggTable.setown(createRowAggregator(*this, *helper, *helper));
         localAggTable->init(queryRowAllocator());
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         doNextGroup(); // or local set if !grouped
         if (!container.queryGrouped())
-            ActPrintLog("Table before distribution contains %d entries", localAggTable->elementCount());
+            ::ActPrintLog(this, thorDetailedLogLevel, "Table before distribution contains %d entries", localAggTable->elementCount());
         if (!container.queryLocalOrGrouped() && container.queryJob().querySlaves()>1)
         {
             Owned<IRowStream> localAggStream = localAggTable->getRowStream(true);
@@ -4453,7 +4440,6 @@ public:
     }
     virtual void stop() override
     {
-        ActPrintLog("HASHAGGREGATE: stopping");
         if (localAggTable)
             localAggTable->reset();
         if (aggregateStream)
@@ -4471,7 +4457,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eos) return nullptr;
         const void *next = aggregateStream->nextRow();
         if (next)
@@ -4526,12 +4512,12 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow row = inputStream->ungroupedNextRow();
         if (!row)
             return NULL;
@@ -4567,55 +4553,46 @@ CActivityBase *createHashDistributeSlave(CGraphElementBase *container)
 {
     if (container&&(((IHThorHashDistributeArg *)container->queryHelper())->queryHash()==NULL))
         return createReDistributeSlave(container);
-    ActPrintLog(container, "HASHDISTRIB: createHashDistributeSlave");
     return new HashDistributeSlaveActivity(container);
 }
 
 CActivityBase *createNWayDistributeSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "NWAYDISTRIB: createNWayDistributeSlave");
     return new NWayDistributeSlaveActivity(container);
 }
 
 CActivityBase *createHashDistributeMergeSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "HASHDISTRIB: createHashDistributeMergeSlave");
     return new HashDistributeMergeSlaveActivity(container);
 }
 
 CActivityBase *createHashDedupSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "HASHDEDUP: createHashDedupSlave");
     return new GlobalHashDedupSlaveActivity(container);
 }
 
 CActivityBase *createHashLocalDedupSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "LOCALHASHDEDUP: createHashLocalDedupSlave");
     return new LocalHashDedupSlaveActivity(container);
 }
 
 CActivityBase *createHashJoinSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "HASHJOIN: createHashJoinSlave");
     return new HashJoinSlaveActivity(container);
 }
 
 CActivityBase *createHashAggregateSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "HASHAGGREGATE: createHashAggregateSlave");
     return new CHashAggregateSlave(container);
 }
 
 CActivityBase *createIndexDistributeSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "DISTRIBUTEINDEX: createIndexDistributeSlave");
     return new IndexDistributeSlaveActivity(container);
 }
 
 CActivityBase *createReDistributeSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "REDISTRIBUTE: createReDistributeSlave");
     return new ReDistributeSlaveActivity(container);
 }
 

@@ -66,7 +66,7 @@ void setStatisticsComponentName(StatisticCreatorType processType, const char * p
 //--------------------------------------------------------------------------------------------------------------------
 
 // Textual forms of the different enumerations, first items are for none and all.
-static constexpr const char * const measureNames[] = { "", "all", "ns", "ts", "cnt", "sz", "cpu", "skw", "node", "ppm", "ip", "cy", "en", "txt", "bool", "id", "fname", NULL };
+static constexpr const char * const measureNames[] = { "", "all", "ns", "ts", "cnt", "sz", "cpu", "skw", "node", "ppm", "ip", "cy", "en", "txt", "bool", "id", "fname", "cost", NULL };
 static constexpr const char * const creatorTypeNames[]= { "", "all", "unknown", "hthor", "roxie", "roxie:s", "thor", "thor:m", "thor:s", "eclcc", "esp", "summary", NULL };
 static constexpr const char * const scopeTypeNames[] = { "", "all", "global", "graph", "subgraph", "activity", "allocator", "section", "compile", "dfu", "edge", "function", "workflow", "child", "unknown", nullptr };
 
@@ -122,16 +122,16 @@ MODULE_INIT(INIT_PRIORITY_STANDARD)
 
 extern jlib_decl int compareScopeName(const char * left, const char * right)
 {
-    if (!*left)
+    if (!left || !*left)
     {
-        if (!*right)
+        if (!right || !*right)
             return 0;
         else
             return -1;
     }
     else
     {
-        if (!*right)
+        if (!right || !*right)
             return +1;
     }
 
@@ -377,7 +377,14 @@ static StringBuffer & formatLoad(StringBuffer & out, unsigned __int64 value)
 static StringBuffer & formatSkew(StringBuffer & out, unsigned __int64 value)
 {
     //Skew stored as 10000 = perfect, display as percentage
-    return out.appendf("%.2f%%", ((double)(__int64)value) / 100.0);
+    const __int64 sval = (__int64) value;
+    const double percent = ((double)sval) / 100.0;
+    if (sval >= 10000 || sval <= -10000) // For values >= 100%, whole numbers
+        return out.appendf("%.0f%%", percent);
+    else if (sval >= 1000 || sval <= -1000) // For values >= 10%, 1 decimal point
+        return out.appendf("%.1f%%", percent);
+    else                                 // Anything < 10%, 2 decimal points
+        return out.appendf("%.2f%%", percent);
 }
 
 static StringBuffer & formatIPV4(StringBuffer & out, unsigned __int64 value)
@@ -425,6 +432,8 @@ StringBuffer & formatStatistic(StringBuffer & out, unsigned __int64 value, Stati
         return out.append(value);
     case SMeasureEnum:
         return out.append("Enum{").append(value).append("}"); // JCS->GH for now, should map to known enum text somehow
+    case SMeasureCost:
+        return out.appendf("$%.06f", cost_type2money(value) );
     default:
         return out.append(value).append('?');
     }
@@ -586,6 +595,20 @@ void describeScope(StringBuffer & description, const char * scope)
     }
 }
 
+bool isParentScope(const char *parent, const char *scope)
+{
+    const char *p = parent;
+    const char *q = scope;
+    while(*p && (*p==*q))
+    {
+        ++p;
+        ++q;
+    }
+    if ((*p==0) && (*q==':' || *q==0))
+        return true;
+    return false;
+}
+
 const char * queryMeasurePrefix(StatisticMeasure measure)
 {
     switch (measure)
@@ -606,6 +629,7 @@ const char * queryMeasurePrefix(StatisticMeasure measure)
     case SMeasureBool:          return "Is";
     case SMeasureId:            return "Id";
     case SMeasureFilename:      return "";
+    case SMeasureCost:          return "Cost";
     case SMeasureNone:          return nullptr;
     default:
         return "Unknown";
@@ -657,6 +681,7 @@ StatsMergeAction queryMergeMode(StatisticMeasure measure)
     case SMeasureBool:          return StatsMergeKeepNonZero;
     case SMeasureId:            return StatsMergeKeepNonZero;
     case SMeasureFilename:      return StatsMergeKeepNonZero;
+    case SMeasureCost:          return StatsMergeSum;
     default:
 #ifdef _DEBUG
         throwUnexpected();
@@ -870,7 +895,24 @@ static const StatisticMeta statsMetaData[StMax] = {
     { CYCLESTAT(Total) },
     { SIZESTAT(OsDiskRead) },
     { SIZESTAT(OsDiskWrite) },
+    { TIMESTAT(Blocked) },
+    { CYCLESTAT(Blocked) },
+    { STAT(Cost, Execute, SMeasureCost) },
 };
+
+//Is a 0 value likely, and useful to be reported if it does happen to be zero?
+bool includeStatisticIfZero(StatisticKind kind)
+{
+    switch (kind)
+    {
+    case StNumRowsProcessed:
+    case StNumIterations:
+    case StNumIndexSeeks:
+    case StNumDuplicateKeys:
+        return true;
+    }
+    return false;
+}
 
 
 //--------------------------------------------------------------------------------------------------------------------
@@ -927,6 +969,11 @@ unsigned __int64 convertMeasure(StatisticMeasure from, StatisticMeasure to, unsi
         return cycle_to_nanosec(value);
     if ((from == SMeasureTimeNs) && (to == SMeasureCycle))
         return nanosec_to_cycle(value);
+    if ((from == SMeasureTimestampUs) && (to == SMeasureTimeNs))
+        return value * 1000;
+    if ((from == SMeasureTimeNs) && (to == SMeasureTimestampUs))
+        return value / 1000;
+
 #ifdef _DEBUG
     throwUnexpected();
 #else
@@ -936,6 +983,15 @@ unsigned __int64 convertMeasure(StatisticMeasure from, StatisticMeasure to, unsi
 
 unsigned __int64 convertMeasure(StatisticKind from, StatisticKind to, unsigned __int64 value)
 {
+    if (from == to)
+        return value;
+    return convertMeasure(queryMeasure(from), queryMeasure(to), value);
+}
+
+static unsigned __int64 convertSumMeasure(StatisticKind from, StatisticKind to, double value)
+{
+    if (from == to)
+        return value;
     return convertMeasure(queryMeasure(from), queryMeasure(to), value);
 }
 
@@ -944,6 +1000,8 @@ static double convertSquareMeasure(StatisticMeasure from, StatisticMeasure to, d
 {
     if (from == to)
         return value;
+
+    //Coded to a avoid overflow of unsigned __int64 in cycle_to_nanosec etc.
     const unsigned __int64 largeValue = 1000000000;
     double scale;
     if ((from == SMeasureCycle) && (to == SMeasureTimeNs))
@@ -1131,36 +1189,6 @@ static int compareUnsigned(unsigned const * left, unsigned const * right)
     return (*left < *right) ? -1 : (*left > *right) ? +1 : 0;
 }
 
-StatisticsMapping::StatisticsMapping(const std::initializer_list<StatisticKind> &kinds)
-{
-    for (auto kind : kinds)
-    {
-        assert(kind != StKindNone);
-        assert(!indexToKind.contains(kind));
-        indexToKind.append(kind);
-    }
-    createMappings();
-}
-
-StatisticsMapping::StatisticsMapping(const StatisticsMapping * from, const std::initializer_list<StatisticKind> &kinds)
-{
-    ForEachItemIn(idx, from->indexToKind)
-        indexToKind.append(from->indexToKind.item(idx));
-    for (auto kind : kinds)
-    {
-        assert(kind != StKindNone);
-        assert(!indexToKind.contains(kind));
-        indexToKind.append(kind);
-    }
-    createMappings();
-}
-
-StatisticsMapping::StatisticsMapping()
-{
-    for (int i = StKindAll+1; i < StMax; i++)
-        indexToKind.append(i);
-    createMappings();
-}
 
 void StatisticsMapping::createMappings()
 {
@@ -1178,7 +1206,7 @@ void StatisticsMapping::createMappings()
     }
 }
 
-const StatisticsMapping allStatistics;
+const StatisticsMapping allStatistics(StKindAll);
 const StatisticsMapping heapStatistics({StNumAllocations, StNumAllocationScans});
 const StatisticsMapping diskLocalStatistics({StCycleDiskReadIOCycles, StSizeDiskRead, StNumDiskReads, StCycleDiskWriteIOCycles, StSizeDiskWrite, StNumDiskWrites, StNumDiskRetries});
 const StatisticsMapping diskRemoteStatistics({StTimeDiskReadIO, StSizeDiskRead, StNumDiskReads, StTimeDiskWriteIO, StSizeDiskWrite, StNumDiskWrites, StNumDiskRetries});
@@ -1749,25 +1777,14 @@ public:
 
     CStatisticCollection * ensureSubScope(const StatsScopeId & search, bool hasChildren)
     {
-        //MORE: Implement hasChildren
-        return resolveSubScope(search, true, false);
-    }
+        //Once the CStatisicCollection is created it should not be replaced - so that returned pointers remain valid.
+        CStatisticCollection * match = children.find(&search);
+        if (match)
+            return match;
 
-    CStatisticCollection * resolveSubScope(const StatsScopeId & search, bool create, bool replace)
-    {
-        if (!replace)
-        {
-            CStatisticCollection * match = children.find(&search);
-            if (match)
-                return LINK(match);
-        }
-        if (create)
-        {
-            CStatisticCollection * ret = new CStatisticCollection(this, search);
-            children.add(*ret);
-            return LINK(ret);
-        }
-        return NULL;
+        CStatisticCollection * ret = new CStatisticCollection(this, search);
+        children.add(*ret);
+        return ret;
     }
 
     virtual void serialize(MemoryBuffer & out) const
@@ -1978,7 +1995,6 @@ public:
     }
     virtual void endScope() override
     {
-        scopes.tos().Release();
         scopes.pop();
     }
     virtual void addStatistic(StatisticKind kind, unsigned __int64 value) override
@@ -2105,7 +2121,8 @@ void CRuntimeStatistic::merge(unsigned __int64 otherValue, StatsMergeAction merg
         value = otherValue;
         break;
     case StatsMergeSum:
-        addAtomic(otherValue);
+        if (otherValue)
+            addAtomic(otherValue);
         break;
     case StatsMergeMin:
         value.store_min(otherValue);
@@ -2157,34 +2174,20 @@ unsigned __int64 CRuntimeStatisticCollection::getSerialStatisticValue(StatisticK
     return value + convertMeasure(rawKind, kind, rawValue);
 }
 
-void CRuntimeStatisticCollection::merge(const CRuntimeStatisticCollection & other)
+void CRuntimeStatisticCollection::merge(const CRuntimeStatisticCollection & other, unsigned node)
 {
-    if (&mapping == &other.mapping)
+    ForEachItemIn(i, other)
     {
-        ForEachItemIn(i, other)
-        {
-            unsigned __int64 value = other.values[i].get();
-            if (value)
-            {
-                StatisticKind kind = getKind(i);
-                values[i].merge(value, queryMergeMode(kind));
-            }
-        }
+        StatisticKind kind = other.getKind(i);
+        unsigned __int64 value = other.getStatisticValue(kind);
+        if (value)
+            mergeStatistic(kind, value, node);
     }
-    else
-    {
-        ForEachItemIn(i, other)
-        {
-            StatisticKind kind = other.getKind(i);
-            unsigned __int64 value = other.getStatisticValue(kind);
-            if (value)
-                mergeStatistic(kind, value);
-        }
-    }
+
     CNestedRuntimeStatisticMap *otherNested = other.queryNested();
     if (otherNested)
     {
-        ensureNested().merge(*otherNested);
+        ensureNested().merge(*otherNested, node);
     }
 }
 
@@ -2219,6 +2222,16 @@ void CRuntimeStatisticCollection::updateDelta(CRuntimeStatisticCollection & targ
 void CRuntimeStatisticCollection::mergeStatistic(StatisticKind kind, unsigned __int64 value)
 {
     queryStatistic(kind).merge(value, queryMergeMode(kind));
+}
+
+void CRuntimeStatisticCollection::sumStatistic(StatisticKind kind, unsigned __int64 value)
+{
+    queryStatistic(kind).sum(value);
+}
+
+void CRuntimeStatisticCollection::mergeStatistic(StatisticKind kind, unsigned __int64 value, unsigned node)
+{
+    mergeStatistic(kind, value);
 }
 
 void CRuntimeStatisticCollection::reset()
@@ -2259,13 +2272,12 @@ void CRuntimeStatisticCollection::recordStatistics(IStatisticGatherer & target) 
 {
     ForEachItem(i)
     {
+        StatisticKind kind = getKind(i);
         unsigned __int64 value = values[i].get();
-        if (value)
+        if (value || includeStatisticIfZero(kind))
         {
-            StatisticKind kind = getKind(i);
             StatisticKind serialKind= querySerializedKind(kind);
-            if (kind != serialKind)
-                value = convertMeasure(kind, serialKind, value);
+            value = convertMeasure(kind, serialKind, value);
 
             StatsMergeAction mergeAction = queryMergeMode(serialKind);
             target.updateStatistic(serialKind, value, mergeAction);
@@ -2433,6 +2445,7 @@ void CRuntimeSummaryStatisticCollection::DerivedStats::mergeStatistic(unsigned _
         }
     }
     count++;
+    sum += value;
     double dvalue = (double)value;
     sumSquares += dvalue * dvalue;
 }
@@ -2452,63 +2465,162 @@ CNestedRuntimeStatisticMap * CRuntimeSummaryStatisticCollection::createNested() 
     return new CNestedSummaryRuntimeStatisticMap;
 }
 
-void CRuntimeSummaryStatisticCollection::mergeStatistic(StatisticKind kind, unsigned __int64 value)
+void CRuntimeSummaryStatisticCollection::mergeStatistic(StatisticKind kind, unsigned __int64 value, unsigned node)
 {
     CRuntimeStatisticCollection::mergeStatistic(kind, value);
     unsigned index = queryMapping().getIndex(kind);
-    derived[index].mergeStatistic(value, 0);
+    derived[index].mergeStatistic(value, node);
 }
 
-static bool isSignificantSkew(StatisticKind kind, unsigned __int64 range, unsigned __int64 count)
+static bool skewHasMeaning(StatisticKind kind)
 {
-    //MORE: Could get more sophisticated!
-    return range > 1;
+    //Check that skew makes any sense for the type of measurement
+    switch (queryMeasure(kind))
+    {
+    case SMeasureTimeNs:
+    case SMeasureCount:
+    case SMeasureSize:
+        return true;
+    default:
+        return false;
+    }
 }
+
+static bool isSignificantRange(StatisticKind kind, unsigned __int64 range, unsigned __int64 mean)
+{
+    //Ignore tiny differences (often occur with counts of single rows on 1 slave node)
+    unsigned insignificantDiff = 1;
+    switch (queryMeasure(kind))
+    {
+    case SMeasureTimestampUs:
+        insignificantDiff = 1000;       // Ignore 1ms timestamp difference between nodes
+        break;
+    case SMeasureTimeNs:
+        insignificantDiff = 1000;       // Ignore 1us timing difference between nodes
+        break;
+    case SMeasureSize:
+        insignificantDiff = 1024;
+        break;
+    }
+    if (range <= insignificantDiff)
+        return false;
+
+    if (queryMergeMode(kind) == StatsMergeSum)
+    {
+        //if the range is < 0.01% of the mean, then it is unlikely to be interesting
+        if (range * 10000 < mean)
+            return false;
+    }
+
+    return true;
+}
+
+static bool isWorthReportingMergedValue(StatisticKind kind)
+{
+    switch (queryMergeMode(kind))
+    {
+    //Does the merged value have a meaning?
+    case StatsMergeSum:
+    case StatsMergeMin:
+    case StatsMergeMax:
+        break;
+    default:
+        return false;
+    }
+
+    switch (queryMeasure(kind))
+    {
+    case SMeasureTimeNs:
+        //Not generally worth reporting the total time across all slaves
+        return false;
+    }
+
+    return true;
+}
+
 
 void CRuntimeSummaryStatisticCollection::recordStatistics(IStatisticGatherer & target) const
 {
-    CRuntimeStatisticCollection::recordStatistics(target);
     for (unsigned i = 0; i < ordinality(); i++)
     {
         DerivedStats & cur = derived[i];
+        StatisticKind kind = getKind(i);
+        StatisticKind serialKind = querySerializedKind(kind);
         if (cur.count)
         {
-            StatisticKind kind = getKind(i);
-            StatisticKind serialKind= querySerializedKind(kind);
+            //Thor should always publish the average value for a stat, and the merged value if it makes sense.
+            //So that it is easy to analyse graphs independent of the number of slave nodes it is executed on.
+
+            unsigned __int64 mergedValue = convertMeasure(kind, serialKind, values[i].get());
+            if (isWorthReportingMergedValue(serialKind))
+            {
+                if (mergedValue || includeStatisticIfZero(serialKind))
+                    target.addStatistic(serialKind, mergedValue);
+            }
 
             unsigned __int64 minValue = convertMeasure(kind, serialKind, cur.min);
             unsigned __int64 maxValue = convertMeasure(kind, serialKind, cur.max);
             if (minValue != maxValue)
             {
-                double sum = (double)convertMeasure(kind, serialKind, values[i].get());
-                //Sum of squares needs to be translated twice
-                double sumSquares = convertSquareMeasure(kind, serialKind, cur.sumSquares);
+                //Avoid rounding errors summing values as doubles - if they were also summed as integers.  Probably overkill!
+                //There may still be noticeable rounding errors with timestamps...  revisit if it is an issue with any measurement
+                double sum = (queryMergeMode(kind) == StatsMergeSum) ? (double)mergedValue : convertSumMeasure(kind, serialKind, cur.sum);
                 double mean = (double)(sum / cur.count);
-                double variance = (sumSquares - sum * mean) / cur.count;
-                double stdDev = sqrt(variance);
-                double maxSkew = (10000.0 * ((maxValue-mean)/mean));
-                double minSkew = (10000.0 * ((mean-minValue)/mean));
                 unsigned __int64 range = maxValue - minValue;
 
+                target.addStatistic((StatisticKind)(serialKind|StAvgX), (unsigned __int64)mean);
                 target.addStatistic((StatisticKind)(serialKind|StMinX), minValue);
                 target.addStatistic((StatisticKind)(serialKind|StMaxX), maxValue);
-                target.addStatistic((StatisticKind)(serialKind|StAvgX), (unsigned __int64)mean);
-                target.addStatistic((StatisticKind)(serialKind|StDeltaX), range);
-                target.addStatistic((StatisticKind)(serialKind|StStdDevX), (unsigned __int64)stdDev);
-                //If all nodes are the same then we re actually merging results from multiple runs
-                //if the range is less than the count then
-                if ((cur.minNode != cur.maxNode) && isSignificantSkew(serialKind, range, cur.count))
+
+                //Exclude delta and std dev if a single node was the only one that provided a value
+                if ((minValue != 0) || (maxValue != mergedValue))
                 {
-                    target.addStatistic((StatisticKind)(serialKind|StSkewMin), (unsigned __int64)minSkew);
-                    target.addStatistic((StatisticKind)(serialKind|StSkewMax), (unsigned __int64)maxSkew);
+                    //The delta/std dev may have a different unit from the original values e.g., timestamps->times, so needs scaling
+                    unsigned __int64 scaledRange = convertMeasure(serialKind, serialKind|StDeltaX, range);
+                    target.addStatistic(serialKind|StDeltaX, scaledRange);
+
+                    if (skewHasMeaning(serialKind))
+                    {
+                        //Sum of squares needs to be translated twice
+                        double sumSquares = convertSquareMeasure(kind, serialKind, cur.sumSquares);
+                        double variance = (sumSquares - sum * mean) / cur.count;
+                        double stdDev = sqrt(variance);
+                        unsigned __int64 scaledStdDev = convertMeasure(serialKind, serialKind|StStdDevX, stdDev);
+                        target.addStatistic(serialKind|StStdDevX, scaledStdDev);
+                    }
+                }
+
+                //First test is redundant - but protects against minValue != maxValue test above changing.
+                if ((cur.minNode != cur.maxNode) && isSignificantRange(serialKind, range, mean))
+                {
                     target.addStatistic((StatisticKind)(serialKind|StNodeMin), cur.minNode);
                     target.addStatistic((StatisticKind)(serialKind|StNodeMax), cur.maxNode);
+
+                    if (skewHasMeaning(serialKind))
+                    {
+                        double maxSkew = (10000.0 * ((maxValue-mean)/mean));
+                        double minSkew = (10000.0 * ((mean-minValue)/mean));
+                        target.addStatistic((StatisticKind)(serialKind|StSkewMin), (unsigned __int64)minSkew);
+                        target.addStatistic((StatisticKind)(serialKind|StSkewMax), (unsigned __int64)maxSkew);
+                    }
                 }
             }
-            else if (cur.count != 1)
-                target.addStatistic((StatisticKind)(serialKind|StAvgX), minValue);
+            else
+            {
+                if (minValue || includeStatisticIfZero(serialKind))
+                    target.addStatistic((StatisticKind)(serialKind|StAvgX), minValue);
+            }
+        }
+        else
+        {
+            //No results received from any of the slave yet... so do not report any stats
         }
     }
+
+    reportIgnoredStats();
+    CNestedRuntimeStatisticMap *qn = queryNested();
+    if (qn)
+        qn->recordStatistics(target);
 }
 
 bool CRuntimeSummaryStatisticCollection::serialize(MemoryBuffer & out) const
@@ -2542,12 +2654,12 @@ void CNestedRuntimeStatisticCollection::deserialize(MemoryBuffer & in)
 
 void CNestedRuntimeStatisticCollection::deserializeMerge(MemoryBuffer& in)
 {
-    stats->deserialize(in);
+    stats->deserializeMerge(in);
 }
 
-void CNestedRuntimeStatisticCollection::merge(const CNestedRuntimeStatisticCollection & other)
+void CNestedRuntimeStatisticCollection::merge(const CNestedRuntimeStatisticCollection & other, unsigned node)
 {
-    stats->merge(other.queryStats());
+    stats->merge(other.queryStats(), node);
 }
 
 bool CNestedRuntimeStatisticCollection::serialize(MemoryBuffer& out) const
@@ -2646,14 +2758,14 @@ void CNestedRuntimeStatisticMap::deserializeMerge(MemoryBuffer& in)
     }
 }
 
-void CNestedRuntimeStatisticMap::merge(const CNestedRuntimeStatisticMap & other)
+void CNestedRuntimeStatisticMap::merge(const CNestedRuntimeStatisticMap & other, unsigned node)
 {
     ReadLockBlock b(other.lock);
     ForEachItemIn(i, other.map)
     {
         CNestedRuntimeStatisticCollection & cur = other.map.item(i);
         CNestedRuntimeStatisticCollection & target = addNested(cur.scope, cur.queryMapping());
-        target.merge(cur);
+        target.merge(cur, node);
     }
 }
 
@@ -3541,10 +3653,12 @@ void verifyStatisticFunctions()
     }
 }
 
-#if 0
+#ifdef _DEBUG
 MODULE_INIT(INIT_PRIORITY_STANDARD)
 {
     verifyStatisticFunctions();
     return true;
 }
 #endif
+
+

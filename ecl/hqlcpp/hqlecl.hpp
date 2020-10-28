@@ -49,9 +49,10 @@ public:
     virtual void addManifestsFromArchive(IPropertyTree *archive) = 0;
     virtual void addWebServiceInfo(IPropertyTree *wsinfo) = 0;
     virtual void setSaveGeneratedFiles(bool value) = 0;
+    virtual void addArchiveAsResource(StringBuffer &buf) = 0;
 };
 
-extern HQLCPP_API IHqlExprDllGenerator * createDllGenerator(IErrorReceiver * errs, const char *wuname, const char * targetdir, IWorkUnit *wu, const char * template_dir, ClusterType targetClusterType, ICodegenContextCallback * ctxCallback, bool checkForLocalFileUploads, bool okToAbort);
+extern HQLCPP_API IHqlExprDllGenerator * createDllGenerator(IErrorReceiver * errs, const char *wuname, const char * targetdir, IWorkUnit *wu, ClusterType targetClusterType, ICodegenContextCallback * ctxCallback, bool checkForLocalFileUploads, bool okToAbort);
 
 
 //Extract a single level of external libraries.
@@ -59,5 +60,6 @@ extern HQLCPP_API ClusterType queryClusterType(IConstWorkUnit * wu, ClusterType 
 extern HQLCPP_API IHqlExpression * extractExternalLibraries(HqlExprArray & libraries, IHqlExpression * query);
 extern HQLCPP_API unsigned getLibraryCRC(IHqlExpression * library);
 extern HQLCPP_API void setWorkunitHash(IWorkUnit * wu, IHqlExpression * expr);
+extern HQLCPP_API void recordQueueFilePrefixes(IWorkUnit * wu, IPropertyTree * configuration);
 
 #endif

@@ -53,10 +53,6 @@ protected:
     rowcount_t remoteLimit = RCMAX;
     bool localKey = false;
     size32_t seekGEOffset = 0;
-    __int64 lastSeeks = 0, lastScans = 0;
-    UInt64Array _statsArr;
-    SpinLock statLock;  // MORE: Can this be avoided by passing in the delta?
-    unsigned __int64 *statsArr = nullptr;
     size32_t fixedDiskRecordSize = 0;
     rowcount_t progress = 0;
     bool eoi = false;
@@ -70,6 +66,7 @@ protected:
     Owned<IKeyManager> keyMergerManager;
     Owned<IKeyIndexSet> keyIndexSet;
     IConstPointerArrayOf<ITranslator> translators;
+    bool initialized = false;
 
     rowcount_t keyedLimitCount = RCMAX;
     rowcount_t keyedLimit = RCMAX;
@@ -79,6 +76,26 @@ protected:
     rowcount_t rowLimit = RCMAX;
     bool useRemoteStreaming = false;
 
+    template<class StatProvider>
+    class CCaptureIndexStats
+    {
+        CRuntimeStatisticCollection &stats;
+        StatProvider &statProvider;
+        unsigned __int64 startSeeks = 0, startScans = 0, startWildSeeks = 0;
+    public:
+        inline CCaptureIndexStats(CRuntimeStatisticCollection &_stats, StatProvider &_statProvider) : stats(_stats), statProvider(_statProvider)
+        {
+            startSeeks = statProvider.querySeeks();
+            startScans = statProvider.queryScans();
+            startWildSeeks = statProvider.queryWildSeeks();
+        }
+        inline ~CCaptureIndexStats()
+        {
+            stats.mergeStatistic(StNumIndexSeeks, statProvider.querySeeks() - startSeeks);
+            stats.mergeStatistic(StNumIndexScans, statProvider.queryScans() - startScans);
+            stats.mergeStatistic(StNumIndexWildSeeks, statProvider.queryWildSeeks() - startWildSeeks);
+        }
+    };
 
     class TransformCallback : implements IThorIndexCallback , public CSimpleInterface
     {
@@ -172,7 +189,8 @@ public:
                     Owned<ITranslator> translator = getTranslators(part);
                     IOutputMetaData *actualFormat = translator ? &translator->queryActualFormat() : expectedFormat;
                     bool tryRemoteStream = actualFormat->queryTypeInfo()->canInterpret() && actualFormat->queryTypeInfo()->canSerialize() &&
-                                           projectedFormat->queryTypeInfo()->canInterpret() && projectedFormat->queryTypeInfo()->canSerialize();
+                                           projectedFormat->queryTypeInfo()->canInterpret() && projectedFormat->queryTypeInfo()->canSerialize() &&
+                                           !containsKeyedSignedInt(actualFormat->queryTypeInfo());
 
                     /* If part can potentially be remotely streamed, 1st check if any part is local,
                      * then try to remote stream, and otherwise failover to legacy remote access
@@ -288,7 +306,7 @@ public:
                 StringBuffer path;
                 rfn.getPath(path); // NB: use for tracing only, IDelayedFile uses IPartDescriptor and any copy
 
-                Owned<IKeyIndex> keyIndex = createKeyIndex(path, crc, *lazyIFileIO, false, false);
+                Owned<IKeyIndex> keyIndex = createKeyIndex(path, crc, *lazyIFileIO, (unsigned) -1, false, false);
                 Owned<IKeyManager> klManager = createLocalKeyManager(helper->queryDiskRecordSize()->queryRecordAccessor(true), keyIndex, nullptr, helper->hasNewSegmentMonitors(), false);
                 if (localMerge)
                 {
@@ -363,7 +381,6 @@ public:
             return;
         resetManager(manager);
         callback.prepareManager(manager);
-        resetLastStats();
         helper->createSegmentMonitors(manager);
         manager->finishSegmentMonitors();
         manager->reset();
@@ -393,10 +410,12 @@ public:
         const void *ret = nullptr;
         while (true)
         {
-            ret = currentInput->nextKey();
-            noteStats(currentInput->querySeeks(), currentInput->queryScans());
-            if (ret)
-                break;
+            {
+                CCaptureIndexStats<IIndexLookup> scoped(stats, *currentInput);
+                ret = currentInput->nextKey();
+                if (ret)
+                    break;
+            }
             configureNextInput();
             if (!currentInput)
                 break;
@@ -481,12 +500,16 @@ public:
             keyedLimitCount = getLocalCount(keyedLimit, true);
     }
 public:
-    CIndexReadSlaveBase(CGraphElementBase *container) 
-        : CSlaveActivity(container), callback(*this)
+    CIndexReadSlaveBase(CGraphElementBase *container)
+        : CSlaveActivity(container, indexReadActivityStatistics), callback(*this)
     {
         helper = (IHThorIndexReadBaseArg *)container->queryHelper();
         limitTransformExtra = nullptr;
         fixedDiskRecordSize = helper->queryDiskRecordSize()->querySerializedDiskMeta()->getFixedSize(); // 0 if variable and unused
+        allocator.set(queryRowAllocator());
+        deserializer.set(queryRowDeserializer());
+        serializer.set(queryRowSerializer());
+        helper->setCallback(&callback);
         reInit = 0 != (helper->getFlags() & (TIRvarfilename|TIRdynamicfilename));
     }
     rowcount_t getLocalCount(const rowcount_t keyedLimit, bool hard)
@@ -505,11 +528,11 @@ public:
                 break;
             if (keyManager)
                 prepareManager(keyManager);
+            CCaptureIndexStats<IIndexLookup> scoped(stats, *indexInput);
             if (hard) // checkCount checks hard key count only.
                 count += indexInput->checkCount(keyedLimit-count); // part max, is total limit [keyedLimit] minus total so far [count]
             else
                 count += indexInput->getCount();
-            noteStats(indexInput->querySeeks(), indexInput->queryScans());
             bool limitHit = count > keyedLimit;
             if (keyManager)
                 resetManager(keyManager);
@@ -527,18 +550,6 @@ public:
         sendPartialCount(*this, count);
         return getFinalCount(*this);
     }
-    inline void resetLastStats()
-    {
-        lastSeeks = lastScans = 0;
-    }
-    inline void noteStats(unsigned seeks, unsigned scans)
-    {
-        SpinBlock b(statLock);
-        statsArr[AS_Seeks] += seeks-lastSeeks;
-        statsArr[AS_Scans] += scans-lastScans;
-        lastSeeks = seeks;
-        lastScans = scans;
-    }
 
 // IThorSlaveActivity
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -546,19 +557,22 @@ public:
         data.read(logicalFilename);
         if (!container.queryLocalOrGrouped())
             mpTag = container.queryJobChannel().deserializeMPTag(data); // channel to pass back partial counts for aggregation
+        if (initialized)
+        {
+            partDescs.kill();
+            keyIndexSet.clear();
+            translators.kill();
+            keyManagers.kill();
+            keyMergerManager.clear();
+        }
+        else
+            initialized = true;
+        
         unsigned parts;
         data.read(parts);
         if (parts)
             deserializePartFileDescriptors(data, partDescs);
         localKey = partDescs.ordinality() ? partDescs.item(0).queryOwner().queryProperties().getPropBool("@local", false) : false;
-        allocator.set(queryRowAllocator());
-        deserializer.set(queryRowDeserializer());
-        serializer.set(queryRowSerializer());
-        helper->setCallback(&callback);
-        _statsArr.append(0);
-        _statsArr.append(0);
-        statsArr = _statsArr.getArray();
-        lastSeeks = lastScans = 0;
         localMerge = (localKey && partDescs.ordinality()>1) || seekGEOffset;
 
         if (parts)
@@ -646,7 +660,7 @@ public:
     // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         keyedProcessed = 0;
         if (!eoi)
@@ -672,12 +686,10 @@ public:
             currentManager = nullptr;
         }
     }
-    void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-        mb.append(progress);
-        ForEachItemIn(s, _statsArr)
-            mb.append(_statsArr.item(s));
+        stats.setStatistic(StNumRowsProcessed, progress);
+        PARENT::serializeStats(mb);
     }
 };
 
@@ -697,6 +709,13 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
 
     const void *getNextRow()
     {
+        unsigned __int64 postFiltered = 0;
+        auto onScopeExitFunc = [&]()
+        {
+            if (postFiltered > 0)
+                stats.mergeStatistic(StNumPostFiltered, postFiltered);
+        };
+        COnScopeExit scoped(onScopeExitFunc);
         RtlDynamicRowBuilder ret(allocator);
         for (;;)
         {
@@ -713,6 +732,8 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
                         callback.finishedRow();
                         return ret.finalizeRowClear(sz);
                     }
+                    else
+                        ++postFiltered;
                 }
                 else
                 {
@@ -723,7 +744,10 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
                 }
             }
             else
+            {
+                ++postFiltered;
                 callback.finishedRow(); // since filter might have accessed a blob
+            }
         }
         return nullptr;
     }
@@ -746,9 +770,9 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
             helper->mapOutputToInput(tempBuilder, seek, numFields); // NOTE - weird interface to mapOutputToInput means that it STARTS writing at seekGEOffset...
             rawSeek = (byte *)temp;
         }
+        CCaptureIndexStats<IKeyManager> scoped(stats, *currentManager);
         if (!currentManager->lookupSkip(rawSeek, seekGEOffset, seekSize))
             return NULL;
-        noteStats(currentManager->querySeeks(), currentManager->queryScans());
         const byte *row = currentManager->queryKeyBuffer();
 #ifdef _DEBUG
         if (memcmp(row + seekGEOffset, rawSeek, seekSize) < 0)
@@ -763,6 +787,13 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
     }
     const void *getNextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
+        unsigned __int64 postFiltered = 0;
+        auto onScopeExitFunc = [&]()
+        {
+            if (postFiltered > 0)
+                stats.mergeStatistic(StNumPostFiltered, postFiltered);
+        };
+        COnScopeExit scoped(onScopeExitFunc);
         RtlDynamicRowBuilder ret(allocator);
         size32_t seekSize = seekSizes.item(numFields-1);
         for (;;)
@@ -797,8 +828,12 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
                                     callback.finishedRow();
                                     return ret.finalizeRowClear(sz);
                                 }
+                                else
+                                    ++postFiltered;
                             }
                         }
+                        else
+                            ++postFiltered;
                     }
                 }
                 else
@@ -810,7 +845,10 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
                 }
             }
             else
+            {
+                ++postFiltered;
                 callback.finishedRow(); // since filter might have accessed a blob
+            }
         }
         return nullptr;
     }
@@ -862,7 +900,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         needTransform = helper->needTransform();
 
@@ -902,7 +940,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (RCMAX != keyedLimitCount)
         {
             bool limitHit;
@@ -1027,7 +1065,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         localAggTable.setown(createRowAggregator(*this, *helper, *helper));
         localAggTable->init(queryRowAllocator());
@@ -1037,7 +1075,7 @@ public:
 // IRowStream
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (done)
             return NULL;
         if (!gathered)
@@ -1055,13 +1093,14 @@ public:
                         break;
                     if (keyManager)
                         prepareManager(keyManager);
+
+                    CCaptureIndexStats<IIndexLookup> scoped(stats, *indexInput);
                     while (true)
                     {
                         const void *key = indexInput->nextKey();
                         if (!key)
                             break;
                         ++progress;
-                        noteStats(indexInput->querySeeks(), indexInput->queryScans());
                         helper->processRow(key, this);
                         callback.finishedRow();
                     }
@@ -1070,7 +1109,7 @@ public:
                 }
                 if (_currentManager)
                     prepareManager(_currentManager);
-                ActPrintLog("INDEXGROUPAGGREGATE: Local aggregate table contains %d entries", localAggTable->elementCount());
+                ::ActPrintLog(this, thorDetailedLogLevel, "INDEXGROUPAGGREGATE: Local aggregate table contains %d entries", localAggTable->elementCount());
                 if (!container.queryLocal() && container.queryJob().querySlaves()>1)
                 {
                     Owned<IRowStream> localAggStream = localAggTable->getRowStream(true);
@@ -1096,7 +1135,20 @@ public:
         done = true;
         return NULL;
     }
-    virtual void abort()
+    virtual void stop() override
+    {
+        if (aggregateStream)
+        {
+            aggregateStream->stop();
+            if (distributor)
+            {
+                distributor->disconnect(true);
+                distributor->join();
+            }            
+        }
+        PARENT::stop();
+    }
+    virtual void abort() override
     {
         CIndexReadSlaveBase::abort();
         if (merging)
@@ -1153,7 +1205,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         // NB: initLimits sets up remoteLimit before base start() call, because if parts are remote PARENT::start() will use remoteLimit
         initLimits(helper->getChooseNLimit(), helper->getKeyedLimit(), helper->getRowLimit(), helper->hasMatchFilter());
@@ -1172,7 +1224,7 @@ public:
 // IRowStream
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (done)
             return nullptr;
         done = true;
@@ -1199,10 +1251,11 @@ public:
                             break;
                         if (keyManager)
                             prepareManager(keyManager);
+
+                        CCaptureIndexStats<IIndexLookup> scoped(stats, *indexInput);
                         while (true)
                         {
                             const void *key = indexInput->nextKey();
-                            noteStats(indexInput->querySeeks(), indexInput->queryScans());
                             if (!key)
                                 break;
                             if (incKeyedExceedsLimit())
@@ -1328,7 +1381,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         // NB: initLimits sets up remoteLimit before base start() call, because if parts are remote PARENT::start() will use remoteLimit
         initLimits(helper->getChooseNLimit(), helper->getKeyedLimit(), helper->getRowLimit(), helper->hasMatchFilter());
@@ -1352,7 +1405,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (RCMAX != keyedLimitCount)
         {
             bool limitHit;
@@ -1447,7 +1500,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         hadElement = false;
         done = false;
@@ -1456,7 +1509,7 @@ public:
 // IRowStream
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (done)
             return nullptr;
         done = true;

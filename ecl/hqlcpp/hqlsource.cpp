@@ -359,7 +359,7 @@ IHqlExpression * createTableWithoutVirtuals(VirtualFieldsInfo & info, IHqlExpres
 
     VirtualRecordTransformCreator mapper(newDataset);
     IHqlExpression * newTransform = mapper.createMappingTransform(no_newtransform, record, newDataset);
-    OwnedHqlExpr projected = createDatasetF(no_newusertable, newDataset, LINK(record), newTransform, createAttribute(_internal_Atom), NULL);
+    OwnedHqlExpr projected = createDataset(no_newusertable, { newDataset, LINK(record), newTransform, createAttribute(_internal_Atom) });
     return tableExpr->cloneAllAnnotations(projected);
 }
 
@@ -380,7 +380,7 @@ static IHqlExpression * createTableFromSerialized(IHqlExpression * tableExpr)
     OwnedHqlExpr newTable = replaceChild(tableExpr->queryBody(), 1, diskRecordWithMeta);
 
     OwnedHqlExpr transform = createRecordMappingTransform(no_newtransform, record, newTable->queryNormalizedSelector());
-    OwnedHqlExpr projected = createDatasetF(no_newusertable, LINK(newTable), LINK(record), LINK(transform), createAttribute(_internal_Atom), NULL);
+    OwnedHqlExpr projected = createDataset(no_newusertable, { LINK(newTable), LINK(record), LINK(transform), createAttribute(_internal_Atom) });
     return tableExpr->cloneAllAnnotations(projected);
 }
 
@@ -536,7 +536,7 @@ IHqlExpression * HqlCppTranslator::buildIndexFromPhysical(IHqlExpression * expr)
 
         VirtualRecordTransformCreator mapper(newDataset);
         IHqlExpression * newTransform = mapper.createMappingTransform(no_newtransform, record, newDataset);
-        newProject.setown(createDatasetF(no_newusertable, LINK(newDataset), LINK(record), newTransform, createAttribute(_internal_Atom), NULL));
+        newProject.setown(createDataset(no_newusertable, { LINK(newDataset), LINK(record), newTransform, createAttribute(_internal_Atom) }));
         newProject.setown(tableExpr->cloneAllAnnotations(newProject));
     }
     else
@@ -635,7 +635,7 @@ class SourceBuilder
 {
 public:
     SourceBuilder(HqlCppTranslator & _translator, IHqlExpression *_tableExpr, IHqlExpression *_nameExpr)
-        : tableExpr(_tableExpr), translator(_translator), newInputMapping(false)
+        : tableExpr(_tableExpr), newInputMapping(false), translator(_translator)
     { 
         nameExpr.setown(foldHqlExpression(_nameExpr));
         needDefaultTransform = true; 
@@ -1106,7 +1106,7 @@ void SourceBuilder::appendFilter(SharedHqlExpr & unkeyedFilter, IHqlExpression *
         else
         {
             if (unkeyedFilter)
-                unkeyedFilter.setown(createValue(no_and, unkeyedFilter.getClear(), LINK(expr)));
+                unkeyedFilter.setown(createValue(no_and, makeBoolType(), unkeyedFilter.getClear(), LINK(expr)));
             else
                 unkeyedFilter.set(expr);
         }
@@ -1921,6 +1921,9 @@ ABoundActivity * SourceBuilder::buildActivity(BuildCtx & ctx, IHqlExpression * e
         graphLabel.clear();
         if (expr != tableExpr)
         {
+            if (isGrouped(expr))
+                graphLabel.append("Grouped\n");
+
             IHqlExpression * cur = expr;
             bool isProjected = false;
             for (;;)
@@ -2981,6 +2984,7 @@ void DiskReadBuilderBase::buildFlagsMember(IHqlExpression * expr)
     if (onlyExistsAggreate) flags.append("|TDRaggregateexists");
     if (monitorsForGrouping) flags.append("|TDRgroupmonitors");
     if (!nameExpr->isConstant()) flags.append("|TDXvarfilename");
+    if (isNonConstantAndQueryInvariant(nameExpr)) flags.append("|TDRinvariantfilename");
     if (translator.hasDynamicFilename(tableExpr)) flags.append("|TDXdynamicfilename");
     if (isUnfilteredCount) flags.append("|TDRunfilteredcount");
     if (isVirtualLogicalFilenameUsed || transformUsesVirtualLogicalFilename)
@@ -4080,6 +4084,7 @@ void IndexReadBuilderBase::buildFlagsMember(IHqlExpression * expr)
     if (onlyExistsAggreate) flags.append("|TIRaggregateexists");
     if (monitorsForGrouping) flags.append("|TIRgroupmonitors");
     if (!nameExpr->isConstant()) flags.append("|TIRvarfilename");
+    if (isNonConstantAndQueryInvariant(nameExpr)) flags.append("|TIRinvariantfilename");
     if (translator.hasDynamicFilename(tableExpr)) flags.append("|TIRdynamicfilename");
     if (requiresOrderedMerge) flags.append("|TIRorderedmerge");
     if (translator.queryOptions().createValueSets)
@@ -4917,6 +4922,8 @@ void FetchBuilder::buildMembers(IHqlExpression * expr)
         flags.append("|FFvarfilename");
     if (translator.hasDynamicFilename(tableExpr))     
         flags.append("|FFdynamicfilename");
+    if (isNonConstantAndQueryInvariant(nameExpr))
+        flags.append("|FFinvariantfilename");
 
     if (flags.length())
         translator.doBuildUnsignedFunction(instance->classctx, "getFetchFlags", flags.str()+1);

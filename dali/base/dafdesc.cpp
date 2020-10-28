@@ -82,7 +82,7 @@ bool getCrcFromPartProps(IPropertyTree &fileattr,IPropertyTree &props, unsigned 
     }
     // NB: old @crc keys and compressed were not crc of file but of data within.
     const char *kind = props.queryProp("@kind");
-    if (kind&&strcmp(kind,"key")) // key part
+    if (strsame(kind,"key")) // key part
         return false;
     bool blocked;
     if (isCompressed(fileattr,&blocked)) {
@@ -2406,11 +2406,14 @@ static StringAttr unixBaseDirectories[__grp_size][MAX_REPLICATION_LEVELS];
 
 static StringAttr defaultpartmask("$L$._$P$_of_$N$");
 
-static SpinLock ldbSpin;
-static bool ldbDone = false;
-void loadDefaultBases()
+static CriticalSection ldbCs;
+static std::atomic<bool> ldbDone{false};
+static void loadDefaultBases()
 {
-    SpinBlock b(ldbSpin);
+    if (ldbDone)
+        return;
+
+    CriticalBlock b(ldbCs);
     if (ldbDone)
         return;
     ldbDone = true;
@@ -3109,3 +3112,198 @@ void extractFilePartInfo(IPropertyTree &info, IFileDescriptor &file)
     }
 }
 
+static void setupContainerizedStorageLocations()
+{
+    try
+    {
+        IPropertyTree * storage = queryGlobalConfig().queryPropTree("storage");
+        if (storage)
+        {
+            IPropertyTree * defaults = storage->queryPropTree("default");
+            if (defaults)
+            {
+                const char * dataPath = defaults->queryProp("@data");
+                if (dataPath)
+                    setBaseDirectory(dataPath, 0);
+                const char * mirrorPath = defaults->queryProp("@mirror");
+                if (mirrorPath)
+                    setBaseDirectory(mirrorPath, 1);
+            }
+        }
+        else
+        {
+#ifdef _CONTAINERIZED
+            throwUnexpectedX("config does not specify storage");
+#endif
+        }
+    }
+    catch (IException * e)
+    {
+        //If the component has not called the configuration init (e.g. esp in bare metal) then ignore the failure
+        EXCLOG(e);
+        e->Release();
+    }
+}
+
+static CriticalSection storageCS;
+void initializeStorageGroups(bool createPlanesFromGroups)
+{
+    CriticalBlock block(storageCS);
+    IPropertyTree * storage = queryGlobalConfig().queryPropTree("storage");
+    if (!storage)
+        storage = queryGlobalConfig().addPropTree("storage");
+
+#ifndef _CONTAINERIZED
+    if (createPlanesFromGroups && !storage->hasProp("planes"))
+    {
+        //Create information about the storage planes from the groups published in dali
+        INamedGroupStore & groupStore = queryNamedGroupStore();
+        Owned<INamedGroupIterator> iter= groupStore.getIterator();
+        ForEach(*iter)
+        {
+            StringBuffer name, dir;
+            iter->get(name);
+            if (name.length())
+            {
+                IPropertyTree * plane = storage->addPropTree("planes");
+                plane->setProp("@name", name);
+                GroupType groupType;
+                Owned<IGroup> group = groupStore.lookup(name, dir, groupType);
+
+                if (dir.length())
+                    plane->setProp("@prefix", dir);
+                else
+                    plane->setProp("@prefix", queryBaseDirectory(groupType, 0));
+
+                if (!group)
+                    plane->setPropInt("@numDevices", 0);
+                else if (group->ordinality() != 1)
+                    plane->setPropInt("@numDevices", group->ordinality());
+
+                if (groupType == grp_thor)
+                {
+                    assertex(group);
+                    StringBuffer mirrorname;
+                    mirrorname.append(name).append("replica");
+
+                    IPropertyTree * mirror = storage->addPropTree("planes");
+                    mirror->setProp("@name", mirrorname);
+                    mirror->setProp("@prefix", queryBaseDirectory(groupType, 1));
+
+                    if (group->ordinality() != 1)
+                        mirror->setPropInt("@numDevices", group->ordinality());
+
+                    IPropertyTree * elem = plane->addPropTreeArrayItem("replication", createPTree());
+                    elem->setProp("", mirrorname);
+                }
+            }
+        }
+
+        //Walk the drop zones, and add them as storage groups if they have no servers configured, or "."
+        Owned<IRemoteConnection> conn = querySDS().connect("/Environment/Software", myProcessSession(), 0, 2000);
+        if (conn)
+        {
+            Owned<IPropertyTreeIterator> dropzones = conn->queryRoot()->getElements("DropZone");
+            ForEach(*dropzones)
+            {
+                IPropertyTree & cur = dropzones->query();
+                unsigned numServers = cur.getCount("ServerList");
+                if (numServers <= 1)
+                {
+                    //If no instances then assume it is always local (e.g. azure)
+                    const char * ip = numServers ? cur.queryProp("ServerList[1]/@server") : nullptr;
+                    IPropertyTree * plane = storage->addPropTree("planes");
+                    plane->setProp("@name", cur.queryProp("@name"));
+                    plane->setProp("@prefix", cur.queryProp("@directory"));
+
+                    //Temporary.  This is likely to change to eventually create a hostgroup and set the @hosts property.
+                    if (ip && !streq(ip, "."))
+                        plane->setProp("@host", ip);
+                }
+            }
+        }
+    }
+#endif
+
+    //Groups are case insensitve, so add an extra key to the storage items to allow them to be
+    //searched by group name, and also check for duplicates.
+    Owned<IPropertyTreeIterator> iter = storage->getElements("planes");
+    StringBuffer group;
+    ForEach(*iter)
+    {
+        IPropertyTree & cur = iter->query();
+        //Check if this has already been done - so the function is safe to call more than once
+        const char * oldgroup = cur.queryProp("@group");
+        if (oldgroup)
+            continue;
+
+        const char * name = cur.queryProp("@name");
+        group.clear().append(name).toLowerCase();
+
+        //Check the storage plane does not match another one case-insensitiviely. (It is unlikely the Helm chart will have installed.)
+        VStringBuffer xpath("plane[@group='%s']", group.str());
+        IPropertyTree * match = storage->queryPropTree(xpath);
+        if (match)
+            throwStringExceptionV(DALI_DUPLICATE_STORAGE_PLANE, "Duplicate storage planes %s,%s (case insensitive)", name, match->queryProp("@name"));
+
+        cur.setProp("@group", group);
+    }
+
+    //The following can be removed once the storage planes have better integration
+    setupContainerizedStorageLocations();
+}
+
+const char * queryDefaultStoragePlane()
+{
+    // If the plane is specified for the component, then use that
+    IPropertyTree & config = queryComponentConfig();
+    const char * plane = config.queryProp("storagePlane");
+    if (plane)
+        return plane;
+
+    //Otherwise check what the default plane for data storage is configured to be
+    plane = queryGlobalConfig().queryProp("storage/@dataPlane");
+    if (plane)
+        return plane;
+
+#ifdef _CONTAINERIZED
+    throwUnexpectedX("Default data plane not specified"); // The default should always have been configured by the helm charts
+#else
+    return nullptr;
+#endif
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+
+class CStoragePlane : public CInterfaceOf<IStoragePlane>
+{
+public:
+    CStoragePlane(IPropertyTree * _xml) : xml(_xml) {}
+
+    virtual const char * queryPrefix() const override { return xml->queryProp("@prefix"); }
+    virtual unsigned numDevices() const override { return xml->getPropInt("@numDevices", 1); }
+    virtual const char * queryHosts() const override { return xml->queryProp("@hosts"); }
+    virtual const char * querySingleHost() const override { return xml->queryProp("@host"); }   // MORE: Likely to be changed to resolve hosts
+
+private:
+    Linked<IPropertyTree> xml;
+};
+
+
+//MORE: This could be cached
+IStoragePlane * getStoragePlane(const char * name, bool required)
+{
+    StringBuffer group;
+    group.append(name).toLowerCase();
+
+    VStringBuffer xpath("storage/planes[@group='%s']", group.str());
+    IPropertyTree * match = queryGlobalConfig().queryPropTree(xpath);
+    if (!match)
+    {
+        if (required)
+            throw makeStringExceptionV(-1, "Scope contains unknown storage plane '%s'", name);
+        return nullptr;
+    }
+
+    return new CStoragePlane(match);
+}

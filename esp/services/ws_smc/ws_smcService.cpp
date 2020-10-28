@@ -25,8 +25,8 @@
 #include "ws_smcService.hpp"
 #include "wshelpers.hpp"
 
-#include "dalienv.hpp"
 #include "dasds.hpp"
+#include "daqueue.hpp"
 #include "WUWrapper.hpp"
 #include "dfuwu.hpp"
 #include "exception_util.hpp"
@@ -55,7 +55,6 @@ static const char* SMC_ACCESS_DENIED = "Access Denied";
 static const char* QUEUE_ACCESS_DENIED = "Failed to access the queue functions. Permission denied.";
 
 const char* PERMISSIONS_FILENAME = "espsmc_permissions.xml";
-const unsigned DEFAULTACTIVITYINFOCACHETIMEOUTSECOND = 10;
 
 void AccessSuccess(IEspContext& context, char const * msg,...) __attribute__((format(printf, 2, 3)));
 void AccessSuccess(IEspContext& context, char const * msg,...)
@@ -142,10 +141,14 @@ void CWsSMCEx::init(IPropertyTree *cfg, const char *process, const char *service
         m_PortalURL.append(portalURL);
 
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ActivityInfoCacheSeconds", process, service);
-    activityInfoCacheSeconds = cfg->getPropInt(xpath.str(), DEFAULTACTIVITYINFOCACHETIMEOUTSECOND);
+    unsigned activityInfoCacheSeconds = cfg->getPropInt(xpath.str(), defaultActivityInfoCacheForceBuildSecond);
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/LogDaliConnection", process, service);
     if (cfg->getPropBool(xpath.str()))
         querySDS().setConfigOpt("Client/@LogConnection", "true");
+
+    xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ActivityInfoCacheAutoRebuildSeconds", process, service);
+    unsigned activityInfoCacheAutoRebuildSeconds = cfg->getPropInt(xpath.str(), defaultActivityInfoCacheAutoRebuildSecond);
+    activityInfoCacheReader.setown(new CActivityInfoCacheReader("Activity Reader", activityInfoCacheAutoRebuildSeconds, activityInfoCacheSeconds));
 }
 
 struct CActiveWorkunitWrapper: public CActiveWorkunit
@@ -231,13 +234,6 @@ struct CActiveWorkunitWrapper: public CActiveWorkunit
         return;
     }
 };
-
-bool CActivityInfo::isCachedActivityInfoValid(unsigned timeOutSeconds)
-{
-    CDateTime timeNow;
-    timeNow.setNow();
-    return timeNow.getSimple() <= timeCached.getSimple() + timeOutSeconds;;
-}
 
 void CActivityInfo::createActivityInfo(IEspContext& context)
 {
@@ -1194,7 +1190,9 @@ bool CWsSMCEx::onActivity(IEspContext &context, IEspActivityRequest &req, IEspAc
         if (version >= 1.06)
             setBannerAndChatData(version, resp);
 
-        Owned<CActivityInfo> activityInfo = getActivityInfo(context);
+        Owned<CActivityInfo> activityInfo = (CActivityInfo*) activityInfoCacheReader->getCachedInfo();
+        if (!activityInfo)
+            throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get Activity Info. Please try later.");
         setActivityResponse(context, activityInfo, req, resp);
     }
     catch(IException* e)
@@ -1203,29 +1201,6 @@ bool CWsSMCEx::onActivity(IEspContext &context, IEspActivityRequest &req, IEspAc
     }
 
     return true;
-}
-
-void CWsSMCEx::clearActivityInfoCache()
-{
-    CriticalBlock b(getActivityCrit);
-    activityInfoCache.clear();
-}
-
-CActivityInfo* CWsSMCEx::getActivityInfo(IEspContext &context)
-{
-    CriticalBlock b(getActivityCrit);
-
-    if (activityInfoCache && activityInfoCache->isCachedActivityInfoValid(activityInfoCacheSeconds))
-        return activityInfoCache.getLink();
-
-    DBGLOG("CWsSMCEx::getActivityInfo - rebuild cached information");
-    {
-        EspTimeSection timer("createActivityInfo");
-        activityInfoCache.setown(new CActivityInfo());
-        activityInfoCache->createActivityInfo(context);
-    }
-
-    return activityInfoCache.getLink();
 }
 
 void CWsSMCEx::addWUsToResponse(IEspContext &context, const IArrayOf<IEspActiveWorkunit>& aws, IEspActivityResponse& resp)
@@ -1279,6 +1254,12 @@ void CWsSMCEx::setActivityResponse(IEspContext &context, CActivityInfo* activity
     double version = context.getClientVersion();
     const char* sortBy = req.getSortBy();
     bool descending = req.getDescending();
+    if (version >= 1.22)
+    {
+        StringBuffer s;
+        resp.setActivityTime(activityInfo->queryTimeCached(s));
+        resp.setDaliDetached(!activityInfoCacheReader->isActive());
+    }
     if (version >= 1.16)
     {
         IArrayOf<IEspTargetCluster> thorClusters;
@@ -1419,7 +1400,7 @@ bool CWsSMCEx::onMoveJobDown(IEspContext &context, IEspSMCJobRequest &req, IEspS
             }
         }
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1448,7 +1429,7 @@ bool CWsSMCEx::onMoveJobUp(IEspContext &context, IEspSMCJobRequest &req, IEspSMC
             }
         }
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1494,7 +1475,7 @@ bool CWsSMCEx::onMoveJobBack(IEspContext &context, IEspSMCJobRequest &req, IEspS
             }
         }
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1541,7 +1522,7 @@ bool CWsSMCEx::onMoveJobFront(IEspContext &context, IEspSMCJobRequest &req, IEsp
         }
 
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1571,7 +1552,7 @@ bool CWsSMCEx::onRemoveJob(IEspContext &context, IEspSMCJobRequest &req, IEspSMC
             }
         }
         AccessSuccess(context, "Removed job %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1593,7 +1574,7 @@ bool CWsSMCEx::onStopQueue(IEspContext &context, IEspSMCQueueRequest &req, IEspS
             queue->stop(createQueueActionInfo(context, "stopped", req, info));
         }
         AccessSuccess(context, "Stopped queue %s", req.getCluster());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1619,7 +1600,7 @@ bool CWsSMCEx::onResumeQueue(IEspContext &context, IEspSMCQueueRequest &req, IEs
             queue->resume(createQueueActionInfo(context, "resumed", req, info));
         }
         AccessSuccess(context, "Resumed queue %s", req.getCluster());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1662,7 +1643,7 @@ bool CWsSMCEx::onPauseQueue(IEspContext &context, IEspSMCQueueRequest &req, IEsp
             queue->pause(createQueueActionInfo(context, "paused", req, info));
         }
         AccessSuccess(context, "Paused queue %s", req.getCluster());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1692,7 +1673,7 @@ bool CWsSMCEx::onClearQueue(IEspContext &context, IEspSMCQueueRequest &req, IEsp
             queue->clear();
         }
         AccessSuccess(context, "Cleared queue %s",req.getCluster());
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1761,7 +1742,7 @@ bool CWsSMCEx::onSetJobPriority(IEspContext &context, IEspSMCPriorityRequest &re
             }
         }
 
-        clearActivityInfoCache();
+        activityInfoCacheReader->buildCachedInfo();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -2255,9 +2236,9 @@ void CWsSMCEx::getStatusServerInfo(IEspContext &context, const char *serverType,
     if (!serverType || !*serverType)
         throw MakeStringException(ECLWATCH_MISSING_PARAMS, "Server type not specified.");
 
-    Owned<CActivityInfo> activityInfo = getActivityInfo(context);
+    Owned<CActivityInfo> activityInfo = (CActivityInfo*) activityInfoCacheReader->getCachedInfo();
     if (!activityInfo)
-        throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get Activity Info cache.");
+        throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get Activity Info. Please try later.");
 
     if (strieq(serverType,STATUS_SERVER_THOR))
     {
@@ -2621,3 +2602,26 @@ bool CWsSMCEx::onLockQuery(IEspContext &context, IEspLockQueryRequest &req, IEsp
     return true;
 }
 
+bool CWsSMCEx::onGetBuildInfo(IEspContext &context, IEspGetBuildInfoRequest &req, IEspGetBuildInfoResponse &resp)
+{
+    try
+    {
+        context.ensureFeatureAccess(FEATURE_URL, SecAccess_Read, ECLWATCH_SMC_ACCESS_DENIED, SMC_ACCESS_DENIED);
+
+        IArrayOf<IEspNamedValue> buildInfo;
+        if (isContainerized())
+        {
+            Owned<IEspNamedValue> namedValue = createNamedValue();
+            namedValue->setName("CONTAINERIZED");
+            namedValue->setValue("ON");
+            buildInfo.append(*namedValue.getClear());
+        }
+        resp.setBuildInfo(buildInfo);
+    }
+    catch(IException* e)
+    {
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+    }
+
+    return true;
+}

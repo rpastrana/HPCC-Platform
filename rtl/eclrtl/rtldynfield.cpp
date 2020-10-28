@@ -34,14 +34,22 @@
 
 //---------------------------------------------------------------------------------------------------------------------
 
-extern ECLRTL_API RecordTranslationMode getTranslationMode(const char *val)
+extern ECLRTL_API RecordTranslationMode getTranslationMode(const char *val, bool isLocal)
 {
     if (isEmptyString(val) || strToBool(val) || strieq(val, "payload"))
         return RecordTranslationMode::Payload;
     else if (strieq(val, "alwaysDisk") || strieq(val, "disk"))
+    {
+        if (!isLocal)
+            throw makeStringException(0, "alwaysDisk translation mode can only be set via HINT");
         return RecordTranslationMode::AlwaysDisk;
+    }
     else if (strieq(val, "alwaysECL") || strieq(val, "ecl"))
+    {
+        if (!isLocal)
+            throw makeStringException(0, "alwaysECL translation mode can only be set via HINT");
         return RecordTranslationMode::AlwaysECL;
+    }
     else
         return RecordTranslationMode::None;
 }
@@ -903,6 +911,7 @@ extern ECLRTL_API bool dumpTypeInfo(MemoryBuffer &ret, const RtlTypeInfo *t)
     catch (IException *E)
     {
         EXCLOG(E);
+        E->Release();
         return false;
     }
 }
@@ -994,6 +1003,7 @@ enum FieldMatchType {
     match_inifblock   = 0x400,   // matching to a field in an ifblock - may not be present
     match_deblob      = 0x1000,  // source needs fetching from a blob prior to translation
     match_dynamic     = 0x2000,  // source needs fetching from dynamic source (callback)
+    match_filepos     = 0x4000,  // type moving in or out of filepos field - cast required
 };
 
 StringBuffer &describeFlags(StringBuffer &out, FieldMatchType flags)
@@ -1015,6 +1025,7 @@ StringBuffer &describeFlags(StringBuffer &out, FieldMatchType flags)
     if (flags & match_virtual) out.append("|virtual");
     if (flags & match_deblob) out.append("|blob");
     if (flags & match_dynamic) out.append("|dynamic");
+    if (flags & match_filepos) out.append("|filepos");
     assertex(out.length() > origlen);
     return out.remove(origlen, 1);
 }
@@ -1260,6 +1271,7 @@ private:
                         offset += fillSize;
                         break;
                     }
+                    case match_filepos:
                     case match_typecast:
                         offset = translateScalar(builder, offset, field, *type, *sourceType, source);
                         break;
@@ -1442,9 +1454,7 @@ private:
             }
             else
             {
-                // Note - ifblocks make this assertion invalid. We do not account for potentially omitted fields
-                // when estimating target record size.
-                if (!destRecInfo.getNumIfBlocks() && !hasBlobs)
+                if (!hasBlobs)
                     assert(offset-origOffset > estimate);  // Estimate is always supposed to be conservative
     #ifdef TRACE_TRANSLATION
                 DBGLOG("Wrote %u bytes to record (estimate was %u)\n", offset-origOffset, estimate);
@@ -1461,7 +1471,7 @@ private:
     const RtlRecord &sourceRecInfo;
     bool binarySource = true;
     type_vals callbackRawType;
-    unsigned fixedDelta = 0;  // total size of all fixed-size source fields that are not matched
+    int fixedDelta = 0;  // total size difference from all fixed size mappings
     UnsignedArray allUnmatched;  // List of all source fields that are unmatched (so that we can trace them)
     UnsignedArray variableUnmatched;  // List of all variable-size source fields that are unmatched
     FieldMatchType matchFlags = match_perfect;
@@ -1582,27 +1592,58 @@ private:
     void createMatchInfo()
     {
         unsigned defaulted = 0;
+        bool destHasNested = destRecInfo.hasNested();
+        bool sourceHasNested = sourceRecInfo.hasNested();
         for (unsigned idx = 0; idx < destRecInfo.getNumFields(); idx++)
         {
             const RtlFieldInfo *field = destRecInfo.queryField(idx);
             const RtlTypeInfo *type = field->type;
             MatchInfo &info = matchInfo[idx];
-            info.matchIdx = sourceRecInfo.getFieldNum(destRecInfo.queryName(idx));
+            const char *name = destRecInfo.queryName(idx);
+            info.matchIdx = sourceRecInfo.getFieldNum(name);
             if (info.matchIdx == (unsigned) -1)
             {
                 const byte * initializer = (const byte *) field->initializer;
                 info.matchType = isVirtualInitializer(initializer) ? match_virtual : match_none;
-                size32_t defaultSize = (initializer && !isVirtualInitializer(initializer)) ? type->size(initializer, nullptr) : type->getMinSize();
-                fixedDelta -= defaultSize;
+                if ((field->flags & RFTMinifblock) == 0)
+                {
+                    size32_t defaultSize = (initializer && !isVirtualInitializer(initializer)) ? type->size(initializer, nullptr) : type->getMinSize();
+                    fixedDelta -= defaultSize;
+#ifdef TRACE_TRANSLATION
+                    DBGLOG("Decreasing fixedDelta size by %d to %d for defaulted field %d (%s)", defaultSize, fixedDelta, idx, destRecInfo.queryName(idx));
+#endif
+                }
                 if ((field->flags & RFTMispayloadfield) == 0)
                     matchFlags |= match_keychange;
                 defaulted++;
-                //DBGLOG("Decreasing fixedDelta size by %d to %d for defaulted field %d (%s)", defaultSize, fixedDelta, idx, destRecInfo.queryName(idx));
+                // If dest field is in a nested record, we need to check that there's no "non-record" field in source matching current nested record name
+                if (name)
+                {
+                    if (destHasNested)
+                    {
+                        const char *ldot = strrchr(name, '.');
+                        if (ldot)
+                        {
+                            StringBuffer recname(ldot-name, name);
+                            if (sourceRecInfo.getFieldNum(recname) != (unsigned) -1)
+                                info.matchType = match_fail;  // No translation from non-record to record
+                        }
+                    }
+                    if (sourceHasNested && sourceRecInfo.queryOriginalField(name))
+                    {
+                        // Similarly if dest field IS not a nested record, but there is a field in source which is.
+                        // Note that we already know there is no matching field called name in the exapanded version of source,
+                        // so any match we find must be a record
+                        info.matchType = match_fail;  // No translation from record to non-record
+                    }
+                }
             }
             else
             {
                 bool deblob = false;
                 const RtlTypeInfo *sourceType = sourceRecInfo.queryType(info.matchIdx);
+                unsigned sourceFlags = sourceRecInfo.queryField(info.matchIdx)->flags;
+                unsigned destFlags = field->flags;
                 if (binarySource && sourceType->isBlob())
                 {
                     if (type->isBlob())
@@ -1675,7 +1716,9 @@ private:
                             else if (info.subTrans->canTranslate())
                             {
                                 info.matchType = binarySource ? match_recurse : (match_recurse|match_dynamic);
-                                matchFlags |= info.subTrans->matchFlags;
+                                unsigned childFlags = info.subTrans->matchFlags;
+                                //Ignore differences in the keyed flag for child structures (it will be set later if this field is keyed)
+                                matchFlags |= (FieldMatchType)(childFlags & ~match_keychange);
                             }
                             else
                                 info.matchType = match_fail;
@@ -1712,8 +1755,11 @@ private:
                             if (type->canTruncate())
                             {
                                 info.matchType = match_truncate;
-                                fixedDelta += sourceType->getMinSize()-type->getMinSize();
-                                //DBGLOG("Increasing fixedDelta size by %d to %d for truncated field %d (%s)", sourceType->getMinSize()-type->getMinSize(), fixedDelta, idx, destRecInfo.queryName(idx));
+                                if (((sourceFlags|destFlags) & RFTMinifblock) == 0)
+                                    fixedDelta += sourceType->getMinSize()-type->getMinSize();
+#ifdef TRACE_TRANSLATION
+                                DBGLOG("Increasing fixedDelta size by %d to %d for truncated field %d (%s)", sourceType->getMinSize()-type->getMinSize(), fixedDelta, idx, destRecInfo.queryName(idx));
+#endif
                             }
                         }
                         else
@@ -1721,18 +1767,23 @@ private:
                             if (type->canExtend(info.fillChar))
                             {
                                 info.matchType = match_extend;
-                                fixedDelta += sourceType->getMinSize()-type->getMinSize();
-                                //DBGLOG("Decreasing fixedDelta size by %d to %d for truncated field %d (%s)", type->getMinSize()-sourceType->getMinSize(), fixedDelta, idx, destRecInfo.queryName(idx));
+                                if (((sourceFlags|destFlags) & RFTMinifblock) == 0)
+                                    fixedDelta += sourceType->getMinSize()-type->getMinSize();
+#ifdef TRACE_TRANSLATION
+                                DBGLOG("Decreasing fixedDelta size by %d to %d for truncated field %d (%s)", type->getMinSize()-sourceType->getMinSize(), fixedDelta, idx, destRecInfo.queryName(idx));
+#endif
                             }
                         }
                     }
                 }
+                else if ((type->getType()==type_filepos || sourceType->getType()==type_filepos) &&
+                         type->isUnsigned()==sourceType->isUnsigned())
+                    info.matchType = match_filepos;
                 else
                     info.matchType = match_typecast;
                 if (deblob)
                     info.matchType |= match_deblob;
-                unsigned sourceFlags = sourceRecInfo.queryField(info.matchIdx)->flags;
-                if (sourceFlags & RFTMinifblock)
+                if (sourceFlags & RFTMinifblock || field->flags & RFTMinifblock)
                     info.matchType |= match_inifblock;  // Avoids incorrect commoning up of adjacent matches
                 // MORE - could note the highest interesting fieldnumber in the source and not bother filling in offsets after that
                 // Not sure it would help much though - usually need to know the total record size anyway in real life
@@ -1742,6 +1793,8 @@ private:
                 //Whether this field is in an ifblock, or needs to be copied by linking it do not count as changes
                 FieldMatchType maskedType = (FieldMatchType)(info.matchType & ~(match_link|match_inifblock));
                 if (((maskedType != match_perfect) || (idx != info.matchIdx)) && ((field->flags & RFTMispayloadfield) == 0 || (sourceFlags & RFTMispayloadfield) == 0))
+                    matchFlags |= match_keychange;
+                else if ((field->flags & RFTMispayloadfield) != (sourceFlags & RFTMispayloadfield))
                     matchFlags |= match_keychange;
             }
             matchFlags |= info.matchType;
@@ -1761,9 +1814,11 @@ private:
                     if (!destRecInfo.getFixedSize())
                     {
                         const RtlTypeInfo *type = field->type;
-                        if (type->isFixedSize())
+                        if (type->isFixedSize() && (field->flags & RFTMinifblock)==0)
                         {
-                            //DBGLOG("Reducing estimated size by %d for (fixed size) omitted field %s", (int) type->getMinSize(), field->name);
+#ifdef TRACE_TRANSLATION
+                            DBGLOG("Reducing estimated size by %d for (fixed size) omitted field %s", (int) type->getMinSize(), field->name);
+#endif
                             fixedDelta += type->getMinSize();
                         }
                         else
@@ -1772,19 +1827,29 @@ private:
                     allUnmatched.append(idx);
                 }
             }
-            //DBGLOG("Source record contains %d bytes of omitted fixed size fields", fixedDelta);
+#ifdef TRACE_TRANSLATION
+            DBGLOG("Delta from fixed-size fields is %d bytes", fixedDelta);
+#endif
         }
     }
     size32_t estimateNewSize(const RtlRow &sourceRow) const
     {
-        //DBGLOG("Source record size is %d", (int) sourceRow.getRecordSize());
-        size32_t expectedSize = sourceRow.getRecordSize() - fixedDelta;
-        //DBGLOG("Source record size without omitted fixed size fields is %d", expectedSize);
+#ifdef TRACE_TRANSLATION
+        DBGLOG("Source record size is %d", (int) sourceRow.getRecordSize());
+#endif
+        size32_t expectedSize = sourceRow.getRecordSize();
+        assertex((int) expectedSize >= fixedDelta);
+        expectedSize -= fixedDelta;
+#ifdef TRACE_TRANSLATION
+        DBGLOG("Source record size without fixed delta is %d", expectedSize);
+#endif
         ForEachItemIn(i, variableUnmatched)
         {
             unsigned fieldNo = variableUnmatched.item(i);
             expectedSize -= sourceRow.getSize(fieldNo);
-            //DBGLOG("Reducing estimated size by %d to %d for omitted field %d (%s)", (int) sourceRow.getSize(fieldNo), expectedSize, fieldNo, sourceRecInfo.queryName(fieldNo));
+#ifdef TRACE_TRANSLATION
+            DBGLOG("Reducing estimated size by %d to %d for omitted field %d (%s)", (int) sourceRow.getSize(fieldNo), expectedSize, fieldNo, sourceRecInfo.queryName(fieldNo));
+#endif
         }
         if (matchFlags & ~(match_perfect|match_link|match_none|match_virtual|match_extend|match_truncate))
         {
@@ -1793,25 +1858,34 @@ private:
                 const MatchInfo &match = matchInfo[idx];
                 const RtlTypeInfo *type = destRecInfo.queryType(idx);
                 unsigned matchField = match.matchIdx;
-                switch (match.matchType)
+                if ((match.matchType & match_inifblock) == 0)
                 {
-                case match_perfect:
-                case match_link:
-                case match_none:
-                case match_virtual:
-                case match_extend:
-                case match_truncate:
-                    // These ones were already included in fixedDelta
-                    break;
-                default:
-                    // This errs on the side of small - i.e. it assumes that all typecasts end up at minimum size
-                    // We could do better in some cases e.g. variable string <-> variable unicode we can assume factor of 2,
-                    // uft8 <-> string we could calculate here - but unlikely to be worth the effort.
-                    // But it's fine for fixed size output fields, including truncate/extend
-                    // We could also precalculate the expected delta if all omitted fields are fixed size - but not sure how likely/worthwhile that is.
-                    expectedSize += type->getMinSize() - sourceRow.getSize(matchField);
-                    //DBGLOG("Adjusting estimated size by (%d - %d) to %d for translated field %d (%s)", (int) sourceRow.getSize(matchField), type->getMinSize(), expectedSize, matchField, sourceRecInfo.queryName(matchField));
-                    break;
+                    switch (match.matchType)
+                    {
+                    case match_perfect:
+                    case match_link:
+                    case match_none:
+                    case match_virtual:
+                    case match_extend:
+                    case match_truncate:
+                        // These ones were already included in fixedDelta
+                        break;
+                    default:
+                        // This errs on the side of small - i.e. it assumes that all typecasts end up at minimum size
+                        // We could do better in some cases e.g. variable string <-> variable unicode we can assume factor of 2,
+                        // uft8 <-> string we could calculate here - but unlikely to be worth the effort.
+                        // But it's fine for fixed size output fields, including truncate/extend
+                        // We could also precalculate the expected delta if all omitted fields are fixed size - but not sure how likely/worthwhile that is.
+                        auto minSize = type->getMinSize();
+                        auto sourceSize = sourceRow.getSize(matchField);
+                        expectedSize += minSize;
+                        assertex(expectedSize >= sourceSize);
+                        expectedSize -= sourceSize;
+    #ifdef TRACE_TRANSLATION
+                        DBGLOG("Adjusting estimated size by (%d - %d) to %d for translated field %d (%s)", (int) sourceSize, minSize, expectedSize, matchField, sourceRecInfo.queryName(matchField));
+    #endif
+                        break;
+                    }
                 }
             }
         }

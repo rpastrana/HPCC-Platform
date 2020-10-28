@@ -35,98 +35,43 @@
 interface ILoadedDllEntry;
 interface IConstWUGraphProgress;
 
-class graphmaster_decl CThorStats : public CInterface
-{
-protected:
-    CJobBase &ctx;
-    unsigned __int64 max, min, tot, avg;
-    unsigned maxSkew, minSkew, minNode, maxNode;
-    UInt64Array counts;
-    StatisticKind kind;
-
-public:
-    CThorStats(CJobBase &ctx, StatisticKind _kind);
-    void reset();
-    virtual void processInfo();
-
-    unsigned __int64 queryTotal() { return tot; }
-    unsigned __int64 queryAverage() { return avg; }
-    unsigned __int64 queryMin() { return min; }
-    unsigned __int64 queryMax() { return max; }
-    unsigned queryMinSkew() { return minSkew; }
-    unsigned queryMaxSkew() { return maxSkew; }
-    unsigned queryMaxNode() { return maxNode; }
-    unsigned queryMinNode() { return minNode; }
-
-    void extract(unsigned node, const CRuntimeStatisticCollection & stats);
-    void set(unsigned node, unsigned __int64 count);
-    void getTotalStat(IStatisticGatherer & stats);
-    void getStats(IStatisticGatherer & stats, bool suppressMinMaxWhenEqual);
-
-protected:
-    void processTotal();
-    void calculateSkew();
-    void tallyValue(unsigned __int64 value, unsigned node);
-};
 
 class graphmaster_decl CThorStatsCollection : public CInterface
 {
+    std::vector<OwnedMalloc<CRuntimeStatisticCollection>> nodeStats;
+    const StatisticsMapping & mapping;
 public:
-    CThorStatsCollection(CJobBase &ctx, const StatisticsMapping & _mapping) : mapping(_mapping)
+    CThorStatsCollection(const StatisticsMapping & _mapping) : mapping(_mapping), nodeStats(queryClusterWidth())
     {
-        unsigned num = mapping.numStatistics();
-        stats = new Owned<CThorStats>[num];
-        for (unsigned i=0; i < num; i++)
-            stats[i].setown(new CThorStats(ctx, mapping.getKind(i)));
+        unsigned c = queryClusterWidth();
+        while (c--)
+            nodeStats[c].setown(new CRuntimeStatisticCollection(mapping));
     }
-    ~CThorStatsCollection()
+    CThorStatsCollection(const CThorStatsCollection & other) = delete;
+    void deserialize(unsigned node, MemoryBuffer & mb)
     {
-        delete [] stats;
+        nodeStats[node]->deserialize(mb);
     }
-
-    void deserializeMerge(unsigned node, MemoryBuffer & mb)
+    void setStatistic(unsigned node, StatisticKind kind, unsigned __int64 value)
     {
-        CRuntimeStatisticCollection nodeStats(mapping);
-        nodeStats.deserialize(mb);
-        extract(node, nodeStats);
+        nodeStats[node]->setStatistic(kind, value);
     }
-
-    void extract(unsigned node, const CRuntimeStatisticCollection & source)
-    {
-        for (unsigned i=0; i < mapping.numStatistics(); i++)
-            stats[i]->extract(node, source);
-    }
-
     void getStats(IStatisticGatherer & result)
     {
-        for (unsigned i=0; i < mapping.numStatistics(); i++)
-        {
-            stats[i]->getStats(result, false);
-        }
+        CRuntimeSummaryStatisticCollection summary(mapping);
+        for (unsigned n=0; n < nodeStats.size(); n++) // NB: size is = queryClusterWidth()
+            summary.merge(*nodeStats[n], n);
+        summary.recordStatistics(result);
     }
-
-private:
-    Owned<CThorStats> * stats;
-    const StatisticsMapping & mapping;
 };
 
-class graphmaster_decl CTimingInfo : public CThorStats
+class graphmaster_decl CThorEdgeCollection : public CThorStatsCollection
 {
+    static const StatisticsMapping edgeStatsMapping;
 public:
-    CTimingInfo(CJobBase &ctx);
-    void getStats(IStatisticGatherer & stats) { CThorStats::getStats(stats, false); }
+    CThorEdgeCollection() : CThorStatsCollection(edgeStatsMapping) { }
+    void set(unsigned node, unsigned __int64 value);
 };
-
-class graphmaster_decl ProgressInfo : public CThorStats
-{
-    unsigned startcount, stopcount;
-public:
-    ProgressInfo(CJobBase &ctx);
-
-    virtual void processInfo();
-    void getStats(IStatisticGatherer & stats);
-};
-typedef CIArrayOf<ProgressInfo> ProgressInfoArray;
 
 class CJobMaster;
 class CMasterGraphElement;
@@ -137,7 +82,8 @@ class graphmaster_decl CMasterGraph : public CGraphBase
     Owned<IFatalHandler> fatalHandler;
     CriticalSection exceptCrit;
     bool sentGlobalInit = false;
-    Owned<CThorStats> statNumExecutions;
+    CThorStatsCollection graphStats;
+
 
     CReplyCancelHandler activityInitMsgHandler, bcastMsgHandler, executeReplyMsgHandler;
 
@@ -215,7 +161,7 @@ public:
     CJobMaster(IConstWorkUnit &workunit, const char *_graphName, ILoadedDllEntry *querySo, bool _sendSo, const SocketEndpoint &_agentEp);
     virtual void endJob() override;
 
-    virtual void addChannel(IMPServer *mpServer);
+    virtual CJobChannel *addChannel(IMPServer *mpServer) override;
 
     void registerFile(const char *logicalName, StringArray &clusters, unsigned usageCount=0, WUFileKind fileKind=WUFileStandard, bool temp=false);
     void deregisterFile(const char *logicalName, bool kept=false);
@@ -265,6 +211,8 @@ public:
     __int64 queryNodeDiskUsage(unsigned node);
     void setNodeDiskUsage(unsigned node, __int64 sz);
     bool queryCreatedFile(const char *file);
+
+    virtual IFatalHandler *clearFatalHandler();
 };
 
 class graphmaster_decl CJobMasterChannel : public CJobChannel
@@ -289,8 +237,8 @@ class graphmaster_decl CMasterActivity : public CActivityBase, implements IThrea
     IArrayOf<IDistributedFile> readFiles;
 
 protected:
-    ProgressInfoArray progressInfo;
-    CTimingInfo timingInfo;
+    std::vector<OwnedMalloc<CThorEdgeCollection>> edgeStatsVector;
+    CThorStatsCollection statsCollection;
     IBitSet *notedWarnings;
 
     void addReadFile(IDistributedFile *file, bool temp=false);
@@ -299,7 +247,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CActivityBase)
 
-    CMasterActivity(CGraphElementBase *container);
+    CMasterActivity(CGraphElementBase *container, const StatisticsMapping &actStatsMapping = basicActivityStatistics);
     ~CMasterActivity();
 
     virtual void deserializeStats(unsigned node, MemoryBuffer &mb);

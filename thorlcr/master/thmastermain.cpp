@@ -50,7 +50,7 @@
 #include "dalienv.hpp"
 #include "dasds.hpp"
 #include "dllserver.hpp"
-
+#include "workunit.hpp"
 #include "rmtfile.hpp"
 
 #include "portlist.h"
@@ -71,6 +71,70 @@
 #define MAX_SLAVEREG_DELAY 60*1000*15 // 15 mins
 #define SLAVEREG_VERIFY_DELAY 5*1000
 #define SHUTDOWN_IN_PARALLEL 20
+
+
+class CThorEndHandler : implements IThreaded
+{
+    CThreaded threaded;
+    unsigned timeout = 30000;
+    std::atomic<bool> started{false};
+    std::atomic<bool> stopped{false};
+    Semaphore sem;
+public:
+    CThorEndHandler() : threaded("CThorEndHandler")
+    {
+        threaded.init(this); // starts thread
+    }
+    ~CThorEndHandler()
+    {
+        stop();
+        threaded.join(timeout);
+    }
+    void start(unsigned timeoutSecs)
+    {
+        bool expected = false;
+        if (started.compare_exchange_strong(expected, true))
+        {
+            timeout = timeoutSecs * 1000; // sem_post and sem_wait are mem_barriers
+            sem.signal();
+        }
+    }
+    void stop()
+    {
+        bool expected = false;
+        if (stopped.compare_exchange_strong(expected, true))
+            sem.signal();
+    }
+    virtual void threadmain() override
+    {
+        // wait to be signalled to start timer
+        sem.wait();
+        if (stopped)
+            return;
+        if (!sem.wait(timeout))
+        {
+            // if it wasn't set by now then it's -1 and Thor restarts ...
+            int eCode = queryExitCode();
+            _exit(eCode);
+        }
+    }
+};
+
+static CThorEndHandler *thorEndHandler = nullptr;
+
+MODULE_INIT(INIT_PRIORITY_STANDARD)
+{
+    /* NB: CThorEndHandler starts the thread now, although strictly it is not needed until later.
+     * This is to avoid requiring the thread to be started in a unsafe context, e.g. a signal handler
+     */
+    thorEndHandler = new CThorEndHandler();
+    return true;
+}
+MODULE_EXIT()
+{
+    if (thorEndHandler)
+        delete thorEndHandler;
+}
 
 
 class CRegistryServer : public CSimpleInterface
@@ -136,7 +200,7 @@ public:
     Linked<CMasterWatchdogBase> watchdog;
     IBitSet *status;
 
-    CRegistryServer()  : deregistrationWatch(*this)
+    CRegistryServer() : deregistrationWatch(*this)
     {
         status = createThreadSafeBitSet();
         msgDelay = SLAVEREG_VERIFY_DELAY;
@@ -196,70 +260,76 @@ public:
             watchdog->addSlave(ep);
         ++slavesRegistered;
     }
-    bool connect()
+    bool connect(unsigned slaves)
     {
-        unsigned slaves = queryNodeClusterWidth();
         LOG(MCdebugProgress, thorJob, "Waiting for %d slaves to register", slaves);
-        unsigned timeWaited = 0;
-        unsigned connected = 0;
-        Owned<IBitSet> connectedSet = createThreadSafeBitSet();
-        for (;;)
+
+        IPointerArrayOf<INode> connectedSlaves;
+        connectedSlaves.ensure(slaves);
+        unsigned remaining = slaves;
+        INode *_sender = nullptr;
+        CMessageBuffer msg;
+        while (remaining)
         {
-            CTimeMon tm(msgDelay);
-            UnsignedArray todo;
-            unsigned s = 0;
-            while ((s=connectedSet->scan(s, false)) < slaves)
-                todo.append(s++);
-            Owned<IShuffledIterator> shuffled = createShuffledIterator(todo.ordinality());
-            ForEach(*shuffled)
+            if (!queryWorldCommunicator().recv(msg, nullptr, MPTAG_THORREGISTRATION, &_sender, MP_WAIT_FOREVER))
             {
-                s = todo.item(shuffled->get());
-                unsigned remaining;
-                if (tm.timedout(&remaining))
-                    break;
-                PROGLOG("Verifying connection to slave %d", s+1);
-                if (queryWorldCommunicator().verifyConnection(&queryNodeGroup().queryNode(s+1), remaining))
-                {
-                    StringBuffer str;
-                    PROGLOG("verified connection with %s", queryNodeGroup().queryNode(s+1).endpoint().getUrlStr(str.clear()).str());
-                    ++connected;
-                    connectedSet->set(s);
-                }
-                if (stopped)
-                    return false;
+                ::Release(_sender);
+                PROGLOG("Failed to initialize slaves");
+                return false;
             }
-            timeWaited += tm.elapsed();
-            if (connected == slaves)
-                break;
+            Owned<INode> sender = _sender;
+            if (NotFound != connectedSlaves.find(sender))
+            {
+                StringBuffer epStr;
+                PROGLOG("Same slave registered twice!! : %s", sender->endpoint().getUrlStr(epStr).str());
+                return false;
+            }
+
+            /* NB: in base metal setup, the slaves know which slave number they are in advance, and send their slavenum at registration.
+             * In non attached storage setup, they do not send a slave by default and instead are given a # once all are registered
+             */
+            unsigned slaveNum;
+            msg.read(slaveNum);
+            if (NotFound == slaveNum)
+            {
+                connectedSlaves.append(sender.getLink());
+                slaveNum = connectedSlaves.ordinality();
+            }
             else
             {
-                if (timeWaited >= MAX_SLAVEREG_DELAY)
-                    throw MakeThorException(TE_AbortException, "Have waited over %d minutes for all slaves to connect, quitting.", MAX_SLAVEREG_DELAY/1000/60);
-                unsigned outstanding = slaves - connected;
-                PROGLOG("Still Waiting for minimum %d slaves to connect", outstanding);
-                if ((outstanding) <= 5)
-                {
-                    unsigned s=0;
-                    for (;;)
-                    {
-                        unsigned ns = connectedSet->scan(s, false);
-                        if (ns<s || ns >= slaves)
-                            break;
-                        s = ns+1;
-                        StringBuffer str;
-                        PROGLOG("waiting for slave %d (%s)", s, queryNodeGroup().queryNode(s).endpoint().getUrlStr(str.clear()).str());
-                    }
-                }
-                msgDelay = (unsigned) ((float)msgDelay * 1.5);
-                if (timeWaited+msgDelay > MAX_SLAVEREG_DELAY)
-                    msgDelay = MAX_SLAVEREG_DELAY - timeWaited;
+                unsigned pos = slaveNum - 1; // NB: slaveNum is 1 based
+                while (connectedSlaves.ordinality() < pos)
+                    connectedSlaves.append(nullptr);
+                if (connectedSlaves.ordinality() == pos)
+                    connectedSlaves.append(sender.getLink());
+                else
+                    connectedSlaves.replace(sender.getLink(), pos);
             }
+            StringBuffer epStr;
+            PROGLOG("Slave %u connected from %s", slaveNum, sender->endpoint().getUrlStr(epStr).str());
+            --remaining;
         }
-        
+        assertex(slaves == connectedSlaves.ordinality());
+
+        unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
+        unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
+        unsigned channelsPerWorker = globals->getPropInt("@channelsPerWorker", 1);
+
+        Owned<IGroup> processGroup;
+
+        // NB: in bare metal Thor is bound to a group and cluster/communicator have alreday been setup (see earlier setClusterGroup call)
+        if (clusterInitialized())
+            processGroup.set(&queryProcessGroup());
+        else
+        {
+            processGroup.setown(createIGroup(connectedSlaves.ordinality(), connectedSlaves.getArray()));
+            setupCluster(queryMyNode(), processGroup, channelsPerWorker, slaveBasePort, localThorPortInc);
+        }
+
         PROGLOG("Slaves connected, initializing..");
-        CMessageBuffer msg;
+        msg.clear();
         msg.append(THOR_VERSION_MAJOR).append(THOR_VERSION_MINOR);
-        queryRawGroup().serialize(msg);
+        processGroup->serialize(msg);
         globals->serialize(msg);
         msg.append(masterSlaveMpTag);
         msg.append(kjServiceMpTag);
@@ -268,6 +338,8 @@ public:
             PROGLOG("Failed to initialize slaves");
             return false;
         }
+
+        // Wait for confirmation from slaves
         PROGLOG("Initialization sent to slave group");
         try
         {
@@ -304,6 +376,8 @@ public:
                 }
                 registerNode(sender-1);
             }
+
+            // this is like a barrier, let slaves know all slaves are now connected
             PROGLOG("Slaves initialized");
             unsigned s=0;
             for (; s<slaves; s++)
@@ -315,6 +389,8 @@ public:
                     return false;
                 }
             }
+            if (watchdog)
+                watchdog->start();
             deregistrationWatch.start();
             return true;
         }
@@ -440,62 +516,14 @@ bool checkClusterRelicateDAFS(IGroup &grp)
 
 static bool auditStartLogged = false;
 
-class CThorEndHandler : public CSimpleInterface, implements IThreaded
-{
-    CThreaded threaded;
-    unsigned timeout = 30000;
-    std::atomic<bool> started{false};
-    std::atomic<bool> stopped{false};
-    Semaphore sem;
-public:
-    CThorEndHandler() : threaded("CThorEndHandler")
-    {
-        threaded.init(this);
-    }
-    ~CThorEndHandler()
-    {
-        stop();
-        threaded.join(timeout);
-    }
-    void start(unsigned timeoutSecs)
-    {
-        bool expected = false;
-        if (started.compare_exchange_strong(expected, true))
-        {
-            timeout = timeoutSecs * 1000; // sem_post and sem_wait are mem_barriers
-            sem.signal();
-        }
-    }
-    void stop()
-    {
-        bool expected = false;
-        if (stopped.compare_exchange_strong(expected, true))
-            sem.signal();
-    }
-    virtual void threadmain() override
-    {
-        // wait to be signalled to start timer
-        sem.wait();
-        if (stopped)
-            return;
-        if (!sem.wait(timeout))
-        {
-            // if it wasn't set by now then it's -1 and Thor restarts ...
-            int eCode = queryExitCode();
-            _exit(eCode);
-        }
-    }
-};
-// start thread now
-static CThorEndHandler thorEndHandler;
-
 static bool firstCtrlC = true;
 bool ControlHandler(ahType type)
 {
     // MCK - NOTE: this routine may make calls to non-async-signal safe functions
     //             (such as malloc) that really should not be made if we are called
     //             from a signal handler - start end handler timer to always end
-    thorEndHandler.start(120);
+    if (thorEndHandler)
+        thorEndHandler->start(120);
 
     if (ahInterrupt == type)
     {
@@ -540,8 +568,9 @@ bool ControlHandler(ahType type)
 
 
 #include "thactivitymaster.hpp"
-int main( int argc, char *argv[]  )
+int main( int argc, const char *argv[]  )
 {
+#ifndef _CONTAINERIZED
     for (unsigned i=0;i<(unsigned)argc;i++) {
         if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
             if (daemon(1,0) || write_pidfile(argv[++i])) {
@@ -551,6 +580,7 @@ int main( int argc, char *argv[]  )
             break;
         }
     }
+#endif
 #if defined(WIN32) && defined(_DEBUG)
     int tmpFlag = _CrtSetDbgFlag( _CRTDBG_REPORT_FLAG );
     tmpFlag |= _CRTDBG_LEAK_CHECK_DF;
@@ -561,26 +591,32 @@ int main( int argc, char *argv[]  )
     InitModuleObjects();
     NoQuickEditSection xxx;
     {
-        Owned<IFile> iFile = createIFile("thor.xml");
-        globals = iFile->exists() ? createPTree(*iFile, ipt_caseInsensitive) : createPTree("Thor", ipt_caseInsensitive);
+        globals.setown(loadConfiguration(thorDefaultConfigYaml, argv, "thor", "THOR", "thor.xml", nullptr));
     }
+#ifdef _DEBUG
+    unsigned holdSlave = globals->getPropInt("@holdSlave", NotFound);
+    if (0 == holdSlave) // master
+    {
+        DBGLOG("Thor master paused for debugging purposes, attach and set held=false to release");
+        bool held = true;
+        while (held)
+            Sleep(5);
+    }
+#endif
     setStatisticsComponentName(SCTthor, globals->queryProp("@name"), true);
 
     globals->setProp("@masterBuildTag", BUILD_TAG);
-    char **pp = argv+1;
-    while (*pp)
-        loadCmdProp(globals, *pp++);
 
     setIORetryCount(globals->getPropInt("Debug/@ioRetries")); // default == 0 == off
     StringBuffer daliServer;
-    if (!globals->getProp("@DALISERVERS", daliServer)) 
+    if (!globals->getProp("@daliServers", daliServer)) 
     {
-        LOG(MCerror, thorJob, "No Dali server list specified in THOR.XML (DALISERVERS=iport,iport...)\n");
+        LOG(MCerror, thorJob, "No Dali server list specified in THOR.XML (daliServers=iport,iport...)\n");
         return 0; // no recycle
     }
 
     SocketEndpoint thorEp;
-    const char *master = globals->queryProp("@MASTER");
+    const char *master = globals->queryProp("@master");
     if (master)
     {
         thorEp.set(master);
@@ -589,14 +625,12 @@ int main( int argc, char *argv[]  )
     else
         thorEp.setLocalHost(0);
 
-    setMasterPortBase(thorEp.port); // both same
-    thorEp.port = getMasterPortBase();
+    if (0 == thorEp.port)
+        thorEp.port = globals->getPropInt("@masterport", THOR_BASE_PORT);
 
     // Remove sentinel asap
     Owned<IFile> sentinelFile = createSentinelTarget();
     removeSentinelFile(sentinelFile);
-
-    setMachinePortBase(thorEp.port);
 
     EnableSEHtoExceptionMapping(); 
 #ifndef __64BIT__
@@ -605,33 +639,60 @@ int main( int argc, char *argv[]  )
 #endif
     const char *thorname = NULL;
     StringBuffer nodeGroup, logUrl;
-    unsigned channelsPerSlave = 1;
+    unsigned slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
+    unsigned channelsPerWorker;
+    if (globals->hasProp("@channelsPerWorker"))
+        channelsPerWorker = globals->getPropInt("@channelsPerWorker", 1);
+    else
+    {   // for backward compatiblity only
+        channelsPerWorker = globals->getPropInt("@channelsPerSlave", 1);
+        globals->setPropInt("@channelsPerWorker", channelsPerWorker);
+    }
 
+    installDefaultFileHooks(globals);
     ILogMsgHandler *logHandler;
     try
     {
+#ifndef _CONTAINERIZED
         {
             Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(globals, "thor");
             lf->setName("thormaster");//override default filename
             lf->setCreateAliasFile(false);
             logHandler = lf->beginLogging();
             createUNCFilename(lf->queryLogFileSpec(), logUrl, false);
-        }
-        LOG(MCdebugProgress, thorJob, "Opened log file %s", logUrl.str());
-        LOG(MCdebugProgress, thorJob, "Build %s", BUILD_TAG);
-        globals->setProp("@logURL", logUrl.str());
+#ifndef _DEBUG
+            // keep duplicate logging output to stderr to aide debugging
+            queryLogMsgManager()->removeMonitor(queryStderrLogMsgHandler());
+#endif
 
-        Owned<IGroup> serverGroup = createIGroup(daliServer.str(), DALI_SERVER_PORT);
+            LOG(MCdebugProgress, thorJob, "Opened log file %s", logUrl.str());
+        }
+#else
+        setupContainerizedLogMsgHandler();
+        logHandler = queryStderrLogMsgHandler();
+        logUrl.set("stderr");
+#endif
+        LOG(MCdebugProgress, thorJob, "Build %s", BUILD_TAG);
+
+        Owned<IGroup> serverGroup = createIGroupRetry(daliServer.str(), DALI_SERVER_PORT);
 
         unsigned retry = 0;
-        for (;;) {
-            try {
-                unsigned port = getFixedPort(TPORT_mp);
-                LOG(MCdebugProgress, thorJob, "calling initClientProcess Port %d", port);
-                initClientProcess(serverGroup, DCR_ThorMaster, port);
+        for (;;)
+        {
+            try
+            {
+                LOG(MCdebugProgress, thorJob, "calling initClientProcess %d", thorEp.port);
+                initClientProcess(serverGroup, DCR_ThorMaster, thorEp.port, nullptr, nullptr, MP_WAIT_FOREVER, true);
+                if (0 == thorEp.port)
+                    thorEp.port = queryMyNode()->endpoint().port;
+                // both same
+                setMasterPortBase(thorEp.port);
+                setMachinePortBase(thorEp.port);
+
                 break;
             }
-            catch (IJSOCK_Exception *e) { 
+            catch (IJSOCK_Exception *e)
+            { 
                 if ((e->errorCode()!=JSOCKERR_port_in_use))
                     throw;
                 FLLOG(MCexception(e), thorJob, e,"InitClientProcess");
@@ -643,10 +704,10 @@ int main( int argc, char *argv[]  )
             }
         }
 
+        initializeStorageGroups(true);
+
         if (globals->getPropBool("@MPChannelReconnect"))
             getMPServer()->setOpt(mpsopt_channelreopen, "true");
-
-        setPasswordsFromSDS();
 
         if (globals->getPropBool("@enableSysLog",true))
             UseSysLogForOperatorMessages();
@@ -663,17 +724,6 @@ int main( int argc, char *argv[]  )
         {
             nodeGroup.append(thorname);
             globals->setProp("@nodeGroup", thorname);
-        }
-        unsigned slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
-        channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
-        unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
-        unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
-        Owned<IGroup> rawGroup = getClusterNodeGroup(thorname, "ThorCluster");
-        setClusterGroup(queryMyNode(), rawGroup, slavesPerNode, channelsPerSlave, slaveBasePort, localThorPortInc);
-        if (globals->getPropBool("@replicateOutputs")&&globals->getPropBool("@validateDAFS",true)&&!checkClusterRelicateDAFS(queryNodeGroup()))
-        {
-            FLLOG(MCoperatorError, thorJob, "ERROR: Validate failure(s) detected, exiting Thor");
-            return globals->getPropBool("@validateDAFSretCode"); // default is no recycle!
         }
 
         if (globals->getPropBool("@useNASTranslation", true))
@@ -764,14 +814,23 @@ int main( int argc, char *argv[]  )
         if (overrideReplicateDirectory&&*overrideBaseDirectory)
             setBaseDirectory(overrideReplicateDirectory, true);
         StringBuffer tempDirStr;
-        if (getConfigurationDirectory(globals->queryPropTree("Directories"),"temp","thor",globals->queryProp("@name"), tempDirStr))
-            globals->setProp("@thorTempDirectory", tempDirStr.str());
-        else
+        if (!getConfigurationDirectory(globals->queryPropTree("Directories"),"temp","thor",globals->queryProp("@name"), tempDirStr))
+        {
             tempDirStr.append(globals->queryProp("@thorTempDirectory"));
+            if (0 == tempDirStr.length())
+            {
+                appendCurrentDirectory(tempDirStr, true);
+                if (tempDirStr.length())
+                    addPathSepChar(tempDirStr);
+                tempDirStr.append("temp");
+            }
+        }
+        globals->setProp("@thorTempDirectory", tempDirStr);
         logDiskSpace(); // Log before temp space is cleared
         StringBuffer tempPrefix("thtmp");
         tempPrefix.append(getMasterPortBase()).append("_");
-        SetTempDir(tempDirStr.str(), tempPrefix.str(), true);
+        SetTempDir(0, tempDirStr.str(), tempPrefix.str(), true);
+        DBGLOG("Temp directory: %s", queryTempDir());
 
         char thorPath[1024];
         if (!GetCurrentDirectory(1024, thorPath))
@@ -820,6 +879,8 @@ int main( int argc, char *argv[]  )
     getThorQueueNames(_queueNames, thorName);
     queueName.set(_queueNames.str());
 
+    Owned<IException> exception;
+    StringBuffer cloudJobName;
     try
     {
         CSDSServerStatus &serverStatus = openThorServerStatus();
@@ -840,13 +901,61 @@ int main( int argc, char *argv[]  )
         masterSlaveMpTag = allocateClusterMPTag();
         kjServiceMpTag = allocateClusterMPTag();
 
-        if (registry->connect())
+        unsigned numWorkers = 0;
+        const char *workunit = nullptr;
+        const char *graphName = nullptr;
+#ifdef _CONTAINERIZED
+        workunit = globals->queryProp("@workunit");
+        graphName = globals->queryProp("@graphName");
+        if (isEmptyString(workunit))
+            throw makeStringException(0, "missing --workunit");
+        if (isEmptyString(graphName))
+            throw makeStringException(0, "missing --graphName");
+
+        if (!globals->hasProp("@numWorkers"))
+            throw makeStringException(0, "Default number of workers not defined (numWorkers)");
+        else
         {
+            // check 'numWorkers' workunit option.
+            Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
+            Owned<IConstWorkUnit> wuRead = factory->openWorkUnit(workunit);
+            if (!wuRead)
+                throw makeStringExceptionV(0, "Cannot open workunit: %s", workunit);
+            if (wuRead->hasDebugValue("numWorkers"))
+                numWorkers = wuRead->getDebugValueInt("numWorkers", 0);
+            else
+                numWorkers = globals->getPropInt("@numWorkers", 0);
+            if (0 == numWorkers)
+                throw makeStringException(0, "Number of workers must be > 0 (numWorkers)");
+        }
+
+        cloudJobName.appendf("%s-%s", workunit, graphName);
+
+        StringBuffer myEp;
+        queryMyNode()->endpoint().getUrlStr(myEp);
+
+        applyK8sYaml("thorworker", workunit, cloudJobName, "jobspec", { { "graphName", graphName}, { "master", myEp.str() }, { "%numWorkers", std::to_string(numWorkers)} }, false);
+#else
+        unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
+        unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
+        Owned<IGroup> rawGroup = getClusterNodeGroup(thorname, "ThorCluster");
+        setClusterGroup(queryMyNode(), rawGroup, slavesPerNode, channelsPerWorker, slaveBasePort, localThorPortInc);
+        numWorkers = queryNodeClusterWidth();
+#endif
+
+        if (registry->connect(numWorkers))
+        {
+            if (globals->getPropBool("@replicateOutputs")&&globals->getPropBool("@validateDAFS",true)&&!checkClusterRelicateDAFS(queryNodeGroup()))
+            {
+                FLLOG(MCoperatorError, thorJob, "ERROR: Validate failure(s) detected, exiting Thor");
+                return globals->getPropBool("@validateDAFSretCode"); // default is no recycle!
+            }
+
             unsigned totSlaveProcs = queryNodeClusterWidth();
             for (unsigned s=0; s<totSlaveProcs; s++)
             {
                 StringBuffer slaveStr;
-                for (unsigned c=0; c<channelsPerSlave; c++)
+                for (unsigned c=0; c<channelsPerWorker; c++)
                 {
                     unsigned o = s + (c * totSlaveProcs);
                     if (c)
@@ -854,7 +963,7 @@ int main( int argc, char *argv[]  )
                     slaveStr.append(o+1);
                 }
                 StringBuffer virtStr;
-                if (channelsPerSlave>1)
+                if (channelsPerWorker>1)
                     virtStr.append("virtual slaves:");
                 else
                     virtStr.append("slave:");
@@ -862,11 +971,38 @@ int main( int argc, char *argv[]  )
             }
 
             PROGLOG("verifying mp connection to rest of cluster");
-            if (!queryNodeComm().verifyAll())
-                OERRLOG("Failed to connect to all nodes");
-            else
-                PROGLOG("verified mp connection to rest of cluster");
+            if (!queryNodeComm().verifyAll(false, 1000*60*30, 1000*60))
+                throwStringExceptionV(0, "Failed to connect to all nodes");
+            PROGLOG("verified mp connection to rest of cluster");
 
+#ifdef _CONTAINERIZED
+            if (globals->getPropBool("@_dafsStorage"))
+            {
+/* NB: This option is a developer option only.
+
+ * It is intended to be used to bring up a temporary Thor instance that uses local node storage,
+ * as the data plane.
+ * 
+ * It is likely to be deprecated or need reworking, when DFS is refactored to use SP's properly.
+ * 
+ * The mechanism works by:
+ * a) Creating a pseudo StoragePlane (publishes group to Dali).
+ * b) Spins up a dafilesrv thread in each slave container.
+ * c) Changes the default StoragePlane used to publish files, to point to the SP/group created in step (a).
+ * 
+ * In this way, a Thor instance, whilst up, will act similarly to a bare-metal system, using local disks as storage.
+ * This allows quick cloud based allocation/simulation of bare-metal type clusters for testing purposes.
+ * 
+ * NB: This isn't a real StoragePlane, and it will not be accessible by any other component.
+ *
+ */
+                StringBuffer uniqueGrpName;
+                queryNamedGroupStore().addUnique(&queryProcessGroup(), uniqueGrpName);
+                // change default plane
+                queryComponentConfig().setProp("storagePlane", uniqueGrpName);
+                PROGLOG("Persistent Thor group created with group name: %s", uniqueGrpName.str());
+            }
+#endif
             LOG(MCauditInfo, ",Progress,Thor,Startup,%s,%s,%s,%s",nodeGroup.str(),thorname,queueName.str(),logUrl.str());
             auditStartLogged = true;
 
@@ -876,28 +1012,41 @@ int main( int argc, char *argv[]  )
             if (pinterval)
                 startPerformanceMonitor(pinterval, PerfMonStandard, nullptr);
 
-            thorMain(logHandler);
+            // NB: workunit/graphName only set in one-shot mode (if isCloud())
+            thorMain(logHandler, workunit, graphName);
             LOG(MCauditInfo, ",Progress,Thor,Terminate,%s,%s,%s",thorname,nodeGroup.str(),queueName.str());
         }
         else
             PROGLOG("Registration aborted");
+        registry.clear();
         LOG(MCdebugProgress, thorJob, "ThorMaster terminated OK");
     }
     catch (IException *e) 
     {
         FLLOG(MCexception(e), thorJob, e,"ThorMaster");
-        e->Release();
+        exception.setown(e);
     }
+#ifdef _CONTAINERIZED
+    if (!cloudJobName.isEmpty())
+    {
+        KeepK8sJobs keepJob = translateKeepJobs(globals->queryProp("@keepJobs"));
+        if (keepJob != KeepK8sJobs::all)
+        {
+            // Delete jobs unless the pod failed and keepJob==podfailures
+            if ((nullptr == exception) || (KeepK8sJobs::podfailures != keepJob))
+                deleteK8sResource("thorworker", cloudJobName, "job");
+        }
+    }
+    setExitCode(0);
+#endif
 
     // cleanup handler to be sure we end
-    thorEndHandler.start(30);
+    thorEndHandler->start(30);
 
     PROGLOG("Thor closing down 5");
     stopPerformanceMonitor();
     disconnectLogMsgManagerFromDali();
     closeThorServerStatus();
-    if (globals)
-        globals->Release();
     PROGLOG("Thor closing down 4");
     closeDllServer();
     PROGLOG("Thor closing down 3");

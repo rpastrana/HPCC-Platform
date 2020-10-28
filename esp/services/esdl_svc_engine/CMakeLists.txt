@@ -30,7 +30,6 @@ set (   SRCS
         esdl_svc_engine.cpp
         esdl_store.cpp
         esdl_monitor.cpp
-        esdl_svc_custom.cpp
     )
 
 include_directories (
@@ -63,6 +62,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/esp/logging/loggingmanager
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
+         ${HPCC_SOURCE_DIR}/tools/hidl #TAccessMapGenerator
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DESDL_ENGINE_EXPORTS )

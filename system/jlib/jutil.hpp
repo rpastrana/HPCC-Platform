@@ -24,6 +24,10 @@
 #include "jarray.hpp"
 #include "jbuff.hpp"
 
+#include <algorithm> 
+#include <iterator>
+#include <functional>
+
 #if defined (__APPLE__)
 #include <mach/mach_time.h>
 extern mach_timebase_info_data_t timebase_info;   // Calibration for nanosecond timer
@@ -61,6 +65,12 @@ int jlib_decl numtostr(char *dst, unsigned short value);
 int jlib_decl numtostr(char *dst, unsigned int value);
 int jlib_decl numtostr(char *dst, unsigned long value);
 int jlib_decl numtostr(char *dst, unsigned __int64 _value);
+
+// Translate "human readable" size strings like 4G to numbers
+extern jlib_decl offset_t friendlyStringToSize(const char *in);
+
+// Write a string as file contents, atomically
+extern void jlib_decl atomicWriteFile(const char *fileName, const char *output);
 
 #ifndef _WIN32
 /**
@@ -245,16 +255,54 @@ class CIStringArray : public StringArray, public CInterface
 {
 };
 
+interface IScmIterator : extends IInterface
+{
+    virtual bool first() = 0;
+    virtual bool next() = 0;
+    virtual bool isValid() = 0;
+};
+
+interface IStringIterator : extends IScmIterator
+{
+    virtual IStringVal & str(IStringVal & str) = 0;
+};
+
+
+class jlib_decl CStringArrayIterator : implements CInterfaceOf<IStringIterator>
+{
+    unsigned idx = 0;
+    StringArray strings;
+public:
+    void append(const char *str) { strings.append(str); }
+    void append_unique(const char *str) { strings.appendUniq(str); }
+    virtual bool first() { idx = 0; return strings.isItem(idx); }
+    virtual bool next() { idx ++; return strings.isItem(idx); }
+    virtual bool isValid() { return strings.isItem(idx); }
+    virtual IStringVal & str(IStringVal &s) { s.set(strings.item(idx)); return s; }
+};
+
+class jlib_decl CEmptyStringIterator : implements CInterfaceOf<IStringIterator>
+{
+public:
+    virtual bool first() { return false; }
+    virtual bool next() { return false; }
+    virtual bool isValid() { return false; }
+    virtual IStringVal & str(IStringVal &s) { s.clear(); return s; }
+};
+
+
 extern jlib_decl unsigned msTick();
 extern jlib_decl unsigned usTick();
 extern jlib_decl int write_pidfile(const char * instance);
 extern jlib_decl void doStackProbe();
+extern jlib_decl bool isContainerized();
 
 #ifndef arraysize
 #define arraysize(T) (sizeof(T)/sizeof(*T))
 #endif
 
 extern jlib_decl unsigned runExternalCommand(StringBuffer &output, StringBuffer &error, const char *cmd, const char *input);
+extern jlib_decl unsigned runExternalCommand(const char *title, StringBuffer &output, StringBuffer &error, const char *cmd, const char *input);
 
 extern jlib_decl unsigned __int64 greatestCommonDivisor(unsigned __int64 left, unsigned __int64 right);
 
@@ -400,7 +448,6 @@ extern jlib_decl const char *queryCurrentProcessPath();
 
 extern jlib_decl StringBuffer &getFileAccessUrl(StringBuffer &out);
 
-
 /**
  * Locate the 'package home' directory - normally /opt/HPCCSystems - by detecting the current executable's location
  *
@@ -518,6 +565,24 @@ protected:
     unsigned curQuantile;
     unsigned initialDelta;
     bool isQuantile;
+};
+
+template <typename Container, typename Value>
+inline bool stdContains(Container&& container, Value &&v)
+{
+    return container.end() != std::find(container.begin(), container.end(), std::forward<Value>(v));
+}
+
+
+class jlib_decl COnScopeExit
+{
+    const std::function<void()> exitFunc;
+public:
+    inline COnScopeExit(const std::function<void()> &_exitFunc) : exitFunc(_exitFunc) { }
+    inline ~COnScopeExit()
+    {
+        exitFunc();
+    }
 };
 
 #endif

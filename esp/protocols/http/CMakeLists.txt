@@ -47,7 +47,6 @@ set(SRCS
     ../../platform/espcache.cpp
     ../../platform/sechandler.cpp
     ../../platform/txsummary.cpp
-    ../../platform/persistent.cpp
     mapinfo.cpp
     plugin.cpp
     )
@@ -64,9 +63,11 @@ include_directories(
     ./../../services/common
     ./../../../system/security/shared
     ./../../../system/security/LdapSecurity
+    ./../../../system/security/zcrypt
     ./../../../system/mp 
     ./../../../dali/base
     ./../../../common/workunit
+    ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 add_definitions(-DESPHTTP_EXPORTS -DESP_TIMING -D_USRDLL -DESP_PLUGIN)
@@ -81,6 +82,7 @@ target_link_libraries(
     jlib
     xmllib
     dalibase
+    thorhelper
     )
 
 if(LIBMEMCACHED_FOUND)
@@ -96,3 +98,10 @@ endif()
 if(USE_OPENLDAP)
     target_link_libraries(esphttp LdapSecurity)
 endif(USE_OPENLDAP)
+
+IF (USE_ZLIB)
+    target_link_libraries ( esphttp
+        ${ZLIB_LIBRARIES}
+        zcrypt
+    )
+ENDIF()

@@ -19,6 +19,7 @@
 #include "udplib.hpp"
 #include "udptopo.hpp"
 #include "roxie.hpp"
+#include "portlist.h"
 #include <thread>
 #include <string>
 #include <sstream>
@@ -69,13 +70,13 @@ ChannelInfo::ChannelInfo(unsigned _mySubChannel, unsigned _numSubChannels, unsig
         currentDelay.emplace_back(initIbytiDelay);
 }
 
-bool ChannelInfo::otherSlaveHasPriority(unsigned priorityHash, unsigned otherSlaveSubChannel) const
+bool ChannelInfo::otherAgentHasPriority(unsigned priorityHash, unsigned otherAgentSubChannel) const
 {
     unsigned primarySubChannel = (priorityHash % numSubChannels);
     // could be coded smarter! Basically mysub - prim < theirsub - prim using modulo arithmetic, I think
     while (primarySubChannel != mySubChannel)
     {
-        if (primarySubChannel == otherSlaveSubChannel)
+        if (primarySubChannel == otherAgentSubChannel)
             return true;
         primarySubChannel++;
         if (primarySubChannel >= numSubChannels)
@@ -91,13 +92,14 @@ public:
     CTopologyServer();
     CTopologyServer(const char *topologyInfo);
 
-    virtual const SocketEndpointArray &querySlaves(unsigned channel) const override;
+    virtual const SocketEndpointArray &queryAgents(unsigned channel) const override;
     virtual const SocketEndpointArray &queryServers(unsigned port) const override;
     virtual const ChannelInfo &queryChannelInfo(unsigned channel) const override;
     virtual const std::vector<unsigned> &queryChannels() const override;
+    virtual bool implementsChannel(unsigned channel) const override;
 
 private:
-    std::map<unsigned, SocketEndpointArray> slaves;  // indexed by channel
+    std::map<unsigned, SocketEndpointArray> agents;  // indexed by channel
     std::map<unsigned, SocketEndpointArray> servers; // indexed by port
     static const SocketEndpointArray nullArray;
     std::map<unsigned, ChannelInfo> channelInfo;
@@ -106,7 +108,7 @@ private:
     std::vector<unsigned> replicationLevels;
 };
 
-SocketEndpoint mySlaveEP;
+SocketEndpoint myAgentEP;
 
 CTopologyServer::CTopologyServer()
 {
@@ -146,16 +148,16 @@ CTopologyServer::CTopologyServer(const char *topologyInfo)
                 DBGLOG("Unable to process endpoint information in topology entry %s", line.c_str());
                 continue;
             }
-            if (streq(role, "slave"))
+            if (streq(role, "agent"))
             {
-                slaves[channel].append(ep);
-                if (ep.equals(mySlaveEP))
+                agents[channel].append(ep);
+                if (ep.equals(myAgentEP))
                 {
-                    mySubChannels[channel] = slaves[channel].ordinality()-1;
+                    mySubChannels[channel] = agents[channel].ordinality()-1;
                     channels.push_back(channel);
                     replicationLevels.push_back(repl);
                 }
-                slaves[0].append(ep);
+                agents[0].append(ep);
             }
             else if (streq(role, "server"))
                 servers[ep.port].append(ep);
@@ -166,14 +168,14 @@ CTopologyServer::CTopologyServer(const char *topologyInfo)
         unsigned channel = channels[i];
         unsigned repl = replicationLevels[i];
         unsigned subChannel = mySubChannels[channel];
-        channelInfo.emplace(std::make_pair(channel, ChannelInfo(subChannel, slaves[channel].ordinality(), repl)));
+        channelInfo.emplace(std::make_pair(channel, ChannelInfo(subChannel, agents[channel].ordinality(), repl)));
     }
 }
 
-const SocketEndpointArray &CTopologyServer::querySlaves(unsigned channel) const
+const SocketEndpointArray &CTopologyServer::queryAgents(unsigned channel) const
 {
-    auto match = slaves.find(channel);
-    if (match == slaves.end())
+    auto match = agents.find(channel);
+    if (match == agents.end())
         return nullArray;
     return match->second;
 }
@@ -199,6 +201,15 @@ const std::vector<unsigned> &CTopologyServer::queryChannels() const
     return channels;
 }
 
+bool CTopologyServer::implementsChannel(unsigned channel) const
+{
+    if (channel)
+    {
+        return std::find(channels.begin(), channels.end(), channel) != channels.end();
+    }
+    else
+        return true;   // Kinda-sorta - perhaps not true if separated servers from agents, but even then child queries may access channel 0
+}
 const SocketEndpointArray CTopologyServer::nullArray;
 
 // Class TopologyManager (there is a single instance) handles interaction with topology servers
@@ -208,15 +219,16 @@ class TopologyManager
 {
 public:
     TopologyManager() { currentTopology.setown(new CTopologyServer); };
-    void setServers(const SocketEndpointArray &_topoServers);
+    void setServers(const StringArray &_topoServers);
     void setRoles(const std::vector<RoxieEndpointInfo> &myRoles);
     const ITopologyServer &getCurrent();
 
-    void update();
+    bool update();
+    unsigned numServers() const { return topoServers.length(); }
 private:
     Owned<const ITopologyServer> currentTopology;
     SpinLock lock;
-    SocketEndpointArray topoServers;
+    StringArray topoServers;
     const unsigned topoConnectTimeout = 1000;
     const unsigned maxReasonableResponse = 32*32*1024;  // At ~ 32 bytes per entry, 1024 channels and 32-way redundancy that's a BIG cluster!
     StringBuffer md5;
@@ -225,59 +237,65 @@ private:
 
 static TopologyManager topologyManager;
 
-void TopologyManager::update()
+bool TopologyManager::update()
 {
+    bool updated = false;
     ForEachItemIn(idx, topoServers)
     {
         try
         {
-            Owned<ISocket> topo = ISocket::connect_timeout(topoServers.item(idx), topoConnectTimeout);
-            if (topo)
+            SocketEndpointArray eps;
+            eps.fromName(topoServers.item(idx), TOPO_SERVER_PORT);
+            ForEachItemIn(idx, eps)
             {
-                unsigned topoBufLen = md5.length()+topoBuf.length();
-                _WINREV(topoBufLen);
-                topo->write(&topoBufLen, 4);
-                topo->write(md5.str(), md5.length());
-                topo->write(topoBuf.str(), topoBuf.length());
-                unsigned responseLen;
-                topo->read(&responseLen, 4);
-                _WINREV(responseLen);
-                if (!responseLen)
+                const SocketEndpoint &ep = eps.item(idx);
+                Owned<ISocket> topo = ISocket::connect_timeout(ep, topoConnectTimeout);
+                if (topo)
                 {
-                    StringBuffer s;
-                    DBGLOG("Unexpected empty response from topology server %s", topoServers.item(idx).getUrlStr(s).str());
-                }
-                else
-                {
-                    if (responseLen > maxReasonableResponse)
+                    unsigned topoBufLen = md5.length()+topoBuf.length();
+                    _WINREV(topoBufLen);
+                    topo->write(&topoBufLen, 4);
+                    topo->write(md5.str(), md5.length());
+                    topo->write(topoBuf.str(), topoBuf.length());
+                    unsigned responseLen;
+                    topo->read(&responseLen, 4);
+                    _WINREV(responseLen);
+                    if (!responseLen)
                     {
-                        StringBuffer s;
-                        DBGLOG("Unexpectedly large response (%u) from topology server %s", responseLen, topoServers.item(idx).getUrlStr(s).str());
+                        DBGLOG("Unexpected empty response from topology server %s", topoServers.item(idx));
                     }
                     else
                     {
-                        MemoryBuffer mb;
-                        char *mem = (char *)mb.reserveTruncate(responseLen);
-                        topo->read(mem, responseLen);
-                        if (responseLen>=md5.length() && mem[0]=='=')
+                        if (responseLen > maxReasonableResponse)
                         {
-                            if (md5.length()==0 || memcmp(mem, md5.str(), md5.length())!=0)
-                            {
-                                const char *eol = strchr(mem, '\n');
-                                if (eol)
-                                {
-                                    eol++;
-                                    md5.clear().append(eol-mem, mem);  // Note: includes '\n'
-                                    Owned<const ITopologyServer> newServer = new CTopologyServer(eol);
-                                    SpinBlock b(lock);
-                                    currentTopology.swap(newServer);
-                                }
-                            }
+                            DBGLOG("Unexpectedly large response (%u) from topology server %s", responseLen, topoServers.item(idx));
                         }
                         else
                         {
-                            StringBuffer s;
-                            DBGLOG("Unexpected response from topology server %s: %.*s", topoServers.item(idx).getUrlStr(s).str(), responseLen, mem);
+                            MemoryBuffer mb;
+                            char *mem = (char *)mb.reserveTruncate(responseLen);
+                            topo->read(mem, responseLen);
+                            if (responseLen>=md5.length() && mem[0]=='=')
+                            {
+                                if (md5.length()==0 || memcmp(mem, md5.str(), md5.length())!=0)
+                                {
+                                    const char *eol = strchr(mem, '\n');
+                                    if (eol)
+                                    {
+                                        eol++;
+                                        md5.clear().append(eol-mem, mem);  // Note: includes '\n'
+                                        Owned<const ITopologyServer> newServer = new CTopologyServer(eol);
+                                        SpinBlock b(lock);
+                                        currentTopology.swap(newServer);
+                                        updated = true;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                StringBuffer s;
+                                DBGLOG("Unexpected response from topology server %s: %.*s", topoServers.item(idx), responseLen, mem);
+                            }
                         }
                     }
                 }
@@ -285,10 +303,12 @@ void TopologyManager::update()
         }
         catch (IException *E)
         {
+            DBGLOG("While connecting to %s", topoServers.item(idx));
             EXCLOG(E);
             E->Release();
         }
     }
+    return updated;
 }
 
 const ITopologyServer &TopologyManager::getCurrent()
@@ -297,7 +317,7 @@ const ITopologyServer &TopologyManager::getCurrent()
     return *currentTopology.getLink();
 }
 
-void TopologyManager::setServers(const SocketEndpointArray &_topoServers)
+void TopologyManager::setServers(const StringArray &_topoServers)
 {
     ForEachItemIn(idx, _topoServers)
         topoServers.append(_topoServers.item(idx));
@@ -306,12 +326,13 @@ void TopologyManager::setServers(const SocketEndpointArray &_topoServers)
 void TopologyManager::setRoles(const std::vector<RoxieEndpointInfo> &myRoles)
 {
     topoBuf.clear();
+    DBGLOG("TopologyManager::setRoles - %d roles", (int) myRoles.size());
     for (const auto &role : myRoles)
     {
         switch (role.role)
         {
         case RoxieEndpointInfo::RoxieServer: topoBuf.append("server|"); break;
-        case RoxieEndpointInfo::RoxieSlave: topoBuf.append("slave|"); break;
+        case RoxieEndpointInfo::RoxieAgent: topoBuf.append("agent|"); break;
         default: throwUnexpected();
         }
         topoBuf.append(role.channel).append('|');
@@ -329,45 +350,54 @@ extern UDPLIB_API const ITopologyServer *getTopology()
     return &topologyManager.getCurrent();
 }
 
-extern UDPLIB_API unsigned getNumSlaves(unsigned channel)
+extern UDPLIB_API unsigned getNumAgents(unsigned channel)
 {
     Owned<const ITopologyServer> topology = getTopology();
-    return topology->querySlaves(channel).ordinality();
+    return topology->queryAgents(channel).ordinality();
 }
 
+#ifndef _CONTAINERIZED
 extern UDPLIB_API void createStaticTopology(const std::vector<RoxieEndpointInfo> &allRoles, unsigned traceLevel)
 {
     topologyManager.setRoles(allRoles);
 }
+#endif
 
 static std::thread topoThread;
 static Semaphore abortTopo;
 const unsigned topoUpdateInterval = 5000;
 
-extern UDPLIB_API void startTopoThread(const SocketEndpointArray &topoServers, const std::vector<RoxieEndpointInfo> &myRoles, unsigned traceLevel)
+extern UDPLIB_API void initializeTopology(const StringArray &topoValues, const std::vector<RoxieEndpointInfo> &myRoles)
 {
-    topologyManager.setServers(topoServers);
+    topologyManager.setServers(topoValues);
     topologyManager.setRoles(myRoles);
-    topoThread = std::thread([traceLevel]()
+}
+
+extern UDPLIB_API void publishTopology(unsigned traceLevel)
+{
+    if (topologyManager.numServers())
     {
-        topologyManager.update();
-        unsigned waitTime = 1000;  // First time around we don't wait as long, so that system comes up faster
-        while (!abortTopo.wait(waitTime))
+        topoThread = std::thread([traceLevel]()
         {
             topologyManager.update();
-            if (traceLevel > 2)
+            unsigned waitTime = 1000;  // First time around we don't wait as long, so that system comes up faster
+            while (!abortTopo.wait(waitTime))
             {
-                Owned<const ITopologyServer> c = getTopology();
-                const SocketEndpointArray &eps = c->querySlaves(0);
-                ForEachItemIn(idx, eps)
+                if (topologyManager.update() && traceLevel)
                 {
-                    StringBuffer s;
-                    DBGLOG("Slave %d: %s", idx, eps.item(idx).getIpText(s).str());
+                    DBGLOG("Topology information updated:");
+                    Owned<const ITopologyServer> c = getTopology();
+                    const SocketEndpointArray &eps = c->queryAgents(0);
+                    ForEachItemIn(idx, eps)
+                    {
+                        StringBuffer s;
+                        DBGLOG("Agent %d: %s", idx, eps.item(idx).getIpText(s).str());
+                    }
                 }
+                waitTime = topoUpdateInterval;
             }
-            waitTime = topoUpdateInterval;
-        }
-    });
+        });
+    }
 }
 
 extern UDPLIB_API void stopTopoThread()

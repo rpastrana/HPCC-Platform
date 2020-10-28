@@ -18,7 +18,21 @@
 #ifndef _CASSANDRAEMBED_INCL
 #define _CASSANDRAEMBED_INCL
 
+#ifdef CASSANDRAEMBED_EXPORTS
+    #define CASSANDRAEMBED_API DECL_EXPORT
+#else
+    #define CASSANDRAEMBED_API DECL_IMPORT
+#endif
+
 namespace cassandraembed {
+
+enum class OptionalCassBatchType
+{
+    logged = CASS_BATCH_TYPE_LOGGED,
+    unlogged = CASS_BATCH_TYPE_UNLOGGED,
+    counter = CASS_BATCH_TYPE_COUNTER,
+    nobatch = 255
+};
 
 __declspec(noreturn) extern void UNSUPPORTED(const char *feature) __attribute__((noreturn));
 __declspec(noreturn) extern void failx(const char *msg, ...) __attribute__((format(printf, 1, 2), noreturn));
@@ -29,7 +43,7 @@ extern bool isString(CassValueType t);
 
 // Wrappers to Cassandra structures that require corresponding releases
 
-class CassandraPrepared : public CInterfaceOf<IInterface>
+class CASSANDRAEMBED_API CassandraPrepared : public CInterfaceOf<IInterface>
 {
 public:
     inline CassandraPrepared(const CassPrepared *_prepared, const char *_queryString)
@@ -55,7 +69,7 @@ private:
     const CassPrepared *prepared;
 };
 
-class CassandraSession : public CInterface
+class CASSANDRAEMBED_API CassandraSession : public CInterface
 {
 public:
     inline CassandraSession() : session(NULL) {}
@@ -79,7 +93,7 @@ private:
 class CassandraStatementInfo;
 class CassandraStatement;
 
-class CassandraClusterSession : public CInterface
+class CASSANDRAEMBED_API CassandraClusterSession : public CInterface
 {
 public:
     inline CassandraClusterSession(CassCluster *_cluster)
@@ -114,7 +128,7 @@ public:
     void connect();
     void disconnect();
     CassandraPrepared *prepareStatement(const char *query, bool trace) const;
-    CassandraStatementInfo *createStatementInfo(const char *script, unsigned numParams, CassBatchType batchMode, unsigned pageSize) const;
+    CassandraStatementInfo *createStatementInfo(const char *script, unsigned numParams, OptionalCassBatchType batchMode, unsigned pageSize) const;
     void executeAsync(CIArrayOf<CassandraStatement> &batch, const char *what) const;
 
 private:
@@ -134,7 +148,7 @@ private:
     StringAttr keyspace;
 };
 
-class CassandraFuture : public CInterface
+class CASSANDRAEMBED_API CassandraFuture : public CInterface
 {
 public:
     inline CassandraFuture(CassFuture *_future) : future(_future)
@@ -161,7 +175,7 @@ protected:
     CassFuture *future;
 };
 
-class CassandraFutureResult : public CassandraFuture
+class CASSANDRAEMBED_API CassandraFutureResult : public CassandraFuture
 {
 public:
     inline CassandraFutureResult(CassFuture *_future) : CassandraFuture(_future)
@@ -188,7 +202,7 @@ private:
 
 };
 
-class CassandraBatch : public CInterface
+class CASSANDRAEMBED_API CassandraBatch : public CInterface
 {
 public:
     inline CassandraBatch(CassBatchType _type)
@@ -214,7 +228,7 @@ private:
     CassBatch *batch;
 };
 
-class CassandraStatement : public CInterface
+class CASSANDRAEMBED_API CassandraStatement : public CInterface
 {
 public:
     inline CassandraStatement(CassStatement *_statement) : statement(_statement)
@@ -334,7 +348,7 @@ private:
     CassStatement *statement;
 };
 
-class CassandraRetryingFuture : public CInterface
+class CASSANDRAEMBED_API CassandraRetryingFuture : public CInterface
 {
 public:
     CassandraRetryingFuture(CassSession *_session, CassStatement *_statement, Semaphore *_limiter, unsigned _retries);
@@ -357,7 +371,7 @@ private:
     Semaphore *limiter;
 };
 
-class CassandraResult : public CInterfaceOf<IInterface>
+class CASSANDRAEMBED_API CassandraResult : public CInterfaceOf<IInterface>
 {
 public:
     inline CassandraResult(const CassResult *_result) : result(_result)
@@ -377,7 +391,7 @@ private:
     const CassResult *result;
 };
 
-class CassandraIterator : public CInterfaceOf<IInterface>
+class CASSANDRAEMBED_API CassandraIterator : public CInterfaceOf<IInterface>
 {
 public:
     inline CassandraIterator(CassIterator *_iterator) : iterator(_iterator)
@@ -403,7 +417,7 @@ protected:
     CassIterator *iterator;
 };
 
-class CassandraCollection : public CInterface
+class CASSANDRAEMBED_API CassandraCollection : public CInterface
 {
 public:
     inline CassandraCollection(CassCollection *_collection) : collection(_collection)
@@ -423,10 +437,10 @@ private:
     CassCollection *collection;
 };
 
-class CassandraStatementInfo : public CInterface
+class CASSANDRAEMBED_API CassandraStatementInfo : public CInterface
 {
 public:
-    CassandraStatementInfo(CassandraSession *_session, CassandraPrepared *_prepared, unsigned _numBindings, CassBatchType _batchMode, unsigned pageSize, Semaphore *_semaphore, unsigned _maxRetries);
+    CassandraStatementInfo(CassandraSession *_session, CassandraPrepared *_prepared, unsigned _numBindings, OptionalCassBatchType _batchMode, unsigned pageSize, Semaphore *_semaphore, unsigned _maxRetries);
     ~CassandraStatementInfo();
     void stop();
     bool next();
@@ -463,18 +477,18 @@ protected:
     Semaphore *semaphore;
     unsigned maxRetries;
     bool inBatch;
-    CassBatchType batchMode;
+    OptionalCassBatchType batchMode;
 };
 
-extern bool getBooleanResult(const RtlFieldInfo *field, const CassValue *value);
-extern void getDataResult(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, void * &result);
-extern __int64 getSignedResult(const RtlFieldInfo *field, const CassValue *value);
-extern unsigned __int64 getUnsignedResult(const RtlFieldInfo *field, const CassValue *value);
-extern double getRealResult(const RtlFieldInfo *field, const CassValue *value);
-extern void getStringResult(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, char * &result);
-extern void getUTF8Result(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, char * &result);
-extern void getUnicodeResult(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, UChar * &result);
-extern void getDecimalResult(const RtlFieldInfo *field, const CassValue *value, Decimal &result);
+extern CASSANDRAEMBED_API bool getBooleanResult(const RtlFieldInfo *field, const CassValue *value);
+extern CASSANDRAEMBED_API void getDataResult(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, void * &result);
+extern CASSANDRAEMBED_API __int64 getSignedResult(const RtlFieldInfo *field, const CassValue *value);
+extern CASSANDRAEMBED_API unsigned __int64 getUnsignedResult(const RtlFieldInfo *field, const CassValue *value);
+extern CASSANDRAEMBED_API double getRealResult(const RtlFieldInfo *field, const CassValue *value);
+extern CASSANDRAEMBED_API void getStringResult(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, char * &result);
+extern CASSANDRAEMBED_API void getUTF8Result(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, char * &result);
+extern CASSANDRAEMBED_API void getUnicodeResult(const RtlFieldInfo *field, const CassValue *value, size32_t &chars, UChar * &result);
+extern CASSANDRAEMBED_API void getDecimalResult(const RtlFieldInfo *field, const CassValue *value, Decimal &result);
 
 } // namespace
 #endif

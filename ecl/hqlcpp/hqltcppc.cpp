@@ -173,7 +173,7 @@ void SizeStruct::addVariableExpr(unsigned _varMinSize, IHqlExpression * expr)
 {
     varMinSize += _varMinSize;
     if (varSize)
-        varSize.setown(createValue(no_add, varSize.getClear(), LINK(expr)));
+        varSize.setown(createValue(no_add, makeIntType(4,false), varSize.getClear(), LINK(expr)));
     else
         varSize.set(expr);
 }
@@ -777,7 +777,6 @@ void CMemberInfo::checkAssignOk(HqlCppTranslator & translator, BuildCtx & ctx, I
     else
     {
         unsigned maxRowSize = row->getMaxSize();
-        unsigned fixedSize = totalSize.getFixedSize();
 
         //This removes calls that can be constant folded - a bit confusing in the generated code sometimes..
         if (!row->queryBuilder() && !totalSize.queryVarSize())
@@ -2523,11 +2522,11 @@ void CBitfieldInfo::buildColumnExpr(HqlCppTranslator & translator, BuildCtx & ct
     OwnedHqlExpr address = getColumnAddress(translator, ctx, selector, queryStorageType(), 0);
     OwnedHqlExpr value = convertAddressToValue(address, queryStorageType());
     if (bitOffset > 0)
-        value.setown(createValue(no_rshift, LINK(value), getSizetConstant((int)bitOffset)));
+        value.setown(createValue(no_rshift, value->getType(), LINK(value), getSizetConstant((int)bitOffset)));
 
     unsigned __int64 mask = ((unsigned __int64)1<<columnType->getBitSize())-1;
     IValue * maskValue = columnType->queryChildType()->castFrom(false, (__int64)mask);
-    bound.expr.setown(createValue(no_band, LINK(value), createConstant(maskValue)));
+    bound.expr.setown(createValue(no_band, value->getType(), LINK(value), createConstant(maskValue)));
 }
 
 IHqlExpression * CBitfieldInfo::buildSizeOfUnbound(HqlCppTranslator & translator, BuildCtx & ctx, IReferenceSelector * selector)
@@ -2575,7 +2574,7 @@ void CBitfieldInfo::setColumn(HqlCppTranslator & translator, BuildCtx & ctx, IRe
     IValue * oldMaskValue = storageType->castFrom(false, (__int64)shiftMask);
     IHqlExpression * oldMask = createConstant(oldMaskValue);
     IHqlExpression * transColumn = createTranslatedOwned(columnRef);
-    IHqlExpression * oldValue = createValue(no_band, transColumn, createValue(no_bnot,oldMask));
+    IHqlExpression * oldValue = createValue(no_band, LINK(storageType), transColumn, createValue(no_bnot, LINK(storageType), oldMask));
 
     IValue * newMaskValue = storageType->castFrom(false, (__int64)mask);
     IHqlExpression * newMask = createConstant(newMaskValue);
@@ -3108,7 +3107,7 @@ void CXmlColumnInfo::setColumn(HqlCppTranslator & translator, BuildCtx & ctx, IR
 inline int doAlign(unsigned value, unsigned align) { return (value + align-1) & ~(align-1); }
 
 ColumnToOffsetMap::ColumnToOffsetMap(IHqlExpression * _key, IHqlExpression * _record, unsigned _id, unsigned _packing, unsigned _maxRecordSize, bool _translateVirtuals, bool _useAccessClass)
-: root(NULL, NULL, _record), key(_key), id(_id)
+: id(_id), key(_key), root(NULL, NULL, _record)
 { 
     record = _record;
     prior = NULL;

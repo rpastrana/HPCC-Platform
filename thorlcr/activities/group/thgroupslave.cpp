@@ -53,7 +53,7 @@ class GroupSlaveActivity : public CSlaveActivity
     }
 public:
     GroupSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container)
+        : CSlaveActivity(_container, groupActivityStatistics)
     {
         helper = static_cast <IHThorGroupArg *> (queryHelper());
         rolloverEnabled = false;
@@ -75,17 +75,12 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         ActPrintLog(rolloverEnabled ? "GROUP: is global" : "GROUP: is local");
         PARENT::start();
         eogNext = prevEog = eof = false;
         if (rolloverEnabled)
-        {
             useRollover = !lastNode();
-#ifdef _TESTING
-            ActPrintLog("Node number = %d, Total Nodes = %d", queryJobChannel().queryMyRank(), container.queryJob().querySlaves());
-#endif
-        }
 
         stream.set(inputStream);
         startLastGroup = getDataLinkGlobalCount();
@@ -136,7 +131,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eogNext || eof)
         {
             eogNext = false;
@@ -189,9 +184,9 @@ public:
     virtual bool isGrouped() const override{ return true; }
     virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-        mb.append(numGroups);
-        mb.append(numGroupMax);
+        stats.setStatistic(StNumGroups, numGroups);
+        stats.setStatistic(StNumGroupMax, numGroupMax);
+        PARENT::serializeStats(mb);
     }
 };
 

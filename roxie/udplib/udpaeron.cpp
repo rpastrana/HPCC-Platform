@@ -40,8 +40,27 @@ unsigned aeronConnectTimeout = 5000;
 unsigned aeronPollFragmentsLimit = 10;
 unsigned aeronIdleSleepMs = 1;
 
+unsigned aeronMtuLength = 0;
+unsigned aeronSocketRcvbuf = 0;
+unsigned aeronSocketSndbuf = 0;
+unsigned aeronInitialWindow = 0;
+
+extern UDPLIB_API void setAeronProperties(const IPropertyTree *config)
+{
+    useEmbeddedAeronDriver = config->getPropBool("@aeronUseEmbeddedDriver", true);
+    aeronConnectTimeout = config->getPropInt("@aeronConnectTimeout", 5000);
+    aeronPollFragmentsLimit = config->getPropInt("@aeronPollFragmentsLimit", 10);
+    aeronIdleSleepMs = config->getPropInt("@aeronIdleSleepMs", 1);
+
+    aeronMtuLength = config->getPropInt("@aeronMtuLength", 0);
+    aeronSocketRcvbuf = config->getPropInt("@aeronSocketRcvbuf", 0);
+    aeronSocketSndbuf = config->getPropInt("@aeronSocketSndbuf", 0);
+    aeronInitialWindow = config->getPropInt("@aeronInitialWindow", 0);
+
+}
+
 static std::thread aeronDriverThread;
-static Semaphore driverStarted;
+static InterruptableSemaphore driverStarted;
 
 std::atomic<bool> aeronDriverRunning = { false };
 
@@ -81,13 +100,10 @@ int startAeronDriver()
         context->warn_if_dirs_exist = false;
         context->term_buffer_sparse_file = false;
 
-        // MORE - should possibly allow these to be configured, or experiment to find what values work well for Roxie
-        // In my (very rudimentary and non-representative) tests these values seem ok.
-
-        context->mtu_length=16384;
-        context->socket_rcvbuf=2097152;
-        context->socket_sndbuf=2097152;
-        context->initial_window_length=2097152;
+        if (aeronMtuLength) context->mtu_length = aeronMtuLength;
+        if (aeronSocketRcvbuf) context->socket_rcvbuf = aeronSocketRcvbuf;
+        if (aeronSocketSndbuf) context->socket_sndbuf = aeronSocketSndbuf;
+        if (aeronInitialWindow) context->initial_window_length = aeronInitialWindow;
 
         if (aeron_driver_init(&driver, context) < 0)
             throw makeStringExceptionV(MSGAUD_operator, -1, "AERON: error initializing driver (%d) %s", aeron_errcode(), aeron_errmsg());
@@ -104,11 +120,17 @@ int startAeronDriver()
         aeron_driver_close(driver);
         aeron_driver_context_close(context);
     }
+    catch (IException *E)
+    {
+        aeron_driver_close(driver);
+        aeron_driver_context_close(context);
+        driverStarted.interrupt(E);
+    }
     catch (...)
     {
         aeron_driver_close(driver);
         aeron_driver_context_close(context);
-        throw;
+        driverStarted.interrupt(makeStringException(0, "failed to start Aeron (unknown exception)"));
     }
     return 0;
 }
@@ -205,7 +227,7 @@ public:
                 if (!msgColl)
                 {
                     msgColl.set(collators[RUID_DISCARD]);
-                    // We could consider sending an abort to the slave, but it should have already been done by ccdserver code
+                    // We could consider sending an abort to the agent, but it should have already been done by ccdserver code
                     isDefault = true;
                     unwantedDiscarded++;
                 }
@@ -416,7 +438,13 @@ extern UDPLIB_API ISendManager *createAeronSendManager(unsigned dataPort, unsign
 {
     return new CRoxieAeronSendManager(dataPort, numQueues, myIP);
 }
+
 #else
+
+extern UDPLIB_API void setAeronProperties(const IPropertyTree *config)
+{
+}
+
 extern UDPLIB_API IReceiveManager *createAeronReceiveManager(const SocketEndpoint &ep)
 {
     UNIMPLEMENTED;

@@ -23,6 +23,10 @@
 #include "wujobq.hpp"
 #include "TpWrapper.hpp"
 #include "WUXMLInfo.hpp"
+#include "InfoCacheReader.hpp"
+
+const unsigned defaultActivityInfoCacheForceBuildSecond = 10;
+const unsigned defaultActivityInfoCacheAutoRebuildSecond = 120;
 
 enum BulletType
 {
@@ -97,9 +101,8 @@ public:
     virtual ~CWsSMCTargetCluster(){};
 };
 
-class CActivityInfo : public CInterface, implements IInterface
+class CActivityInfo : public CInfoCache
 {
-    CDateTime timeCached;
     BoolHash uniqueECLWUIDs;
 
     Owned<IJQSnapshot> jobQueueSnapshot;
@@ -139,12 +142,9 @@ class CActivityInfo : public CInterface, implements IInterface
     void addQueuedServerQueueJob(IEspContext& context, const char* serverName, const char* queueName, const char* instanceName, CIArrayOf<CWsSMCTargetCluster>& targetClusters);
 
 public:
-    IMPLEMENT_IINTERFACE;
-
     CActivityInfo() {};
     virtual ~CActivityInfo() { jobQueueSnapshot.clear(); };
 
-    bool isCachedActivityInfoValid(unsigned timeOutSeconds);
     void createActivityInfo(IEspContext& context);
 
     inline CIArrayOf<CWsSMCTargetCluster>& queryThorTargetClusters() { return thorTargetClusters; };
@@ -156,13 +156,25 @@ public:
     inline IArrayOf<IEspDFUJob>& queryDFURecoveryJobs() { return DFURecoveryJobs; };
 };
 
+class CActivityInfoCacheReader : public CInfoCacheReader
+{
+public:
+    CActivityInfoCacheReader(const char* _name, unsigned _autoRebuildSeconds, unsigned _forceRebuildSeconds)
+        : CInfoCacheReader(_name, _autoRebuildSeconds, _forceRebuildSeconds) {}
+
+    virtual CInfoCache* read() override
+    {
+        Owned<IEspContext> espContext =  createEspContext();
+        Owned<CActivityInfo> info = new CActivityInfo();
+        info->createActivityInfo(*espContext);
+        return info.getClear();
+    };
+};
+
 class CWsSMCEx : public CWsSMC
 {
     long m_counter;
     CTpWrapper m_ClusterStatus;
-    CriticalSection getActivityCrit;
-    Owned<CActivityInfo> activityInfoCache;
-    unsigned activityInfoCacheSeconds;
 
     StringBuffer m_ChatURL;
     StringBuffer m_Banner;
@@ -173,6 +185,7 @@ class CWsSMCEx : public CWsSMC
     int m_BannerAction;
     bool m_EnableChatURL;
     CriticalSection crit;
+    Owned<CInfoCacheReader> activityInfoCacheReader;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -196,6 +209,19 @@ public:
     bool onSetBanner(IEspContext &context, IEspSetBannerRequest &req, IEspSetBannerResponse& resp);
     bool onNotInCommunityEdition(IEspContext &context, IEspNotInCommunityEditionRequest &req, IEspNotInCommunityEditionResponse &resp);
 
+    virtual bool attachServiceToDali() override
+    {
+        activityInfoCacheReader->setActive(true);
+        return true;
+    }
+
+    virtual bool detachServiceFromDali() override
+    {
+        activityInfoCacheReader->setActive(false);
+        return true;
+    }
+
+    virtual bool onGetBuildInfo(IEspContext &context, IEspGetBuildInfoRequest &req, IEspGetBuildInfoResponse &resp);
     virtual bool onBrowseResources(IEspContext &context, IEspBrowseResourcesRequest & req, IEspBrowseResourcesResponse & resp);
     virtual bool onRoxieControlCmd(IEspContext &context, IEspRoxieControlCmdRequest &req, IEspRoxieControlCmdResponse &resp);
     virtual bool onGetStatusServerInfo(IEspContext &context, IEspGetStatusServerInfoRequest &req, IEspGetStatusServerInfoResponse &resp);
@@ -221,8 +247,6 @@ private:
     void setJobPriority(IEspContext &context, IWorkUnitFactory* factory, const char* wuid, const char* queue, WUPriorityClass& priority);
 
     void setESPTargetClusters(IEspContext& context, const CIArrayOf<CWsSMCTargetCluster>& targetClusters, IArrayOf<IEspTargetCluster>& respTargetClusters);
-    void clearActivityInfoCache();
-    CActivityInfo* getActivityInfo(IEspContext &context);
     void setActivityResponse(IEspContext &context, CActivityInfo* activityInfo, IEspActivityRequest &req, IEspActivityResponse& resp);
     void addWUsToResponse(IEspContext &context, const IArrayOf<IEspActiveWorkunit>& aws, IEspActivityResponse& resp);
 
@@ -261,6 +285,8 @@ public:
     virtual ~CWsSMCSoapBindingEx(){}
     virtual const char* getRootPage(IEspContext* ctx)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+            return nullptr;
         if (ctx->queryRequestParameters()->hasProp("legacy"))
             return NULL;
         return "stub.htm";
@@ -272,16 +298,25 @@ public:
 
     virtual int onGetRoot(IEspContext &context, CHttpRequest* request,  CHttpResponse* response)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+            return CWsSMCSoapBinding::onGetRoot(context, request,  response);
         return  onGetInstantQuery(context, request, response, "WsSMC", "Activity");
     }
 
     virtual int onGetIndex(IEspContext &context, CHttpRequest* request,  CHttpResponse* response, const char *service)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+            return CWsSMCSoapBinding::onGetIndex(context, request, response, service);
         return  onGetInstantQuery(context, request, response, "WsSMC", "Activity");
     }
 
     virtual void getNavigationData(IEspContext &context, IPropertyTree & data)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+        {
+            CHttpSoapBinding::getNavigationData(context, data);
+            return;
+        }
         data.setProp("@appName", "EclWatch");
         data.setProp("@start_page", "/WsSMC/Activity");
         IPropertyTree *folder = ensureNavFolder(data, "Clusters", NULL, NULL, false, 1);

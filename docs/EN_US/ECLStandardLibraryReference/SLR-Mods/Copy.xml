@@ -26,6 +26,8 @@
   <emphasis role="bold">] [</emphasis>
   <emphasis>,transferBufferSize</emphasis> <emphasis role="bold">]
   [</emphasis> <emphasis>,preserveCompression</emphasis> <emphasis
+  role="bold">] [</emphasis> <emphasis>,noSplit</emphasis> <emphasis
+  role="bold">] [</emphasis> <emphasis>,expireDays</emphasis> <emphasis
   role="bold">]);</emphasis></para>
 
   <para><emphasis>dfuwuid</emphasis> <emphasis role="bold"> :=
@@ -51,6 +53,8 @@
   <emphasis role="bold">] [</emphasis>
   <emphasis>,transferBufferSize</emphasis> <emphasis role="bold">]
   [</emphasis> <emphasis>,preserveCompression</emphasis> <emphasis
+  role="bold">] [</emphasis> <emphasis>,noSplit</emphasis> <emphasis
+  role="bold">] [</emphasis> <emphasis>,expireDays</emphasis> <emphasis
   role="bold">]);</emphasis></para>
 
   <informaltable colsep="1" frame="all" rowsep="1">
@@ -175,6 +179,25 @@
           <entry>Optional. A boolean TRUE or FALSE flag indicating whether to
           preserve the compression of the old file when copying. If omitted,
           the default is TRUE.</entry>
+        </row>
+
+        <row>
+          <entry><emphasis>noSplit</emphasis></entry>
+
+          <entry>Optional. A boolean TRUE or FALSE flag indicating to not
+          split a file part to multiple target parts. Default is
+          FALSE.</entry>
+        </row>
+
+        <row>
+          <entry><emphasis>expireDays </emphasis></entry>
+
+          <entry>Optional. Specifies the file is a temporary file to be
+          automatically deleted after the specified number of days since the
+          file was read. If omitted, the default is -1 (never expires). If set
+          to 0, the file is automatically deleted when it reaches the
+          threshold set in Sasha Server's <emphasis
+          role="bold">expiryDefault</emphasis> setting.</entry>
         </row>
 
         <row>

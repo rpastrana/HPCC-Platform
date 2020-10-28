@@ -226,6 +226,13 @@ public:
     CFileManager()
     {
         replicateOutputs = globals->getPropBool("@replicateOutputs");
+
+        /* In nas/non-local storage mode, create a published named group for files to use
+         * that matches the width of the cluster.
+         * Also create a 1-way named group, that is used in special cases, e.g. BUILDINDEX,FEW
+         */
+        if (isContainerized())
+            queryNamedGroupStore().ensureNasGroup(queryClusterWidth());
     }
     StringBuffer &mangleLFN(CJobBase &job, const char *lfn, StringBuffer &out)
     {
@@ -510,8 +517,16 @@ public:
                 StringBuffer curDir;
                 ForEachItemIn(gn, groupNames)
                 {
+#ifdef _CONTAINERIZED
+                    if (!globals->getPropBool("@_dafsStorage"))
+                    {
+                        Owned<IStoragePlane> plane = getStoragePlane(groupNames.item(gn), true);
+                        curDir.append(plane->queryPrefix());
+                    }
+#else
                     if (!getConfigurationDirectory(globals->queryPropTree("Directories"), "data", "thor", groupNames.item(gn), curDir))
-                        makePhysicalPartName(logicalName, 0, 0, curDir, false, os); // legacy
+                        makePhysicalPartName(logicalName, 0, 0, curDir, 0, os); // legacy
+#endif
                     if (!dir.length())
                         dir.swapWith(curDir);
                     else
@@ -726,7 +741,9 @@ void fillClusterArray(CJobBase &job, const char *filename, StringArray &clusters
         Owned<IGroup> group = queryNamedGroupStore().lookup(cluster);
         if (!group)
             throw MakeStringException(0, "Could not find cluster group %s for file: %s", cluster, filename);
+#ifndef _CONTAINERIZED
         EnvMachineOS os = queryOS(group->queryNode(0).endpoint());
+#endif
         unsigned clusterIdx = 1;
         for (;;)
         {
@@ -737,6 +754,7 @@ void fillClusterArray(CJobBase &job, const char *filename, StringArray &clusters
             group.setown(queryNamedGroupStore().lookup(cluster));
             if (!group)
                 throw MakeStringException(0, "Could not find cluster group %s for file: %s", cluster, filename);
+#ifndef _CONTAINERIZED
             if (MachineOsUnknown != os)
             {
                 EnvMachineOS thisOs = queryOS(group->queryNode(0).endpoint());
@@ -750,6 +768,7 @@ void fillClusterArray(CJobBase &job, const char *filename, StringArray &clusters
                 if (GRdisjoint != agrp.compare(group))
                     throw MakeStringException(0, "Target cluster '%s', overlaps with target cluster '%s'", clusters.item(clusterIdx-1), clusters.item(g));
             }
+#endif
         }
     }
 }

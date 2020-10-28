@@ -34,6 +34,7 @@ include_directories (
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
          ./../../ecl/hqlcpp 
+         ./../../common/environment
          ./../../common/workunit 
          ./../../common/dllserver 
          ./../../common/deftype 
@@ -71,6 +72,10 @@ target_link_libraries ( eclcc
          hqlcpp
          dllserver
     )
+
+if (CONTAINERIZED)
+  target_link_libraries ( eclcc environment )
+endif()
 
 IF (USE_ZLIB)
     target_link_libraries ( eclcc

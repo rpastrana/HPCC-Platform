@@ -41,14 +41,15 @@ interface IStartableEngineRowStream : extends IEngineRowStream
 class COutputTiming
 {
 public:
-    ActivityTimeAccumulator totalCycles;
+    ActivityTimeAccumulator slaveTimerStats;
 
     COutputTiming() { }
 
-    void resetTiming() { totalCycles.reset(); }
-    ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
-    unsigned __int64 queryTotalCycles() const { return totalCycles.totalCycles; }
-    unsigned __int64 queryEndCycles() const { return totalCycles.endCycles; }
+    void resetTiming() { slaveTimerStats.reset(); }
+    ActivityTimeAccumulator &getTotalCyclesRef() { return slaveTimerStats; }
+    unsigned __int64 queryTotalCycles() const { return slaveTimerStats.totalCycles; }
+    unsigned __int64 queryEndCycles() const { return slaveTimerStats.endCycles; }
+    unsigned __int64 queryBlockedCycles() const { return slaveTimerStats.blockedCycles; }
 };
 
 class CEdgeProgress
@@ -62,9 +63,7 @@ public:
 
     inline void dataLinkStart()
     {
-#ifdef _TESTING
         owner.ActPrintLog("ITDL starting for output %d", outputId);
-#endif
         if (hasStarted())
         {
             if (!hasStopped())
@@ -78,10 +77,9 @@ public:
 
     inline void dataLinkStop()
     {
-        count = (count & THORDATALINK_COUNT_MASK) | THORDATALINK_STOPPED;
-#ifdef _TESTING
+        if (hasStarted())
+            count = (count & THORDATALINK_COUNT_MASK) | THORDATALINK_STOPPED;
         owner.ActPrintLog("ITDL output %d stopped, count was %" RCPF "d", outputId, getDataLinkCount());
-#endif
     }
     inline void dataLinkIncrement() { dataLinkIncrement(1); }
     inline void dataLinkIncrement(rowcount_t v)
@@ -201,6 +199,7 @@ protected:
     CThorInputArray inputs;
     IPointerArrayOf<IThorDataLink> outputs;
     IPointerArrayOf<IEngineRowStream> outputStreams;
+
     IThorDataLink *input = nullptr;
     bool inputStopped = false;
     unsigned inputSourceIdx = 0;
@@ -222,7 +221,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CActivityBase)
 
-    CSlaveActivity(CGraphElementBase *container);
+    CSlaveActivity(CGraphElementBase *container, const StatisticsMapping &statsMapping = basicActivityStatistics);
     ~CSlaveActivity();
     void setRequireInitData(bool tf)
     {
@@ -277,6 +276,7 @@ public:
         return consumerOrdered;
     }
     virtual unsigned __int64 queryTotalCycles() const { return COutputTiming::queryTotalCycles(); }
+    virtual unsigned __int64 queryBlockedCycles() const { return COutputTiming::queryBlockedCycles();}
     virtual unsigned __int64 queryEndCycles() const { return COutputTiming::queryEndCycles(); }
     virtual void debugRequest(MemoryBuffer &msg) override;
 
@@ -305,7 +305,7 @@ protected:
     void lateStart(bool any);
 
 public:
-    CSlaveLateStartActivity(CGraphElementBase *container) : CSlaveActivity(container)
+    CSlaveLateStartActivity(CGraphElementBase *container, const StatisticsMapping &statsMapping) : CSlaveActivity(container, statsMapping)
     {
     }
     virtual void start() override;
@@ -388,8 +388,8 @@ protected:
 protected:
     void onStartStrands();
 public:
-    CThorStrandedActivity(CGraphElementBase *container)
-        : CSlaveActivity(container), strandOptions(*container), active(0)
+    CThorStrandedActivity(CGraphElementBase *container, const StatisticsMapping &statsMapping = basicActivityStatistics)
+        : CSlaveActivity(container, statsMapping), strandOptions(*container), active(0)
     {
     }
 
@@ -415,7 +415,7 @@ public:
 class graphslave_decl CSlaveGraphElement : public CGraphElementBase
 {
 public:
-    CSlaveGraphElement(CGraphBase &owner, IPropertyTree &xgmml) : CGraphElementBase(owner, xgmml)
+    CSlaveGraphElement(CGraphBase &owner, IPropertyTree &xgmml, CGraphBase *resultsGraph) : CGraphElementBase(owner, xgmml, resultsGraph)
     {
     }
 };
@@ -483,7 +483,7 @@ public:
 
     CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *workUnitInfo, const char *graphName, ILoadedDllEntry *querySo, mptag_t _slavemptag);
 
-    virtual void addChannel(IMPServer *mpServer);
+    virtual CJobChannel *addChannel(IMPServer *mpServer) override;
     virtual void startJob() override;
     virtual void endJob() override;
     const char *queryFindString() const { return key.get(); } // for string HT

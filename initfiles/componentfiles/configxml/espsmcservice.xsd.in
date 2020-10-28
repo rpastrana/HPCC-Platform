@@ -106,7 +106,14 @@
             <xs:attribute name="ActivityInfoCacheSeconds" type="xs:nonNegativeInteger" use="optional" default="10">
                 <xs:annotation>
                     <xs:appinfo>
-                        <tooltip>timeout for activity info cache (in seconds).</tooltip>
+                        <tooltip>If user makes a request and the cache is older than this value (in seconds), ESP returns the cache and starts to rebuild a new cache.</tooltip>
+                    </xs:appinfo>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="ActivityInfoCacheAutoRebuildSeconds" type="xs:nonNegativeInteger" use="optional" default="120">
+                <xs:annotation>
+                    <xs:appinfo>
+                        <tooltip>When idle, ESP automatically rebuilds the cache if this value (in seconds) exceeded.</tooltip>
                     </xs:appinfo>
                 </xs:annotation>
             </xs:attribute>
@@ -114,6 +121,13 @@
                 <xs:annotation>
                     <xs:appinfo>
                         <tooltip>timeout for Component/TargerCluster/NodeGroup usage cache (in minutes).</tooltip>
+                    </xs:appinfo>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="MachineUsageCacheAutoRebuildMinutes" type="xs:nonNegativeInteger" use="optional" default="10">
+                <xs:annotation>
+                    <xs:appinfo>
+                        <tooltip>When idle, ESP automatically rebuilds the cache if this value (in minutes) is exceeded.</tooltip>
                     </xs:appinfo>
                 </xs:annotation>
             </xs:attribute>
@@ -184,6 +198,20 @@
                 <xs:annotation>
                     <xs:appinfo>
                         <tooltip>Thread pool size for getting thor slave logs.</tooltip>
+                    </xs:appinfo>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="WUResultMaxSizeMB" type="xs:nonNegativeInteger" use="optional">
+                <xs:annotation>
+                    <xs:appinfo>
+                        <tooltip>the size limit in megabyte for getting workunit result.</tooltip>
+                    </xs:appinfo>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="WUResultDownloadFlushThreshold" type="xs:nonNegativeInteger" use="optional">
+                <xs:annotation>
+                    <xs:appinfo>
+                        <tooltip>When streamly downloading WUResult, WUResult buffer will be flushed out if its size reaches this value.</tooltip>
                     </xs:appinfo>
                 </xs:annotation>
             </xs:attribute>

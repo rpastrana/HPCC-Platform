@@ -49,7 +49,8 @@ MODULE_INIT(INIT_PRIORITY_STANDARD)
 
 // ProcessSlaveActivity
 
-ProcessSlaveActivity::ProcessSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container), threaded("ProcessSlaveActivity", this)
+ProcessSlaveActivity::ProcessSlaveActivity(CGraphElementBase *container, const StatisticsMapping &statsMapping)
+    : CSlaveActivity(container, statsMapping), threaded("ProcessSlaveActivity", this)
 {
 }
 
@@ -57,13 +58,13 @@ void ProcessSlaveActivity::beforeDispose()
 {
     // Note - we can't throw from the destructor, so do this in beforeDispose instead
     // If the exception is thrown then we are liable to leak the object, but we are dying anyway...
-    ActPrintLog("destroying ProcessSlaveActivity");
-    ActPrintLog("ProcessSlaveActivity : joining process thread");
+    ::ActPrintLog(this, thorDetailedLogLevel, "destroying ProcessSlaveActivity");
+    ::ActPrintLog(this, thorDetailedLogLevel, "ProcessSlaveActivity : joining process thread");
     // NB: The activity thread should have already stopped,
     //     if it is still alive at job shutdown and cannot be joined then the thread is in an unknown state.
     if (!threaded.join(FATAL_ACTJOIN_TIMEOUT))
         throw MakeThorFatal(NULL, TE_FailedToAbortSlaves, "Activity %" ACTPF "d failed to stop", container.queryId());
-    ActPrintLog("AFTER ProcessSlaveActivity : joining process thread");
+    ::ActPrintLog(this, thorDetailedLogLevel, "AFTER ProcessSlaveActivity : joining process thread");
 }
 
 void ProcessSlaveActivity::startProcess(bool async)
@@ -87,7 +88,7 @@ void ProcessSlaveActivity::threadmain()
 
             // set lastCycles to 0 to signal not processing
             unsigned __int64 finalCycles = lastCycles.exchange(0);
-            totalCycles.totalCycles += get_cycles_now()-finalCycles;
+            slaveTimerStats.totalCycles += get_cycles_now()-finalCycles;
         }
         else
             process();
@@ -175,7 +176,7 @@ void ProcessSlaveActivity::serializeStats(MemoryBuffer &mb)
             //Update lastCycles to the current number of cycles - unless it has been set to 0 in the meantime
             //Use std::memory_order_relaxed because there is no requirement for other variables to be synchronized.
             if (lastCycles.compare_exchange_strong(curCycles, nowCycles, std::memory_order_relaxed))
-                totalCycles.totalCycles += nowCycles-curCycles;
+                slaveTimerStats.totalCycles += nowCycles-curCycles;
         }
     }
 #endif
@@ -277,7 +278,7 @@ class CGenericSlaveGraphElement : public CSlaveGraphElement
     Owned<CActivityBase> nullActivity;
     CriticalSection nullActivityCs;
 public:
-    CGenericSlaveGraphElement(CGraphBase &_owner, IPropertyTree &xgmml) : CSlaveGraphElement(_owner, xgmml)
+    CGenericSlaveGraphElement(CGraphBase &_owner, IPropertyTree &xgmml, CGraphBase *resultsGraph) : CSlaveGraphElement(_owner, xgmml, resultsGraph)
     {
         wuidread2diskread = false;
         switch (getKind())
@@ -783,7 +784,7 @@ public:
 
 activityslaves_decl CGraphElementBase *createSlaveContainer(IPropertyTree &xgmml, CGraphBase &owner, CGraphBase *resultsGraph)
 {
-    return new CGenericSlaveGraphElement(owner, xgmml);
+    return new CGenericSlaveGraphElement(owner, xgmml, resultsGraph);
 }
 
 activityslaves_decl IThorRowInterfaces *queryRowInterfaces(IThorDataLink *link) { return link?link->queryFromActivity():NULL; }

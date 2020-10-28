@@ -873,7 +873,7 @@
 
             <listitem>
               <para><emphasis role="bold">Peer-Node Redundancy:</emphasis>
-              Each Slave node typically has one or more peer nodes within its
+              Each Agent node typically has one or more peer nodes within its
               cluster. Each peer stores a copy of data files it will
               read.</para>
             </listitem>
@@ -1299,7 +1299,8 @@ useDropZoneRestriction=true
 #dafsConnectRetries=2
 #dafsMaxReceiveTimeSeconds=0
 
-# Dafilesrv: set to change number of seconds before retrying an unresponsive dafilesrv connection (default 10 seconds)
+# Dafilesrv: set to change number of seconds before retrying an unresponsive dafilesrv connection 
+#   (default 10 seconds)
 # NB: for now this only applies to the last cached server 
 #dafsConnectFailRetrySeconds=10
 
@@ -2238,7 +2239,7 @@ dfsSSLPrivateKeyFile=/keyfilepath/keyfile</programlisting>Set the <emphasis
           configuration.</para>
 
           <para>There is a security feature called
-          <emphasis>"AllowUsers"</emphasis> that creates a white list in sshd
+          <emphasis>"AllowUsers"</emphasis> that creates an AllowList in sshd
           (the OpenSSH server process) that will disallow connections from
           anyone not declared on that list. This is not default for sshd,
           rather it is an option that must be enabled. If that option is

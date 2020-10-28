@@ -38,9 +38,14 @@
 #include "mpbase.hpp"
 #include "dafdesc.hpp"
 #include "seclib.hpp"
+#include "errorlist.h"
 
 #include <vector>
 #include <string>
+
+enum : unsigned {
+    DALI_DUPLICATE_STORAGE_PLANE = DALI_ERROR_START
+};
 
 typedef __int64 DistributedLockID;
 #define FOREIGN_DALI_TIMEOUT (1000*60*5)
@@ -81,7 +86,6 @@ interface IDFProtectedIterator: public IInterface
     virtual bool isValid() = 0;
     virtual const char *queryFilename() = 0;
     virtual const char *queryOwner() = 0;
-    virtual unsigned getCount() = 0;
     virtual bool isSuper() = 0;
 };
 
@@ -241,7 +245,8 @@ enum DFUQFilterField
     DFUQFFsubfilename = 30,
     DFUQFFsubfilenum = 31,
     DFUQFFkind = 32,
-    DFUQFFterm = 33,
+    DFUQFFaccessed = 33,
+    DFUQFFterm = 34,
     DFUQFFreverse = 256,
     DFUQFFnocase = 512,
     DFUQFFnumeric = 1024,
@@ -680,12 +685,6 @@ interface IDistributedFileDirectory: extends IInterface
                                       unsigned timeout=0                // 0 = return state immediately, >0 waits until false or timed-out
                                      ) = 0;
 
-    virtual unsigned queryProtectedCount(const CDfsLogicalFileName &logicalname,
-                                  const char *callerid=NULL) = 0;                   // if NULL  then sums all
-
-    virtual bool getProtectedInfo (const CDfsLogicalFileName &logicalname,
-                                           StringArray &names, UnsignedArray &counts) = 0;
-
     virtual IDFProtectedIterator *lookupProtectedFiles(const char *owner=NULL,bool notsuper=false,bool superonly=false)=0; // if owner = NULL then all
     virtual IDFAttributesIterator* getLogicalFilesSorted(IUserDescriptor* udesc, DFUQResultField *sortOrder, const void* filters, DFUQResultField *localFilters,
             const void *specialFilterBuf, unsigned startOffset, unsigned maxNum, __int64 *cacheHint, unsigned *total, bool *allMatchingFilesReceived) = 0;
@@ -723,6 +722,9 @@ interface INamedGroupStore : extends IGroupResolver
     virtual INamedGroupIterator *getIterator() = 0;
     virtual INamedGroupIterator *getIterator(IGroup *match, bool exact=false) = 0;
     virtual void add(const char *logicalgroupname, const std::vector<std::string> &hosts, bool cluster=false, const char *dir=NULL, GroupType groupType = grp_unknown) = 0;
+    virtual void ensure(const char *logicalgroupname, const std::vector<std::string> &hosts, bool cluster=false, const char *dir=NULL, GroupType groupType = grp_unknown) = 0;
+    virtual void ensureNasGroup(size32_t size) = 0;
+    virtual StringBuffer &getNasGroupName(StringBuffer &groupName, size32_t size) const = 0;
     virtual unsigned removeNode(const char *logicalgroupname, const char *nodeToRemove) = 0;
     virtual void remove(const char *logicalgroupname) = 0;
     virtual void addUnique(IGroup *group,StringBuffer &lname,const char *dir=NULL) = 0;
@@ -795,9 +797,11 @@ extern da_decl IDaliServer *createDaliDFSServer(IPropertyTree *config); // calle
 
 // to initialize clustergroups after clusters change in the environment
 extern da_decl void initClusterGroups(bool force, StringBuffer &response, IPropertyTree *oldEnvironment, unsigned timems=INFINITE);
+extern da_decl void initClusterAndStoragePlaneGroups(bool force, IPropertyTree *oldEnvironment, unsigned timems=INFINITE);
 extern da_decl bool resetClusterGroup(const char *clusterName, const char *type, bool spares, StringBuffer &response, unsigned timems=INFINITE);
 extern da_decl bool addClusterSpares(const char *clusterName, const char *type, const std::vector<std::string> &hosts, StringBuffer &response, unsigned timems=INFINITE);
 extern da_decl bool removeClusterSpares(const char *clusterName, const char *type, const std::vector<std::string> &hosts, StringBuffer &response, unsigned timems=INFINITE);
+
 // should poss. belong in lib workunit
 extern da_decl StringBuffer &getClusterGroupName(const IPropertyTree &cluster, StringBuffer &groupName);
 extern da_decl StringBuffer &getClusterSpareGroupName(const IPropertyTree &cluster, StringBuffer &groupName);

@@ -114,7 +114,7 @@ MACRO(DOCBOOK_TO_HTML _xsl_file _xml_file _out_dir _html_target _css_path _zip_t
        STRING(REGEX REPLACE ".+/([^/]+)$" "\\1" _out_dir2 "${_out_dir}")
 
        if(NOT "${_zip_target}" STREQUAL "")
-          SET(_zip_file ${_out_dir2}-${DOC_VERSION_ONLY}.zip)
+          SET(_zip_file ${_html_target}-${DOC_VERSION_ONLY}.zip)
        endif()
        ADD_CUSTOM_COMMAND(
            COMMAND mkdir -p ${_out_dir}
@@ -122,7 +122,7 @@ MACRO(DOCBOOK_TO_HTML _xsl_file _xml_file _out_dir _html_target _css_path _zip_t
            OUTPUT ${_out_dir}/${css_file_name}
            )
        ADD_CUSTOM_TARGET(${_html_target}
-           COMMAND ${XSLTPROC_EXECUTABLE} --nonet --xinclude --stringparam html.stylesheet ${css_file_name} --stringparam generate.toc "book toc"  --param use.id.as.filename 1 --param chapter.autolabel 0  ${_xsl_file} ${_xml_file}
+           COMMAND ${XSLTPROC_EXECUTABLE} --nonet --xinclude --stringparam html.stylesheet ${css_file_name} --stringparam generate.toc "book toc"  --param chapter.autolabel 0  ${_xsl_file} ${_xml_file}
            WORKING_DIRECTORY ${_out_dir}
            DEPENDS docbook-expand ${_out_dir}/${css_file_name} ${HELP_DEPENDENCIES}
            #SOURCES ${_xsl_file}

@@ -45,6 +45,8 @@
 #include "esplog.hpp"
 #include "espcontext.hpp"
 #include "build-config.h"
+#include "rmtfile.hpp"
+#include "dafdesc.hpp"
 
 void CEspServer::sendSnmpMessage(const char* msg) { throwUnexpected(); }
 
@@ -124,7 +126,7 @@ bool CEspServer::isSubscribedToDali()
 
 #ifdef ESP_SINGLE_PROCESS
 
-int start_init_main(int argc, char** argv, int (*init_main_func)(int,char**))
+int start_init_main(int argc, const char** argv, int (*init_main_func)(int,const char**))
 {
     return init_main_func(argc, argv);
 }
@@ -138,11 +140,11 @@ int start_init_main(int argc, char** argv, int (*init_main_func)(int,char**))
 #define SET_ESP_SIGNAL_HANDLER(sig, handler)
 #define RESET_ESP_SIGNAL_HANDLER(sig, handler)
 
-int start_init_main(int argc, char** argv, int (*init_main_func)(int, char**))
+int start_init_main(int argc, const char** argv, int (*init_main_func)(int, const char**))
 { 
     if(argc > 1 && !strcmp(argv[1], "work")) 
     { 
-        char** newargv = new char*[argc - 1]; 
+        const char** newargv = new const char*[argc - 1];
         newargv[0] = argv[0]; 
         for(int i = 2; i < argc; i++) 
         { 
@@ -200,7 +202,7 @@ int start_init_main(int argc, char** argv, int (*init_main_func)(int, char**))
 #define SET_ESP_SIGNAL_HANDLER(sig, handler) signal(sig, handler)
 #define RESET_ESP_SIGNAL_HANDLER(sig, handler) signal(sig, handler)
 
-int start_init_main(int argc, char** argv, int (*init_main_func)(int,char**))
+int start_init_main(int argc, const char** argv, int (*init_main_func)(int, const char**))
 {
     return init_main_func(argc, argv);
 }
@@ -285,22 +287,60 @@ void openEspLogFile(IPropertyTree* envpt, IPropertyTree* procpt)
             procpt->getProp("@logDir", logdir);
     }
 
-
-    Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(logdir.str(), "esp");
-    lf->setName("esp_main");//override default filename
-    lf->setAliasName("esp");
-    lf->beginLogging();
+#ifndef _CONTAINERIZED
+    //logDir="-" is the default in application mode and logs to stderr, not to a file
+    if (logdir.length() && !streq(logdir, "-"))
+    {
+        long maxLogFileSize = procpt->getPropInt64("@maxLogFileSize", 0);
+        Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(logdir.str(), "esp");
+        lf->setName("esp_main");//override default filename
+        lf->setAliasName("esp");
+        lf->setMaxLogFileSize(maxLogFileSize);
+        lf->beginLogging();
+    }
+#else
+    setupContainerizedLogMsgHandler();
+#endif
 
     if (procpt->getPropBool("@enableSysLog", false))
         UseSysLogForOperatorMessages();
 }   
 
+
+static constexpr const char * defaultYaml = R"!!(
+version: "1.0"
+esp:
+  name: myesp
+  daliServers: dali
+)!!";
+
+static Owned<IPropertyTree> espConfig;
+
 static void usage()
 {
-    puts("ESP - Enterprise Service Platform server. (C) 2001-2011, HPCC Systems®.");
+    puts("ESP - Enterprise Service Platform server. (C) 2001-2020, HPCC Systems®.");
     puts("Usage:");
+    puts("To start ESP in application mode");
+    puts("  esp --application=<appname> [options]");
+    puts("Example Application names:");
+    puts("  eclwatch - front end ECL user interface and services");
+    puts("  eclservices - back end ECL system services");
+    puts("  eclqueries - front end interface for calling published ECL queries");
+    puts("");
+    puts("Application Mode Options:");
+    puts("  -?/-h: show this help page");
+    puts("  --daliServers=<address>: set DALI address (defaults to dali)");
+    puts("  --tls=<on/off>: enable using TLS secure communication (defaults to on)");
+    puts("  --auth=<ldap/azure_ldap/none>: select authorization protocol (defaults to ldap)");
+    puts("  --ldapAddress=<address>: set LDAP server address");
+    puts("  --config=<file.yaml>: specify a YAML config file, use to override default config values");
+    puts("  --logDir=<file>: specify a file to write trace file information to, default is stderr");
+    puts("  --netAddress=<address>: the address to bind to on a multi-homed nodes");
+    puts("  --instance=<name>: the instance name to use for this process");
+    puts("");
+    puts("To start ESP legacy configuration mode (xml config file)");
     puts("  esp [options]");
-    puts("Options:");
+    puts("Legacy Config Options:");
     puts("  -?/-h: show this help page");
     puts("  --daemon|-d <instanceName>: run daemon as instance");
     puts("  interactive: start in interactive mode (pop up error dialog when exception occurs)");
@@ -309,7 +349,10 @@ static void usage()
     exit(1);
 }
 
-int init_main(int argc, char* argv[])
+IPropertyTree *buildApplicationLegacyConfig(const char *application, const char* argv[]);
+
+
+int init_main(int argc, const char* argv[])
 {
     for (unsigned i=0;i<(unsigned)argc;i++) {
         if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
@@ -364,21 +407,38 @@ int init_main(int argc, char* argv[])
 
     Owned<CEspConfig> config;
     Owned<CEspServer> server;
+
+    //save off generated config to register with container.  Legacy can always reference the config file, application based ESP needs generated config saved off
+    Owned<IPropertyTree> appConfig;
+
     try
     {
         const char* cfgfile = NULL;
         const char* procname = NULL;
+        const char *application = nullptr;
         if(inputs.get())
         {
             if(inputs->hasProp("config"))
                 cfgfile = inputs->queryProp("config");
             if(inputs->hasProp("process"))
                 procname = inputs->queryProp("process");
+            if(inputs->hasProp("--application"))
+                application = inputs->queryProp("--application");
         }
         if(!cfgfile || !*cfgfile)
             cfgfile = "esp.xml";
 
-        Owned<IPropertyTree> envpt= createPTreeFromXMLFile(cfgfile, ipt_caseInsensitive);
+        Owned<IPropertyTree> envpt;
+        if (application)
+        {
+            appConfig.setown(buildApplicationLegacyConfig(application, argv));
+            envpt.set(appConfig);
+        }
+        else
+        {
+            envpt.setown(createPTreeFromXMLFile(cfgfile, ipt_caseInsensitive));
+            espConfig.setown(loadConfiguration(defaultYaml, argv, "esp", "ESP", nullptr, nullptr));
+        }
         Owned<IPropertyTree> procpt = NULL;
         if (envpt)
         {
@@ -396,6 +456,11 @@ int init_main(int argc, char* argv[])
         }
         else
             throw MakeStringException(-1, "Failed to load config file %s", cfgfile);
+
+#ifdef _CONTAINERIZED
+        // TBD: Some esp services read daliServers from it's legacy config file
+        procpt->setProp("@daliServers", queryComponentConfig().queryProp("@daliServers"));
+#endif
 
         const char* build_ver = BUILD_TAG;
         setBuildVersion(build_ver);
@@ -426,6 +491,8 @@ int init_main(int argc, char* argv[])
         if(SEHMappingEnabled)
             EnableSEHtoExceptionMapping();
 
+        installDefaultFileHooks(espConfig);
+
         CEspConfig* cfg = new CEspConfig(inputs.getLink(), envpt.getLink(), procpt.getLink(), false);
         if(cfg && cfg->isValid())
         {
@@ -455,6 +522,7 @@ int init_main(int argc, char* argv[])
             CEspServer *srv = new CEspServer(config);
             if(SEHMappingEnabled)
                 srv->setSavedSEHHandler(SEHMappingEnabled);
+            srv->setApplicationConfig(appConfig);
             server.setown(srv);
             abortHandler.setServer(srv);
             setEspContainer(server.get());
@@ -494,7 +562,7 @@ int init_main(int argc, char* argv[])
 // [2] config location - local file name or dali address
 // [3] config location type - "dali" or ""
 
-int main(int argc, char* argv[])
+int main(int argc, const char* argv[])
 {
     start_init_main(argc, argv, init_main);
     stopPerformanceMonitor();

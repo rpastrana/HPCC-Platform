@@ -1,6 +1,5 @@
 ﻿define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
     "dojo/store/Memory",
     "dojo/store/Observable",
 
@@ -9,8 +8,6 @@
     "dgrid/OnDemandGrid",
     "dgrid/Keyboard",
     "dgrid/Selection",
-    "dgrid/editor",
-    "dgrid/selector",
     "dgrid/extensions/ColumnResizer",
     "dgrid/extensions/DijitRegistry",
 
@@ -20,52 +17,53 @@
 
     "dijit/layout/BorderContainer",
     "dijit/layout/ContentPane"
-], function (declare, lang, Memory, Observable,
+], function (declare, Memory, Observable,
     registry,
-    OnDemandGrid, Keyboard, Selection, editor, selector, ColumnResizer, DijitRegistry,
+    OnDemandGrid, Keyboard, Selection, ColumnResizer, DijitRegistry,
     _Widget,
     template) {
-        return declare("SelectionGridWidget", [_Widget], {
-            templateString: template,
-            store: null,
-            idProperty: "Change Me",
 
-            constructor: function (args) {
-                this.inherited(arguments);
-            },
+    return declare("SelectionGridWidget", [_Widget], {
+        templateString: template,
+        store: null,
+        idProperty: "Change Me",
 
-            postCreate: function (args) {
-                this.inherited(arguments);
-                this.borderContainer = registry.byId(this.id + "BorderContainer");
-            },
+        constructor: function (args) {
+            this.inherited(arguments);
+        },
 
-            resize: function (args) {
-                this.inherited(arguments);
-                this.borderContainer.resize();
-            },
+        postCreate: function (args) {
+            this.inherited(arguments);
+            this.borderContainer = registry.byId(this.id + "BorderContainer");
+        },
 
-            startup: function (args) {
-                this.inherited(arguments);
-            },
+        resize: function (args) {
+            this.inherited(arguments);
+            this.borderContainer.resize();
+        },
 
-            //  Implementation ---
-            createGrid: function (args) {
-                this.idProperty = args.idProperty;
-                var store = new Memory({
-                    idProperty: this.idProperty,
-                    data: []
-                });
-                this.store = Observable(store);
+        startup: function (args) {
+            this.inherited(arguments);
+        },
 
-                this.grid = new declare([OnDemandGrid, Keyboard, Selection, ColumnResizer, DijitRegistry])({
-                    store: this.store,
-                    columns: args.columns
-                }, this.id + "Grid");
-            },
+        //  Implementation ---
+        createGrid: function (args) {
+            this.idProperty = args.idProperty;
+            var store = new Memory({
+                idProperty: this.idProperty,
+                data: []
+            });
+            this.store = Observable(store);
 
-            setData: function (data) {
-                this.store.setData(data);
-                this.grid.refresh();
-            }
-        });
+            this.grid = new declare([OnDemandGrid, Keyboard, Selection, ColumnResizer, DijitRegistry])({
+                store: this.store,
+                columns: args.columns
+            }, this.id + "Grid");
+        },
+
+        setData: function (data) {
+            this.store.setData(data);
+            this.grid.refresh();
+        }
     });
+});

@@ -27,8 +27,10 @@
 #include "jdebug.hpp"
 #include "jset.hpp"
 #include "rmtfile.hpp"
+#include "jlzw.hpp"
 #include "jqueue.hpp"
 #include "jregexp.hpp"
+#include "jutil.hpp"
 
 #include "unittests.hpp"
 
@@ -1218,14 +1220,552 @@ public:
 CPPUNIT_TEST_SUITE_REGISTRATION(JlibMapping);
 CPPUNIT_TEST_SUITE_NAMED_REGISTRATION(JlibMapping, "JlibMapping");
 
-
 class JlibIPTTest : public CppUnit::TestFixture
 {
     CPPUNIT_TEST_SUITE(JlibIPTTest);
         CPPUNIT_TEST(test);
+        CPPUNIT_TEST(testMarkup);
+        CPPUNIT_TEST(testRootArrayMarkup);
+        CPPUNIT_TEST(testArrayMarkup);
+        CPPUNIT_TEST(testMergeConfig);
     CPPUNIT_TEST_SUITE_END();
 
 public:
+    void testArrayMarkup()
+    {
+            static constexpr const char * yamlFlowMarkup = R"!!({a: {
+      b: valb,
+      c: [valc],
+      d: [vald1,vald2],
+      e: [{x: valex1, y: valey1}],
+      f: {x: valfx1, y: valfy1},
+      g: [{x: valgx1, y: valgy1},{x: valgx2, y: valgy2}],
+      h: !el valh,
+      i: {
+        j: {
+          b: valb,
+          c: [valc],
+          d: [vald1,vald2],
+          e: [{x: valex1, y: valey1}],
+          f: {x: valfx1, y: valfy1},
+          g: [{x: valgx1, y: valgy1},{x: valgx2, y: valgy2}],
+          h: !el valh,
+        },
+        k: [{
+          b: valb,
+          c: [valc],
+          d: [vald1,vald2],
+          e: [{x: valex1, y: valey1}],
+          f: {x: valfx1, y: valfy1},
+          g: [{x: valgx1, y: valgy1},{x: valgx2, y: valgy2}],
+          h: !el valh,
+          }],
+        l: [{
+              b: valb,
+              c: [valc],
+              d: [vald1,vald2],
+              e: [{x: valex1, y: valey1}],
+              f: {x: valfx1, y: valfy1},
+              g: [{x: valgx1, y: valgy1},{x: valgx2, y: valgy2}],
+              h: !el valh,
+          },
+          {
+              b: valb,
+              c: [valc],
+              d: [vald1,vald2],
+              e: [{x: valex1, y: valey1}],
+              f: {x: valfx1, y: valfy1},
+              g: [{x: valgx1, y: valgy1},{x: valgx2, y: valgy2}],
+              h: !el valh,
+          }],
+      }
+    }
+    }
+    )!!";
+
+            static constexpr const char * yamlBlockMarkup = R"!!(a:
+  b: valb
+  c:
+  - valc
+  d:
+  - vald1
+  - vald2
+  e:
+  - x: valex1
+    y: valey1
+  f:
+    x: valfx1
+    y: valfy1
+  g:
+  - x: valgx1
+    y: valgy1
+  - x: valgx2
+    y: valgy2
+  h: !el valh
+  i:
+    j:
+      b: valb
+      c:
+      - valc
+      d:
+      - vald1
+      - vald2
+      e:
+      - x: valex1
+        y: valey1
+      f:
+        x: valfx1
+        y: valfy1
+      g:
+      - x: valgx1
+        y: valgy1
+      - x: valgx2
+        y: valgy2
+      h: !el valh
+    k:
+    - b: valb
+      c:
+      - valc
+      d:
+      - vald1
+      - vald2
+      e:
+      - x: valex1
+        y: valey1
+      f:
+        x: valfx1
+        y: valfy1
+      g:
+      - x: valgx1
+        y: valgy1
+      - x: valgx2
+        y: valgy2
+      h: !el valh
+    l:
+    - b: valb
+      c:
+      - valc
+      d:
+      - vald1
+      - vald2
+      e:
+      - x: valex1
+        y: valey1
+      f:
+        x: valfx1
+        y: valfy1
+      g:
+      - x: valgx1
+        y: valgy1
+      - x: valgx2
+        y: valgy2
+      h: !el valh
+    - b: valb
+      c:
+      - valc
+      d:
+      - vald1
+      - vald2
+      e:
+      - x: valex1
+        y: valey1
+      f:
+        x: valfx1
+        y: valfy1
+      g:
+      - x: valgx1
+        y: valgy1
+      - x: valgx2
+        y: valgy2
+      h: !el valh
+)!!";
+
+            StringBuffer ml;
+
+            Owned<IPropertyTree> yamlFlow = createPTreeFromYAMLString(yamlFlowMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+            toYAML(yamlFlow, ml.clear(), 0, YAML_SortTags|YAML_HideRootArrayObject);
+            CPPUNIT_ASSERT(streq(ml, yamlBlockMarkup));
+
+            Owned<IPropertyTree> yamlBlock = createPTreeFromYAMLString(yamlBlockMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+            toYAML(yamlBlock, ml.clear(), 0, YAML_SortTags|YAML_HideRootArrayObject);
+            CPPUNIT_ASSERT(streq(ml, yamlBlockMarkup));
+        }
+
+    void testMergeConfig()
+    {
+            static constexpr const char * yamlLeft = R"!!({a: {
+      b: gone,
+      bk: kept,
+      c: [gone],
+      ck: [kept],
+      d: [gone1,gone2],
+      dk: [kept1,kept2],
+      e: [{name: merged, x: gone, z: kept},{altname: merged, x: gone, z: kept},{name: kept, x: kept, y: kept}, {unnamed: kept, x: kept, y: kept}],
+      ek: [{name: kept, x: kept, y: kept}, {unnamed: kept, x: kept, y: kept}],
+      f: [{unnamed: gone, x: gone, y: gone}, {unnamed: gone2, x: gone2, y: gone2}],
+      kept: {x: kept, y: kept},
+      merged: {x: gone, z: kept}
+      }
+    }
+)!!";
+
+            static constexpr const char * yamlBlockLeft = R"!!(a:
+  b: gone
+  bk: kept
+  c:
+  - gone
+  ck:
+  - kept
+  d:
+  - gone1
+  - gone2
+  dk:
+  - kept1
+  - kept2
+  e:
+  - name: merged
+    x: gone
+    z: kept
+  - altname: merged
+    x: gone
+    z: kept
+  - name: kept
+    x: kept
+    y: kept
+  - unnamed: kept
+    x: kept
+    y: kept
+  ek:
+  - name: kept
+    x: kept
+    y: kept
+  - unnamed: kept
+    x: kept
+    y: kept
+  f:
+  - unnamed: gone
+    x: gone
+    y: gone
+  - unnamed: gone2
+    x: gone2
+    y: gone2
+  kept:
+    x: kept
+    y: kept
+  merged:
+    x: gone
+    z: kept
+)!!";
+
+            static constexpr const char * yamlRight = R"!!({a: {
+      b: updated,
+      c: [added],
+      d: [added1,added2],
+      e: [{name: merged, x: updated, y: added},{altname: merged, x: updated, y: added},{name: added, x: added, y: added}, {unnamed: added, x: added, y: added}],
+      f: [{unnamed: kept, x: kept, y: kept}, {unnamed: kept2, x: kept2, y: kept2}],
+      added: {x: added, y: added},
+      merged: {x: updated, y: added}
+      }
+    }
+)!!";
+
+            static constexpr const char * yamlBlockRight = R"!!(a:
+  b: updated
+  c:
+  - added
+  d:
+  - added1
+  - added2
+  e:
+  - name: merged
+    x: updated
+    y: added
+  - altname: merged
+    x: updated
+    y: added
+  - name: added
+    x: added
+    y: added
+  - unnamed: added
+    x: added
+    y: added
+  f:
+  - unnamed: kept
+    x: kept
+    y: kept
+  - unnamed: kept2
+    x: kept2
+    y: kept2
+  added:
+    x: added
+    y: added
+  merged:
+    x: updated
+    y: added
+)!!";
+
+            static constexpr const char * yamlMerged = R"!!(a:
+  b: updated
+  bk: kept
+  added:
+    x: added
+    y: added
+  c:
+  - added
+  ck:
+  - kept
+  d:
+  - added1
+  - added2
+  dk:
+  - kept1
+  - kept2
+  e:
+  - name: merged
+    x: updated
+    y: added
+    z: kept
+  - altname: merged
+    x: updated
+    y: added
+    z: kept
+  - name: kept
+    x: kept
+    y: kept
+  - unnamed: kept
+    x: kept
+    y: kept
+  - name: added
+    x: added
+    y: added
+  - unnamed: added
+    x: added
+    y: added
+  ek:
+  - name: kept
+    x: kept
+    y: kept
+  - unnamed: kept
+    x: kept
+    y: kept
+  f:
+  - unnamed: kept
+    x: kept
+    y: kept
+  - unnamed: kept2
+    x: kept2
+    y: kept2
+  kept:
+    x: kept
+    y: kept
+  merged:
+    x: updated
+    y: added
+    z: kept
+)!!";
+
+        StringBuffer ml;
+
+        Owned<IPropertyTree> treeLeft = createPTreeFromYAMLString(yamlLeft, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        Owned<IPropertyTree> treeRight = createPTreeFromYAMLString(yamlRight, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        mergeConfiguration(*treeLeft, *treeRight, "@altname");
+        toYAML(treeLeft, ml.clear(), 0, YAML_SortTags|YAML_HideRootArrayObject);
+        CPPUNIT_ASSERT(streq(ml, yamlMerged));
+
+        Owned<IPropertyTree> treeBlockLeft = createPTreeFromYAMLString(yamlBlockLeft, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        Owned<IPropertyTree> treeBlockRight = createPTreeFromYAMLString(yamlBlockRight, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        mergeConfiguration(*treeBlockLeft, *treeBlockRight, "@altname");
+        toYAML(treeBlockLeft, ml.clear(), 0, YAML_SortTags|YAML_HideRootArrayObject);
+        CPPUNIT_ASSERT(streq(ml, yamlMerged));
+    }
+
+    void testRootArrayMarkup()
+    {
+        static constexpr const char * xmlMarkup = R"!!(<__array__>
+ <__item__ a="val1a" b="val2a"/>
+ <__item__ a="val1b" b="val2b"/>
+ <__item__ a="val1c" b="val2c"/>
+</__array__>
+)!!";
+
+        static constexpr const char * jsonMarkup = R"!!([
+ {
+  "@a": "val1a",
+  "@b": "val2a"
+ },
+ {
+  "@a": "val1b",
+  "@b": "val2b"
+ },
+ {
+  "@a": "val1c",
+  "@b": "val2c"
+ }
+])!!";
+
+        static constexpr const char * yamlMarkup = R"!!(- a: val1a
+  b: val2a
+- a: val1b
+  b: val2b
+- a: val1c
+  b: val2c
+)!!";
+
+        Owned<IPropertyTree> xml = createPTreeFromXMLString(xmlMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        Owned<IPropertyTree> yaml = createPTreeFromYAMLString(yamlMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        Owned<IPropertyTree> json = createPTreeFromJSONString(jsonMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+
+        CPPUNIT_ASSERT(areMatchingPTrees(xml, json));
+        CPPUNIT_ASSERT(areMatchingPTrees(xml, yaml));
+
+        StringBuffer ml;
+        toXML(xml, ml, 0, XML_Format|XML_SortTags);
+        CPPUNIT_ASSERT(streq(ml, xmlMarkup));
+
+        toYAML(xml, ml.clear(), 0, YAML_SortTags|YAML_HideRootArrayObject);
+        CPPUNIT_ASSERT(streq(ml, yamlMarkup));
+
+        toJSON(xml, ml.clear(), 0, JSON_Format|JSON_SortTags|JSON_HideRootArrayObject);
+        CPPUNIT_ASSERT(streq(ml, jsonMarkup));
+    }
+    void testMarkup()
+    {
+        static constexpr const char * xmlMarkup = R"!!(  <__object__ attr1="attrval1" attr2="attrval2">
+   <binmixed bin="1" xsi:type="SOAP-ENC:base64">
+    CwAAAA==   </binmixed>
+   <binsimple xsi:type="SOAP-ENC:base64">
+    CwAAAA==   </binsimple>
+   <element1>scalarvalue</element1>
+   <item a="1"
+         b="2"
+         c="3"
+         d="4"/>
+   <item a="2"/>
+   <item a="3"/>
+   <scalars>
+    <valX>x</valX>
+    <valX>x</valX>
+    <valY>y</valY>
+    <valY>y</valY>
+    <valZ>z</valZ>
+   </scalars>
+   <sub1 subattr1="sav1">
+    sub1val
+   </sub1>
+   <sub2 subattr2="sav2">
+    sub2val
+   </sub2>
+   <subX subattr3="sav3">
+    subXval
+   </subX>
+   cpptestval
+  </__object__>
+)!!";
+        static constexpr const char * yamlMarkup = R"!!(attr1: attrval1
+attr2: attrval2
+binmixed:
+  bin: 1
+  ^: !binary |-
+    CwAAAA==
+binsimple: !binary |-
+  CwAAAA==
+element1: !el scalarvalue
+item:
+- a: 1
+  b: 2
+  c: 3
+  d: 4
+- a: 2
+- a: 3
+scalars:
+  valX:
+  - x
+  - x
+  valY:
+  - y
+  - y
+  valZ: !el z
+sub1:
+  subattr1: sav1
+  ^: !el sub1val
+sub2:
+  subattr2: sav2
+  ^: !el sub2val
+subX:
+  subattr3: sav3
+  ^: !el subXval
+^: !el cpptestval
+)!!";
+
+        static constexpr const char * jsonMarkup = R"!!({
+   "@attr1": "attrval1",
+   "@attr2": "attrval2",
+   "binmixed": {
+    "@bin": "1",
+    "#valuebin": "CwAAAA=="
+   },
+   "binsimple": {
+    "#valuebin": "CwAAAA=="
+   },
+   "element1": "scalarvalue",
+   "item": [
+    {
+     "@a": "1",
+     "@b": "2",
+     "@c": "3",
+     "@d": "4"
+    },
+    {
+     "@a": "2"
+    },
+    {
+     "@a": "3"
+    }
+   ],
+   "scalars": {
+    "valX": [
+     "x",
+     "x"
+    ],
+    "valY": [
+     "y",
+     "y"
+    ],
+    "valZ": "z"
+   },
+   "sub1": {
+    "@subattr1": "sav1",
+    "#value": "sub1val"
+   },
+   "sub2": {
+    "@subattr2": "sav2",
+    "#value": "sub2val"
+   },
+   "subX": {
+    "@subattr3": "sav3",
+    "#value": "subXval"
+   },
+   "#value": "cpptestval"
+  })!!";
+
+        Owned<IPropertyTree> xml = createPTreeFromXMLString(xmlMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        Owned<IPropertyTree> yaml = createPTreeFromYAMLString(yamlMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+        Owned<IPropertyTree> json = createPTreeFromJSONString(jsonMarkup, ipt_none, ptr_ignoreWhiteSpace, nullptr);
+
+        CPPUNIT_ASSERT(areMatchingPTrees(xml, yaml));
+        CPPUNIT_ASSERT(areMatchingPTrees(xml, json));
+
+        //if we want the final compares to be less fragile (test will have to be updated if formatting changes) we could reparse and compare trees again
+        StringBuffer ml;
+        toXML(xml, ml, 2, XML_Format|XML_SortTags);
+        CPPUNIT_ASSERT(streq(ml, xmlMarkup));
+
+        toYAML(yaml, ml.clear(), 2, YAML_SortTags|YAML_HideRootArrayObject);
+        CPPUNIT_ASSERT(streq(ml, yamlMarkup));
+
+        toJSON(json, ml.clear(), 2, JSON_Format|JSON_SortTags|JSON_HideRootArrayObject);
+        CPPUNIT_ASSERT(streq(ml, jsonMarkup));
+    }
     void test()
     {
         Owned<IPropertyTree> testTree = createPTreeFromXMLString(
@@ -1377,6 +1917,19 @@ public:
 
         CPPUNIT_ASSERT(!testTree->isCaseInsensitive());
         CPPUNIT_ASSERT(3 == testTree->getCount("sub*"));
+
+        testTree->addPropInt("newitem", 1);
+        testTree->addPropInt("newitem", 2);
+        testTree->addPropInt("./newitem", 3);
+        testTree->addPropInt("././newitem", 4);
+
+        Owned<IPropertyTreeIterator> xIter = testTree->getElements("./newitem");
+        unsigned match=1;
+        ForEach(*xIter)
+        {
+            CPPUNIT_ASSERT(match == xIter->query().getPropInt(nullptr));
+            ++match;
+        }
     }
 };
 
@@ -1731,6 +2284,137 @@ CPPUNIT_TEST_SUITE_REGISTRATION(JlibIOTest);
 CPPUNIT_TEST_SUITE_NAMED_REGISTRATION(JlibIOTest, "JlibIOTest");
 
 
+class JlibCompressionTestsStress : public CppUnit::TestFixture
+{
+    CPPUNIT_TEST_SUITE(JlibCompressionTestsStress);
+        CPPUNIT_TEST(test);
+    CPPUNIT_TEST_SUITE_END();
+
+public:
+    void test()
+    {
+        try
+        {
+            size32_t sz = 100*0x100000; // 100MB
+            MemoryBuffer src;
+            src.ensureCapacity(sz);
+            MemoryBuffer compressed;
+            const char *aesKey = "012345678901234567890123";
+            Owned<ICompressHandlerIterator> iter = getCompressHandlerIterator();
+
+            StringBuffer tmp;
+            unsigned card = 0;
+            size32_t rowSz = 0;
+            while (true)
+            {
+                size32_t cLen = src.length();
+                if (cLen > sz)
+                    break;
+                src.append(cLen);
+                tmp.clear().appendf("%10u", cLen);
+                src.append(tmp.length(), tmp.str());
+                src.append(++card % 52);
+                src.append(crc32((const char *)&cLen, sizeof(cLen), 0));
+                unsigned ccrc = crc32((const char *)&card, sizeof(card), 0);
+                tmp.clear().appendf("%10u", ccrc);
+                src.append(tmp.length(), tmp.str());
+                tmp.clear().appendf("%20u", (++card % 10));
+                src.append(tmp.length(), tmp.str());
+                if (0 == rowSz)
+                    rowSz = src.length();
+                else
+                {
+                    dbgassertex(0 == (src.length() % rowSz));
+                }
+            }
+
+            printf("\nAlgorithm || Compression Time (ms) || Decompression Time (ms) || Compression Ratio\n");
+
+            ForEach(*iter)
+            {
+                compressed.clear();
+                ICompressHandler &handler = iter->query();
+                Owned<ICompressor> compressor = handler.getCompressor(streq("AES", handler.queryType()) ? aesKey: nullptr);
+
+                CCycleTimer timer;
+                compressor->open(compressed, sz);
+                compressor->startblock();
+                const byte *ptr = src.bytes();
+                const byte *ptrEnd = ptr + src.length();
+                while (ptr != ptrEnd)
+                {
+                    compressor->write(ptr, rowSz);
+                    ptr += rowSz;
+                }
+                compressor->commitblock();
+                compressor->close();
+                cycle_t compressCycles = timer.elapsedCycles();
+
+                Owned<IExpander> expander = handler.getExpander(streq("AES", handler.queryType()) ? aesKey: nullptr);
+
+                timer.reset();
+                size32_t required = expander->init(compressed.bytes());
+                MemoryBuffer tgt(required);
+                expander->expand(tgt.bufferBase());
+                tgt.setWritePos(required);
+                cycle_t decompressCycles = timer.elapsedCycles();
+
+                float ratio = (float)(src.length()) / compressed.length();
+
+                printf("%9s || %21u || %23u || %17.2f [ %u, %u ]\n", handler.queryType(), (unsigned)cycle_to_millisec(compressCycles), (unsigned)cycle_to_millisec(decompressCycles), ratio, src.length(), compressed.length());
+
+                CPPUNIT_ASSERT(tgt.length() >= sz);
+                CPPUNIT_ASSERT(0 == memcmp(src.bufferBase(), tgt.bufferBase(), sz));
+           }
+        }
+        catch (IException *e)
+        {
+            EXCLOG(e, nullptr);
+            throw;
+        }
+    }
+};
+
+CPPUNIT_TEST_SUITE_REGISTRATION( JlibCompressionTestsStress );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( JlibCompressionTestsStress, "JlibCompressionTestsStress" );
+
+class JlibFriendlySizeTest : public CppUnit::TestFixture
+{
+    CPPUNIT_TEST_SUITE(JlibFriendlySizeTest);
+        CPPUNIT_TEST(test);
+    CPPUNIT_TEST_SUITE_END();
+
+public:
+    void test()
+    {
+        CPPUNIT_ASSERT(friendlyStringToSize("0") == 0);
+        CPPUNIT_ASSERT(friendlyStringToSize("2000") == 2000);
+        CPPUNIT_ASSERT(friendlyStringToSize("1K") == 1000);
+        CPPUNIT_ASSERT(friendlyStringToSize("2Ki") == 2048);
+        CPPUNIT_ASSERT(friendlyStringToSize("1M") == 1000000);
+        CPPUNIT_ASSERT(friendlyStringToSize("2Mi") == 2048*1024);
+        CPPUNIT_ASSERT(friendlyStringToSize("1G") == 1000000000);
+        CPPUNIT_ASSERT(friendlyStringToSize("2Gi") == 2048llu*1024*1024);
+        CPPUNIT_ASSERT(friendlyStringToSize("1T") == 1000000000000ll);
+        CPPUNIT_ASSERT(friendlyStringToSize("2Ti") == 2048llu*1024*1024*1024);
+        CPPUNIT_ASSERT(friendlyStringToSize("1P") == 1000000000000000ll);
+        CPPUNIT_ASSERT(friendlyStringToSize("2Pi") == 2048llu*1024*1024*1024*1024);
+        CPPUNIT_ASSERT(friendlyStringToSize("1E") == 1000000000000000000ll);
+        CPPUNIT_ASSERT(friendlyStringToSize("2Ei") == 2048llu*1024*1024*1024*1024*1024);
+        try
+        {
+            friendlyStringToSize("1Kb");
+            CPPUNIT_ASSERT(false);
+        }
+        catch (IException *E)
+        {
+            E->Release();
+        }
+    }
+};
+
+CPPUNIT_TEST_SUITE_REGISTRATION( JlibFriendlySizeTest );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( JlibFriendlySizeTest, "JlibFriendlySizeTest" );
 
 
 #endif // _USE_CPPUNIT

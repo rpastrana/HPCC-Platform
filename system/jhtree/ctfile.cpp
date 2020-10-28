@@ -106,13 +106,22 @@ extern bool isCompressedIndex(const char *filename)
         if (io->read(0, sizeof(hdr), &hdr) == sizeof(hdr))
         {
             SwapBigEndian(hdr);
-            if (size % hdr.nodeSize == 0 && hdr.phyrec == size-1 && hdr.root && hdr.root % hdr.nodeSize == 0 && hdr.ktype & (HTREE_COMPRESSED_KEY|HTREE_QUICK_COMPRESSED_KEY))
+            if (hdr.nodeSize && size % hdr.nodeSize == 0 && hdr.ktype & (HTREE_COMPRESSED_KEY|HTREE_QUICK_COMPRESSED_KEY))
             {
-                NodeHdr root;
-                if (io->read(hdr.root, sizeof(root), &root) == sizeof(root))
+                if (hdr.ktype & USE_TRAILING_HEADER)
                 {
-                    SwapBigEndian(root);
-                    return root.leftSib==0 && root.rightSib==0; 
+                    if (io->read(size-hdr.nodeSize, sizeof(hdr), &hdr) != sizeof(hdr))
+                        return false;
+                    SwapBigEndian(hdr);
+                }
+                if (hdr.root && hdr.root % hdr.nodeSize == 0 && hdr.phyrec == size-1 && hdr.ktype & (HTREE_COMPRESSED_KEY|HTREE_QUICK_COMPRESSED_KEY))
+                {
+                    NodeHdr root;
+                    if (io->read(hdr.root, sizeof(root), &root) == sizeof(root))
+                    {
+                        SwapBigEndian(root);
+                        return root.leftSib==0 && root.rightSib==0;
+                    }
                 }
             }
         }
@@ -134,9 +143,19 @@ extern jhtree_decl bool isIndexFile(IFile *file)
         if (io->read(0, sizeof(hdr), &hdr) != sizeof(hdr))
             return false;
         SwapBigEndian(hdr);
-        if (!hdr.root || !hdr.nodeSize || !hdr.root || size % hdr.nodeSize || hdr.root % hdr.nodeSize || hdr.root >= size)
-            return false;
-        return true;    // Reasonable heuristic...
+        if (hdr.nodeSize && (size % hdr.nodeSize == 0))
+        {
+            if (hdr.ktype & USE_TRAILING_HEADER)
+            {
+                if (io->read(size-hdr.nodeSize, sizeof(hdr), &hdr) != sizeof(hdr))
+                    return false;
+                SwapBigEndian(hdr);
+
+            }
+            if (!hdr.root || !hdr.nodeSize || !hdr.root || size % hdr.nodeSize ||  hdr.phyrec != size-1 || hdr.root % hdr.nodeSize || hdr.root >= size)
+                return false;
+            return true;    // Reasonable heuristic...
+        }
     }
     catch (IException *E)
     {
@@ -167,20 +186,6 @@ void CKeyHdr::load(KeyHdr &_hdr)
 
     if (0xffff != hdr.version && KEYBUILD_VERSION < hdr.version)
         throw MakeKeyException(KeyExcpt_IncompatVersion, "This build is compatible with key versions <= %u. Key is version %u", KEYBUILD_VERSION, (unsigned) hdr.version);
-}
-
-void CKeyHdr::write(IWriteSeq *out, CRC32 *crc)
-{
-    unsigned nodeSize = hdr.nodeSize;
-    assertex(out->getRecordSize()==nodeSize);
-    MemoryAttr ma;
-    byte *buf = (byte *) ma.allocate(nodeSize); 
-    memcpy(buf, &hdr, sizeof(hdr));
-    memset(buf+sizeof(hdr), 0xff, nodeSize-sizeof(hdr));
-    SwapBigEndian(*(KeyHdr*) buf);
-    out->put(buf);
-    if (crc)
-        crc->tally(nodeSize, buf);
 }
 
 void CKeyHdr::write(IFileIOStream *out, CRC32 *crc)
@@ -266,8 +271,7 @@ void CWriteNodeBase::write(IFileIOStream *out, CRC32 *crc)
         lzwcomp.close();
     assertex(hdr.keyBytes<=maxBytes);
     writeHdr();
-    assertex(fpos);
-    out->seek(fpos, IFSbegin);
+    out->seek(getFpos(), IFSbegin);
     out->write(keyHdr->getNodeSize(), nodeBuf);
     if (crc)
         crc->tally(keyHdr->getNodeSize(), nodeBuf);
@@ -301,7 +305,7 @@ bool CWriteNode::add(offset_t pos, const void *indata, size32_t insize, unsigned
         keyPtr += sizeof(rsequence);
         hdr.keyBytes += sizeof(rsequence);
     }
-    if (isLeaf() && keyType & HTREE_COMPRESSED_KEY)
+    if (isLeaf() && (keyType & HTREE_COMPRESSED_KEY))
     {
         if (0 == hdr.numKeys)
             lzwcomp.open(keyPtr, maxBytes-hdr.keyBytes, isVariable, (keyType&HTREE_QUICK_COMPRESSED_KEY)==HTREE_QUICK_COMPRESSED_KEY);
@@ -407,8 +411,7 @@ unsigned __int64 CBlobWriteNode::makeBlobId(offset_t nodepos, unsigned offset)
 
 unsigned __int64 CBlobWriteNode::add(const char * &data, size32_t &size)
 {
-    assertex(fpos);
-    unsigned __int64 ret = makeBlobId(fpos, lzwcomp.getCurrentOffset());
+    unsigned __int64 ret = makeBlobId(getFpos(), lzwcomp.getCurrentOffset());
     unsigned written = lzwcomp.writeBlob(data, size);
     if (written)
     {
@@ -429,7 +432,6 @@ CMetadataWriteNode::CMetadataWriteNode(offset_t _fpos, CKeyHdr *_keyHdr) : CWrit
 
 size32_t CMetadataWriteNode::set(const char * &data, size32_t &size)
 {
-    assertex(fpos);
     unsigned short written = ((size > (maxBytes-sizeof(unsigned short))) ? (maxBytes-sizeof(unsigned short)) : size);
     _WINCPYREV2(keyPtr, &written);
     memcpy(keyPtr+sizeof(unsigned short), data, written);
@@ -447,7 +449,6 @@ CBloomFilterWriteNode::CBloomFilterWriteNode(offset_t _fpos, CKeyHdr *_keyHdr) :
 
 size32_t CBloomFilterWriteNode::set(const byte * &data, size32_t &size)
 {
-    assertex(fpos);
     unsigned short written;
     _WINCPYREV2(&written, keyPtr);
 
@@ -482,18 +483,6 @@ void CBloomFilterWriteNode::put8(__int64 val)
     _WINCPYREV8(keyPtr+sizeof(unsigned short)+written, &val);
     written += sizeof(val);
     _WINCPYREV2(keyPtr, &written);
-}
-
-//=========================================================================================================
-
-CNodeHeader::CNodeHeader() 
-{
-}
-
-void CNodeHeader::load(NodeHdr &_hdr)
-{
-    memcpy(&hdr, &_hdr, sizeof(hdr));
-    SwapBigEndian(hdr);
 }
 
 //=========================================================================================================
@@ -540,7 +529,7 @@ void *CJHTreeNode::allocMem(size32_t len)
     return ret;
 }
 
-char *CJHTreeNode::expandKeys(void *src,unsigned keylength,size32_t &retsize)
+char *CJHTreeNode::expandKeys(void *src,size32_t &retsize)
 {
     Owned<IExpander> exp = createLZWExpander(true);
     int len=exp->init(src);
@@ -553,6 +542,11 @@ char *CJHTreeNode::expandKeys(void *src,unsigned keylength,size32_t &retsize)
     exp->expand(outkeys);
     retsize = len;
     return outkeys;
+}
+
+size32_t CJHTreeNode::getNodeSize() const
+{
+    return keyHdr->getNodeSize();
 }
 
 void CJHTreeNode::unpack(const void *node, bool needCopy)
@@ -600,10 +594,10 @@ void CJHTreeNode::unpack(const void *node, bool needCopy)
         {
             MTIME_SECTION(queryActiveTimer(), "Compressed node expand");
             expandedSize = keyHdr->getNodeSize();
-            bool quick = !isBlob() && (keyType&HTREE_QUICK_COMPRESSED_KEY)==HTREE_QUICK_COMPRESSED_KEY;
+            bool quick = !isBlob() && (keyType&(HTREE_QUICK_COMPRESSED_KEY|HTREE_VARSIZE))==HTREE_QUICK_COMPRESSED_KEY;
             keyBuf = NULL;
             if (!quick)
-                keyBuf = expandKeys(keys,keyLen,expandedSize);
+                keyBuf = expandKeys(keys,expandedSize);
         }
     }
     else
@@ -766,28 +760,6 @@ bool CJHTreeNode::getValueAt(unsigned int index, char *dst) const
     return true;
 }
 
-const char * CJHTreeNode::queryValueAt(unsigned int index, char *scratchBuffer) const
-{
-    if (index >= hdr.numKeys)
-        return nullptr;
-    else if (keyHdr->hasSpecialFileposition())
-    {
-        getValueAt(index, scratchBuffer);
-        return scratchBuffer;
-    }
-    else
-        return keyBuf + index*keyRecLen;
-}
-
-const char * CJHTreeNode::queryKeyAt(unsigned int index, char *scratchBuffer) const
-{
-    if (index >= hdr.numKeys)
-        return nullptr;
-    else
-        return keyBuf + index*keyRecLen + (keyHdr->hasSpecialFileposition() ? sizeof(offset_t) : 0);
-}
-
-
 size32_t CJHTreeNode::getSizeAt(unsigned int index) const
 {
     if (keyHdr->hasSpecialFileposition())
@@ -837,13 +809,19 @@ extern jhtree_decl void validateKeyFile(const char *filename, offset_t nodePos)
         throw MakeStringException(4, "Invalid key %s: failed to read key header", filename);
     CKeyHdr keyHdr;
     keyHdr.load(hdr);
+    if (keyHdr.getKeyType() & USE_TRAILING_HEADER)
+    {
+        if (io->read(size - keyHdr.getNodeSize(), sizeof(hdr), &hdr) != sizeof(hdr))
+            throw MakeStringException(4, "Invalid key %s: failed to read trailing key header", filename);
+        keyHdr.load(hdr);
+    }
 
     _WINREV(hdr.phyrec);
     _WINREV(hdr.root);
     _WINREV(hdr.nodeSize);
     if (hdr.phyrec != size-1)
         throw MakeStringException(5, "Invalid key %s: phyrec was %" I64F "d, expected %" I64F "d", filename, hdr.phyrec, size-1);
-    if (size % hdr.nodeSize)
+    if (!hdr.nodeSize || size % hdr.nodeSize)
         throw MakeStringException(3, "Invalid key %s: size %" I64F "d is not a multiple of key node size (%d)", filename, size, hdr.nodeSize);
     if (!hdr.root || hdr.root % hdr.nodeSize !=0)
         throw MakeStringException(6, "Invalid key %s: invalid root pointer %" I64F "x", filename, hdr.root);
@@ -939,26 +917,6 @@ bool CJHVarTreeNode::getValueAt(unsigned int num, char *dst) const
     return true;
 }
 
-const char *CJHVarTreeNode::queryValueAt(unsigned int index, char *scratchBuffer) const
-{
-    if (index >= hdr.numKeys)
-        return nullptr;
-    else if (keyHdr->hasSpecialFileposition())
-    {
-        getValueAt(index, scratchBuffer);
-        return scratchBuffer;
-    }
-    else
-        return recArray[index];
-}
-
-const char *CJHVarTreeNode::queryKeyAt(unsigned int index, char *scratchBuffer) const
-{
-    if (index >= hdr.numKeys)
-        return nullptr;
-    return recArray[index] + (keyHdr->hasSpecialFileposition() ? sizeof(offset_t) : 0);
-}
-
 size32_t CJHVarTreeNode::getSizeAt(unsigned int num) const
 {
     const char * p = recArray[num];
@@ -1012,29 +970,6 @@ bool CJHRowCompressedNode::getValueAt(unsigned int num, char *dst) const
             rowexp->expandRow(dst,num,0,keyLen);
     }
     return true;
-}
-
-const char *CJHRowCompressedNode::queryValueAt(unsigned int num, char *scratchBuffer) const
-{
-    if (num >= hdr.numKeys)
-        return nullptr;
-    else
-    {
-        getValueAt(num, scratchBuffer);
-        return scratchBuffer;
-    }
-}
-
-const char *CJHRowCompressedNode::queryKeyAt(unsigned int num, char *scratchBuffer) const
-{
-    if (num >= hdr.numKeys)
-        return nullptr;
-    unsigned keyedSize = keyHdr->getNodeKeyLength();
-    if (keyHdr->hasSpecialFileposition())
-        rowexp->expandRow(scratchBuffer,num,sizeof(offset_t),keyedSize);
-    else
-        rowexp->expandRow(scratchBuffer,num,0,keyedSize);
-    return scratchBuffer;
 }
 
 offset_t CJHRowCompressedNode::getFPosAt(unsigned int num) const

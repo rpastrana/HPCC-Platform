@@ -37,6 +37,9 @@
 #include "jprop.hpp"
 #include "wuattr.hpp"
 #include <vector>
+#include <list>
+#include <utility>
+#include <string>
 
 #define LEGACY_GLOBAL_SCOPE "workunit"
 #define GLOBAL_SCOPE ""
@@ -48,6 +51,12 @@ typedef wchar_t UChar;
 typedef unsigned short UChar;
 #endif //_WIN32
 
+
+enum : unsigned
+{
+    WUERR_ModifyFilterAfterFinalize = WORKUNIT_ERROR_START,
+    WUERR_FinalizeAfterFinalize,
+};
 
 // error codes
 #define QUERRREG_ADD_NAMEDQUERY     QUERYREGISTRY_ERROR_START
@@ -70,13 +79,6 @@ class StringArray;
 class StringBuffer;
 
 typedef unsigned __int64 __uint64;
-
-interface IScmIterator : extends IInterface
-{
-    virtual bool first() = 0;
-    virtual bool next() = 0;
-    virtual bool isValid() = 0;
-};
 
 interface IQueueSwitcher : extends IInterface
 {
@@ -143,9 +145,9 @@ enum WUAction
     WUActionCheck = 2,
     WUActionRun = 3,
     WUActionExecuteExisting = 4,
-    WUActionPause = 5, 
-    WUActionPauseNow = 6, 
-    WUActionResume = 7, 
+    WUActionPause = 5,
+    WUActionPauseNow = 6,
+    WUActionResume = 7,
     WUActionSize = 8
 };
 
@@ -538,35 +540,15 @@ interface IConstWUExceptionIterator : extends IScmIterator
     virtual IConstWUException & query() = 0;
 };
 
+// This enumeration is currently duplicated in workunit.hpp and environment.hpp.  They must stay in sync.
+#ifndef ENGINE_CLUSTER_TYPE
+#define ENGINE_CLUSTER_TYPE
 enum ClusterType { NoCluster, HThorCluster, RoxieCluster, ThorLCRCluster };
+#endif
 
 extern WORKUNIT_API ClusterType getClusterType(const char * platform, ClusterType dft = NoCluster);
 extern WORKUNIT_API const char *clusterTypeString(ClusterType clusterType, bool lcrSensitive);
 inline bool isThorCluster(ClusterType type) { return (type == ThorLCRCluster); }
-
-//! IClusterInfo
-interface IConstWUClusterInfo : extends IInterface
-{
-    virtual IStringVal & getName(IStringVal & str) const = 0;
-    virtual IStringVal & getScope(IStringVal & str) const = 0;
-    virtual IStringVal & getThorQueue(IStringVal & str) const = 0;
-    virtual unsigned getSize() const = 0;
-    virtual unsigned getNumberOfSlaveLogs() const = 0;
-    virtual ClusterType getPlatform() const = 0;
-    virtual IStringVal & getAgentQueue(IStringVal & str) const = 0;
-    virtual IStringVal & getAgentName(IStringVal & str) const = 0;
-    virtual IStringVal & getServerQueue(IStringVal & str) const = 0;
-    virtual IStringVal & getRoxieProcess(IStringVal & str) const = 0;
-    virtual const StringArray & getThorProcesses() const = 0;
-    virtual const StringArray & getPrimaryThorProcesses() const = 0;
-    virtual const SocketEndpointArray & getRoxieServers() const = 0;
-    virtual const char *getLdapUser() const = 0;
-    virtual const char *getLdapPassword() const = 0;
-    virtual unsigned getRoxieRedundancy() const = 0;
-    virtual unsigned getChannelsPerNode() const = 0;
-    virtual int getRoxieReplicateOffset() const = 0;
-    virtual const char *getAlias() const = 0;
-};
 
 //! IWorkflowItem
 enum WFType
@@ -589,8 +571,12 @@ enum WFMode
     WFModeBeginWait = 5,
     WFModeWait = 6,
     WFModeOnce = 7,
-    WFModeSize = 8,
-    WFModeCritical = 9
+    WFModeUnused = 8,
+    WFModeCritical = 9,
+    WFModeOrdered = 10,
+    WFModeConditionExpression = 11,
+    //Size needs to be the last mode
+    WFModeSize = 12
 };
 
 enum WFState
@@ -1040,6 +1026,27 @@ enum WuScopeSourceFlags : unsigned
 };
 BITMASK_ENUM(WuScopeSourceFlags);
 
+class WORKUNIT_API AttributeValueFilter
+{
+public:
+    AttributeValueFilter(WuAttr _attr, const char * _value) : attr(_attr), value(_value)
+    {
+    }
+
+    bool matches(const char * curValue) const
+    {
+        return !value || strsame(curValue, value);
+    }
+
+    WuAttr queryKind() const { return attr; }
+    StringBuffer & describe(StringBuffer & out) const;
+
+protected:
+    WuAttr attr;
+    StringAttr value;
+};
+
+
 /* WuScopeFilter syntax:
  * initial match:   scope[<scope-id>] | stype[<scope-type>] | id[<scope-id>] | depth[<value>| <min>,<max>]
  *                  source[global|stats|graph|exception]
@@ -1052,12 +1059,14 @@ BITMASK_ENUM(WuScopeSourceFlags);
  */
 class WORKUNIT_API WuScopeFilter
 {
+    friend class CompoundStatisticsScopeIterator;
 public:
     WuScopeFilter() = default;
     WuScopeFilter(const char * filter);
 
     WuScopeFilter & addFilter(const char * filter);
     WuScopeFilter & addScope(const char * scope);
+    WuScopeFilter & addScopeType(StatisticScopeType scopeType);
     WuScopeFilter & addScopeType(const char * scopeType);
     WuScopeFilter & addId(const char * id);
     WuScopeFilter & setDepth(unsigned low, unsigned high);
@@ -1078,6 +1087,7 @@ public:
 
     WuScopeFilter & addRequiredStat(StatisticKind statKind);
     WuScopeFilter & addRequiredStat(StatisticKind statKind, stat_type lowValue, stat_type highValue);
+    WuScopeFilter & addRequiredAttr(WuAttr attr, const char * value = nullptr);
 
     void finishedFilter(); // Call once filter has been completely set up
     StringBuffer & describe(StringBuffer & out) const; // describe the filter - each option is preceded by a comma
@@ -1091,16 +1101,21 @@ public:
     const ScopeFilter & queryIterFilter() const;
     bool isOptimized() const { return optimized; }
     bool onlyIncludeScopes() const { return (properties & ~PTscope) == 0; }
+    WuScopeSourceFlags querySources() const { return sourceFlags; }
+    unsigned queryMinVersion() const { return minVersion; }
+    bool outputDefined() const { return properties != PTnone; }
 
 protected:
     void addRequiredStat(const char * filter);
+    void checkModifiable() { if (unlikely(optimized)) reportModifyTooLate(); }
     bool matchOnly(StatisticScopeType scopeType) const;
+    void reportModifyTooLate();
 
-    //MORE: Make the following protected/private
-public:
+protected:
 //The following members control which scopes are matched by the iterator
     ScopeFilter scopeFilter;                            // Filter that must be matched by a scope
     std::vector<StatisticValueFilter> requiredStats;    // The attributes that must be present for a particular scope
+    std::vector<AttributeValueFilter> requiredAttrs;
     WuScopeSourceFlags sourceFlags = SSFsearchDefault;  // Which sources within the workunit should be included.  Default is to calculate from the properties.
 
 // Once a match has been found which scopes are returned?
@@ -1158,11 +1173,6 @@ interface IConstWUScopeIterator : extends IScmIterator
 interface IWorkUnit;
 interface IUserDescriptor;
 
-interface IStringIterator : extends IScmIterator
-{
-    virtual IStringVal & str(IStringVal & str) = 0;
-};
-
 interface IConstWorkUnitInfo : extends IInterface
 {
     virtual const char *queryWuid() const = 0;
@@ -1203,6 +1213,7 @@ interface IConstWorkUnit : extends IConstWorkUnitInfo
     virtual IStringVal & getDebugValue(const char * propname, IStringVal & str) const = 0;
     virtual int getDebugValueInt(const char * propname, int defVal) const = 0;
     virtual __int64 getDebugValueInt64(const char * propname, __int64 defVal) const = 0;
+    virtual double getDebugValueReal(const char * propname,  double defVal) const = 0;
     virtual bool getDebugValueBool(const char * propname, bool defVal) const = 0;
     virtual IStringIterator & getDebugValues() const = 0;
     virtual IStringIterator & getDebugValues(const char * prop) const = 0;
@@ -1293,10 +1304,10 @@ interface IDistributedFile;
 
 interface IWorkUnit : extends IConstWorkUnit
 {
-    virtual void clearExceptions() = 0;
+    virtual void clearExceptions(const char *source=nullptr) = 0;
     virtual void commit() = 0;
     virtual IWUException * createException() = 0;
-    virtual void addProcess(const char *type, const char *instance, unsigned pid, const char *log=NULL) = 0;
+    virtual void addProcess(const char *type, const char *instance, unsigned pid, unsigned max, const char *pattern, bool singleLog, const char *log=nullptr) = 0;
     virtual void setAction(WUAction action) = 0;
     virtual void setApplicationValue(const char * application, const char * propname, const char * value, bool overwrite) = 0;
     virtual void setApplicationValueInt(const char * application, const char * propname, int value, bool overwrite) = 0;
@@ -1373,6 +1384,7 @@ interface IWorkUnit : extends IConstWorkUnit
     virtual void setResultBool(const char *name, unsigned sequence, bool val) = 0;
     virtual void setResultDecimal(const char *name, unsigned sequence, int len, int precision, bool isSigned, const void *val) = 0;
     virtual void setResultDataset(const char * name, unsigned sequence, size32_t len, const void *val, unsigned numRows, bool extend) = 0;
+    virtual void import(IPropertyTree *wuTree, IPropertyTree *graphProgressTree = nullptr) = 0;
 };
 
 
@@ -1442,6 +1454,16 @@ enum WUQueryFilterBoolean
     WUQFSAll = 2
 };
 
+enum WUQueryFilterSuspended
+{
+    WUQFAllQueries = 0,//all queries including Suspended and not suspended
+    WUQFSUSPDNo = 1,
+    WUQFSUSPDYes = 2,
+    WUQFSUSPDByUser = 3,
+    WUQFSUSPDByFirstNode = 4,
+    WUQFSUSPDByAnyNode = 5
+};
+
 enum WUQuerySortField
 {
     WUQSFId = 1,
@@ -1461,6 +1483,7 @@ enum WUQuerySortField
     WUQSFSuspendedByUser = 15,
     WUQSFLibrary = 16,
     WUQSFPublishedBy = 17,
+    WUQSFSuspendedFilter = 18,
     WUQSFterm = 0,
     WUQSFreverse = 256,
     WUQSFnocase = 512,
@@ -1474,6 +1497,8 @@ typedef IIteratorOf<IPropertyTree> IConstQuerySetQueryIterator;
 interface IWorkUnitFactory : extends IPluggableFactory
 {
     virtual IWorkUnit *createWorkUnit(const char *app, const char *scope, ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
+    virtual void importWorkUnit(const char *zapReportFileName, const char *zapReportPassword,
+        const char *importDir, const char *app, const char *user, ISecManager *secMgr, ISecUser *secUser) = 0;
     virtual bool deleteWorkUnit(const char *wuid, ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
     virtual bool deleteWorkUnitEx(const char *wuid, bool throwException, ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
     virtual IConstWorkUnit * openWorkUnit(const char *wuid, ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
@@ -1489,10 +1514,11 @@ interface IWorkUnitFactory : extends IPluggableFactory
     virtual unsigned numWorkUnits() = 0;
     virtual IConstWorkUnitIterator *getScheduledWorkUnits(ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
     virtual void descheduleAllWorkUnits(ISecManager *secmgr = NULL, ISecUser *secuser = NULL) = 0;
-    virtual IConstQuerySetQueryIterator * getQuerySetQueriesSorted(WUQuerySortField *sortorder, WUQuerySortField *filters, const void *filterbuf, unsigned startoffset, unsigned maxnum, __int64 *cachehint, unsigned *total, const MapStringTo<bool> *subset) = 0;
+    virtual IConstQuerySetQueryIterator * getQuerySetQueriesSorted(WUQuerySortField *sortorder, WUQuerySortField *filters, const void *filterbuf,
+        unsigned startoffset, unsigned maxnum, __int64 *cachehint, unsigned *total, const MapStringTo<bool> *subset, const MapStringTo<bool> *suspendedByCluster) = 0;
     virtual bool isAborting(const char *wuid) const = 0;
     virtual void clearAborting(const char *wuid) = 0;
-    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, bool returnOnWaitState) = 0;
+    virtual WUState waitForWorkUnit(const char * wuid, unsigned timeout, bool compiled, std::list<WUState> expectedStates) = 0;
     virtual WUAction waitForWorkUnitAction(const char * wuid, WUAction original) = 0;
 
     virtual unsigned validateRepository(bool fixErrors) = 0;
@@ -1524,7 +1550,7 @@ interface IExtendedWUInterface
     virtual bool archiveWorkUnit(const char *base,bool del,bool ignoredllerrors,bool deleteOwned,bool exportAssociatedFiles) = 0;
     virtual IPropertyTree *getUnpackedTree(bool includeProgress) const = 0;
     virtual IPropertyTree *queryPTree() const = 0;
-    
+
 };
 
 //Do not mark this as WORKUNIT_API - all functions are inline, and it causes windows link errors
@@ -1552,30 +1578,6 @@ protected:
 
 typedef IWorkUnitFactory * (* WorkUnitFactoryFactory)(const IPropertyTree *);
 
-extern WORKUNIT_API void getDFUServerQueueNames(StringArray &ret, const char *process);
-extern WORKUNIT_API IStringVal &getEclCCServerQueueNames(IStringVal &ret, const char *process);
-extern WORKUNIT_API IStringVal &getEclServerQueueNames(IStringVal &ret, const char *process);
-extern WORKUNIT_API IStringVal &getEclSchedulerQueueNames(IStringVal &ret, const char *process);
-extern WORKUNIT_API IStringVal &getAgentQueueNames(IStringVal &ret, const char *process);
-extern WORKUNIT_API IStringVal &getRoxieQueueNames(IStringVal &ret, const char *process);
-extern WORKUNIT_API IStringVal &getThorQueueNames(IStringVal &ret, const char *process);
-extern WORKUNIT_API ClusterType getClusterTypeByClusterName(const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterGroupName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterThorQueueName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterThorGroupName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterRoxieQueueName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterEclCCServerQueueName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterEclServerQueueName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API StringBuffer &getClusterEclAgentQueueName(StringBuffer &ret, const char *cluster);
-extern WORKUNIT_API IStringIterator *getTargetClusters(const char *processType, const char *processName);
-extern WORKUNIT_API bool validateTargetClusterName(const char *clustname);
-extern WORKUNIT_API IConstWUClusterInfo* getTargetClusterInfo(const char *clustname);
-typedef IArrayOf<IConstWUClusterInfo> CConstWUClusterInfoArray;
-extern WORKUNIT_API unsigned getEnvironmentClusterInfo(CConstWUClusterInfoArray &clusters);
-extern WORKUNIT_API unsigned getEnvironmentClusterInfo(IPropertyTree* environmentRoot, CConstWUClusterInfoArray &clusters);
-extern WORKUNIT_API void getRoxieProcessServers(const char *process, SocketEndpointArray &servers);
-extern WORKUNIT_API bool isProcessCluster(const char *remoteDali, const char *process);
-extern WORKUNIT_API bool isProcessCluster(const char *process);
 extern WORKUNIT_API IStatisticGatherer * createGlobalStatisticGatherer(IWorkUnit * wu);
 extern WORKUNIT_API WUGraphType getGraphTypeFromString(const char* type);
 
@@ -1583,8 +1585,6 @@ extern WORKUNIT_API bool getWorkUnitCreateTime(const char *wuid,CDateTime &time)
 extern WORKUNIT_API void clientShutdownWorkUnit();
 extern WORKUNIT_API IExtendedWUInterface * queryExtendedWU(IConstWorkUnit * wu);
 extern WORKUNIT_API const IExtendedWUInterface * queryExtendedWU(const IConstWorkUnit * wu);
-extern WORKUNIT_API unsigned getEnvironmentThorClusterNames(StringArray &thorNames, StringArray &groupNames, StringArray &targetNames, StringArray &queueNames);
-extern WORKUNIT_API unsigned getEnvironmentHThorClusterNames(StringArray &eclAgentNames, StringArray &groupNames, StringArray &targetNames);
 extern WORKUNIT_API StringBuffer &formatGraphTimerLabel(StringBuffer &str, const char *graphName, unsigned subGraphNum=0, unsigned __int64 subId=0);
 extern WORKUNIT_API StringBuffer &formatGraphTimerScope(StringBuffer &str, unsigned wfid, const char *graphName, unsigned subGraphNum, unsigned __int64 subId);
 extern WORKUNIT_API bool parseGraphTimerLabel(const char *label, StringAttr &graphName, unsigned & graphNum, unsigned &subGraphNum, unsigned &subId);
@@ -1625,9 +1625,9 @@ inline bool isWorkunitDAToken(const char * distributedAccessToken)
 }
 
 //returns a state code.  WUStateUnknown == timeout
-extern WORKUNIT_API WUState waitForWorkUnitToComplete(const char * wuid, int timeout = -1, bool returnOnWaitState = false);
+extern WORKUNIT_API WUState waitForWorkUnitToComplete(const char * wuid, int timeout = -1, std::list<WUState> expectedStates = {});
 extern WORKUNIT_API bool waitForWorkUnitToCompile(const char * wuid, int timeout = -1);
-extern WORKUNIT_API WUState secWaitForWorkUnitToComplete(const char * wuid, ISecManager &secmgr, ISecUser &secuser, int timeout = -1, bool returnOnWaitState = false);
+extern WORKUNIT_API WUState secWaitForWorkUnitToComplete(const char * wuid, ISecManager &secmgr, ISecUser &secuser, int timeout = -1, std::list<WUState> expectedStates = {});
 extern WORKUNIT_API bool secWaitForWorkUnitToCompile(const char * wuid, ISecManager &secmgr, ISecUser &secuser, int timeout = -1);
 extern WORKUNIT_API bool secDebugWorkunit(const char * wuid, ISecManager &secmgr, ISecUser &secuser, const char *command, StringBuffer &response);
 extern WORKUNIT_API WUState getWorkUnitState(const char* state);
@@ -1701,6 +1701,7 @@ extern WORKUNIT_API void updateWorkunitStat(IWorkUnit * wu, StatisticScopeType s
 extern WORKUNIT_API void updateWorkunitTimings(IWorkUnit * wu, ITimeReporter *timer);
 extern WORKUNIT_API void updateWorkunitTimings(IWorkUnit * wu, StatisticScopeType scopeType, StatisticKind kind, ITimeReporter *timer);
 extern WORKUNIT_API void aggregateStatistic(StatsAggregation & result, IConstWorkUnit * wu, const WuScopeFilter & filter, StatisticKind search);
+extern WORKUNIT_API cost_type aggregateCost(const IConstWorkUnit * wu, const char *scope=nullptr, bool excludehThor=false);
 
 extern WORKUNIT_API const char *getTargetClusterComponentName(const char *clustname, const char *processType, StringBuffer &name);
 extern WORKUNIT_API void descheduleWorkunit(char const * wuid);
@@ -1713,6 +1714,8 @@ extern WORKUNIT_API const char * getWorkunitActionStr(WUAction action);
 extern WORKUNIT_API WUAction getWorkunitAction(const char * actionStr);
 
 extern WORKUNIT_API void addTimeStamp(IWorkUnit * wu, StatisticScopeType scopeType, const char * scope, StatisticKind kind, unsigned wfid=0);
+extern WORKUNIT_API cost_type calculateThorCost(unsigned __int64 ms, unsigned clusterWidth);
+
 extern WORKUNIT_API IPropertyTree * getWUGraphProgress(const char * wuid, bool readonly);
 
 class WORKUNIT_API WorkUnitErrorReceiver : implements IErrorReceiver, public CInterface
@@ -1739,5 +1742,20 @@ inline bool isGlobalScope(const char * scope) { return scope && (streq(scope, GL
 
 extern WORKUNIT_API bool isValidPriorityValue(const char * priority);
 extern WORKUNIT_API bool isValidMemoryValue(const char * memoryUnit);
+
+inline cost_type calcCost(cost_type ratePerHour, unsigned __int64 ms) { return ratePerHour * ms / 1000 / 3600; }
+
+extern WORKUNIT_API void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IPropertyTree &config);
+
+#ifdef _CONTAINERIZED
+enum class KeepK8sJobs { none, podfailures, all };
+extern WORKUNIT_API KeepK8sJobs translateKeepJobs(const char *keepJobs);
+
+extern WORKUNIT_API bool executeGraphOnLingeringThor(IConstWorkUnit &workunit, const char *graphName, const char *multiJobLingerQueueName);
+extern WORKUNIT_API void deleteK8sResource(const char *componentName, const char *job, const char *resource);
+extern WORKUNIT_API void waitK8sJob(const char *componentName, const char *job, unsigned pendingTimeoutSecs, KeepK8sJobs keepJob);
+extern WORKUNIT_API bool applyK8sYaml(const char *componentName, const char *wuid, const char *job, const char *suffix, const std::list<std::pair<std::string, std::string>> &extraParams, bool optional);
+extern WORKUNIT_API void runK8sJob(const char *componentName, const char *wuid, const char *job, const std::list<std::pair<std::string, std::string>> &extraParams={});
+#endif
 
 #endif

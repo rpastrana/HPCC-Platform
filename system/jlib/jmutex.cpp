@@ -15,7 +15,6 @@
     limitations under the License.
 ############################################################################## */
 
-
 #include "platform.h"
 #include "jmutex.hpp"
 #include "jsuperhash.hpp"
@@ -210,7 +209,7 @@ NamedMutex::NamedMutex(const char *name)
         if (0 == lockPrefix.length())
         {
             if (!getConfigurationDirectory(NULL, "lock", NULL, NULL, lockPrefix))
-                throw MakeStringException(0, "Failed to get lock directory from environment");
+                WARNLOG("Failed to get lock directory from environment");
         }
         addPathSepChar(lockPrefix);
         lockPrefix.append("JLIBMUTEX_");

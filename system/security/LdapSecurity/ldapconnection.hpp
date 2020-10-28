@@ -88,6 +88,9 @@ ldap_compare_ext_s LDAP_P((
 #endif
 #define DEFAULT_LDAP_POOL_SIZE 10
 
+#define AAD_ADMINISTRATORS_GROUP "AAD DC Administrators"
+#define AAD_USERS_GROUPS_OU      "AADDC Users"
+
 // 1 for ActiveDirectory, 2 for iPlanet, 3 for openLdap
 enum LdapServerType
 {
@@ -188,7 +191,7 @@ interface ILdapConfig : extends IInterface
     virtual const char * getCfgServerType() const = 0;
     virtual StringBuffer& getLdapHost(StringBuffer& hostbuf) = 0;
     virtual int getHostCount() = 0;
-    virtual void blacklistHost(const char * host) = 0;
+    virtual void rejectHost(const char * host) = 0;
     virtual void markDown(const char* ldaphost) = 0;
     virtual int getLdapPort() = 0;
     virtual int getLdapSecurePort() = 0;
@@ -209,6 +212,7 @@ interface ILdapConfig : extends IInterface
     virtual int getMaxConnections() = 0;
     virtual void setResourceBasedn(const char* rbasedn, SecResourceType rtype = RT_DEFAULT) = 0;
     virtual int getLdapTimeout() = 0;
+    virtual bool isAzureAD() = 0;
 };
 
 

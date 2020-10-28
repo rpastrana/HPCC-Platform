@@ -214,7 +214,7 @@ void XmlDatasetColumnProvider::getUtf8X(size32_t & len, char * & target, const c
     const char * value = row->queryProp(path);
     size32_t size = value ? (size32_t)strlen(value) : 0;
     target = (char *)malloc(size);
-    memcpy(target, value, size);
+    memcpy_iflen(target, value, size);
     len = rtlUtf8Length(size, target);
 }
 
@@ -359,7 +359,9 @@ __uint64 XmlSetColumnProvider::getUInt(const char * name)
 #ifdef _DEBUG
     assertex(stricmp(name, "value")==0);
 #endif
-    return readUInt(name, 0);
+    //MORE: Note nullptr is passed in all of these XmlSetColumnProvider::get functions
+    //The code generator incorrectly generates "value" as the name to read.  Really it should be fixed there.
+    return readUInt(nullptr, 0);
 }
 
 void XmlSetColumnProvider::getData(size32_t len, void * target, const char * name)
@@ -453,7 +455,7 @@ void XmlSetColumnProvider::getStringX(size32_t & len, char * & target, const cha
     const char * value = row->queryProp(NULL);
     len = value ? (size32_t)strlen(value) : 0;
     target = (char *)malloc(len);
-    memcpy(target, value, len);
+    memcpy_iflen(target, value, len);
     //MORE: utf8->ascii?
 }
 
@@ -480,7 +482,7 @@ void XmlSetColumnProvider::getUtf8X(size32_t & len, char * & target, const char 
     const char * value = row->queryProp(NULL);
     size32_t size = value ? (size32_t)strlen(value) : 0;
     target = (char *)malloc(size);
-    memcpy(target, value, size);
+    memcpy_iflen(target, value, size);
     len = rtlUtf8Length(size, value);
 }
 
@@ -1717,7 +1719,7 @@ class CXMLParse : implements IXMLParse, public CInterface
         CXPath &queryXPath() { return xpath; }
 
 // IPTreeMaker
-        virtual void beginNode(const char *tag, offset_t startOffset)
+        virtual void beginNode(const char *tag, bool arrayitem, offset_t startOffset)
         {
             if (lastMatchKeptNode && level == lastMatchKeptLevel)
             {
@@ -1785,7 +1787,7 @@ class CXMLParse : implements IXMLParse, public CInterface
             stack.append(*stackInfo);
             if (res)
             {
-                maker->beginNode(tag, startOffset);
+                maker->beginNode(tag, false, startOffset);
                 CPTreeWithOffsets *current = (CPTreeWithOffsets *)maker->queryCurrentNode();
                 current->startOffset = startOffset;
                 stackInfo->nodeMade = res;
@@ -2010,10 +2012,10 @@ class CXMLParse : implements IXMLParse, public CInterface
             return false;
         }
 
-        virtual void beginNode(const char *tag, offset_t startOffset)
+        virtual void beginNode(const char *tag, bool arrayitem, offset_t startOffset) override
         {
             if (!checkSkipRoot(tag))
-                CMakerBase::beginNode(tag, startOffset);
+                CMakerBase::beginNode(tag, arrayitem, startOffset);
         }
         virtual void newAttribute(const char *tag, const char *value)
         {

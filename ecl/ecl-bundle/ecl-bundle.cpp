@@ -195,7 +195,7 @@ void recursiveRemoveDirectory(IFile *dir, bool isDryRun)
     ForEach(*files)
     {
         IFile *thisFile = &files->query();
-        if (thisFile->isDirectory()==foundYes)
+        if (thisFile->isDirectory()==fileBool::foundYes)
             recursiveRemoveDirectory(thisFile, isDryRun);
         else
         {
@@ -212,11 +212,6 @@ void recursiveRemoveDirectory(IFile *dir, bool isDryRun)
         printf("rmdir %s\n", dir->queryFilename());
     if (!isDryRun)
         dir->remove();
-}
-
-static bool isUrl(const char *str)
-{
-    return strstr(str, ":/") != NULL;
 }
 
 //--------------------------------------------------------------------------------------------------------------
@@ -383,10 +378,13 @@ public:
                 splitFilename(cleanedParam, &path, &path, &bundleName, NULL, true);
                 if (!path.length())
                     path.append(".");
-                if (bundleFile->isDirectory() && !directoryContainsBundleFile(bundleFile))
-                    includeOpt.appendf(" -I%s", bundle);
+                if (bundleFile->isDirectory()==fileBool::foundYes && !directoryContainsBundleFile(bundleFile))
+                    includeOpt.appendf(" \"-I%s\"", cleanedParam.str());
                 else
-                    includeOpt.appendf(" -I%s", path.str());
+                {
+                    removeTrailingPathSepChar(path);  // Trailing \ does not play nice with quotes in Windows
+                    includeOpt.appendf(" \"-I%s\"", path.str());
+                }
             }
             else
                 throw MakeStringException(0, "File not found");
@@ -846,7 +844,7 @@ private:
             {
                 IFile &f = versions->query();
                 const char *vname = f.queryFilename();
-                if (f.isDirectory() && vname && vname[0] != '.')
+                if (f.isDirectory()==fileBool::foundYes && vname && vname[0] != '.')
                 {
                     if (!streq(activeBundlePath, vname))
                     {
@@ -882,7 +880,7 @@ public:
         Owned<IFile> bundleDir = createIFile(bundlePath);
         if (bundleDir->exists())
         {
-            if (!bundleDir->isDirectory())
+            if (bundleDir->isDirectory()!=fileBool::foundYes)
                 throw MakeStringException(0, "Bundle path %s does not specify a directory", bundlePath.get());
             StringBuffer versionsPath(bundlePath);
             addPathSepChar(versionsPath).append(VERSION_SUBDIR);
@@ -892,7 +890,7 @@ public:
             {
                 IFile &f = versions->query();
                 const char *name = f.queryFilename();
-                if (f.isDirectory() && name && name[0] != '.')
+                if (f.isDirectory()==fileBool::foundYes && name && name[0] != '.')
                 {
                     if (filter)
                     {
@@ -1029,6 +1027,8 @@ protected:
         unsigned retCode = doPipeCommand(output, queryEclccPath(optVerbose), "--nologfile -showpaths", NULL);
         if (retCode == START_FAILURE)
             throw makeStringExceptionV(0, "FATAL: Could not locate eclcc command");
+        if (optVerbose)
+            printf("eclcc output:\n%s\n", output.str());
         extractValueFromEnvOutput(bundlePath, output, ECLCC_ECLBUNDLE_PATH);
         extractValueFromEnvOutput(hooksPath, output, HPCC_FILEHOOKS_PATH);
     }
@@ -1108,7 +1108,8 @@ protected:
                 fetchedLocation.append(tmp).append(PATHSEPCHAR);
                 splitFilename(url, NULL, NULL, &fetchedLocation, NULL);
                 StringBuffer output;
-                VStringBuffer params("clone --depth=1 %s %s", url, fetchedLocation.str());
+                removeTrailingPathSepChar(fetchedLocation);
+                VStringBuffer params("clone --depth=1 %s \"%s\"", url, fetchedLocation.str());
                 if (optBranch)
                     params.appendf(" -b %s", optBranch.str());
                 unsigned retCode = doPipeCommand(output, "git", params, NULL);
@@ -1427,7 +1428,7 @@ public:
             versionPath.append(PATHSEPCHAR).append(bundle->queryCleanVersion());
             if (!optDryRun && !recursiveCreateDirectory(versionPath))
                 throw MakeStringException(0, "Cannot create bundle version directory %s", versionPath.str());
-            if (bundleFile->isDirectory() == foundYes) // could also be an archive, acting as a directory
+            if (bundleFile->isDirectory() == fileBool::foundYes) // could also be an archive, acting as a directory
             {
                 if (directoryContainsBundleFile(bundleFile))
                 {
@@ -1495,7 +1496,7 @@ private:
             StringBuffer destname(destdir);
             destname.append(PATHSEPCHAR).append(tail);
             Owned<IFile> targetFile = createIFile(destname);
-            if (thisFile->isDirectory()==foundYes)
+            if (thisFile->isDirectory()==fileBool::foundYes)
             {
                 if (strcmp(tail, ".git")==0)
                     continue;

@@ -22,7 +22,6 @@
 #include "ftbase.ipp"
 #include "daftmc.hpp"
 #include "daftformat.hpp"
-#include "rmtpass.hpp"
 #include "jptree.hpp"
 
 
@@ -390,7 +389,7 @@ public:
         noPath = !pathNodes.length();
         reader.setown(createPullJSONStreamReader(stream, *this, ptr_noRoot));
     }
-    virtual void beginNode(const char *tag, offset_t startOffset)
+    virtual void beginNode(const char *tag, bool arrayitem, offset_t startOffset)
     {
         if (tangent)
         {
@@ -724,7 +723,6 @@ protected:
     virtual bool isAborting() { UNIMPLEMENTED; };
 
 protected:
-    CachedPasswordProvider      passwordProvider;
     SocketEndpoint              ep;
     FileFormat                  srcFormat;
     FileFormat                  tgtFormat;

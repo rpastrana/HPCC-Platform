@@ -21,6 +21,9 @@ GENERATE_BASH(processor ${bash-vars} "install-init.in" outFiles)
 GENERATE_BASH(processor ${bash-vars} "hpcc-init.in" outFiles)
 GENERATE_BASH(processor ${bash-vars} "hpcc_common.in" outFiles)
 GENERATE_BASH(processor ${bash-vars} "uninstall-init.in" outFiles)
+GENERATE_BASH(processor ${bash-vars} "setupPKI.in" outFiles)
+GENERATE_BASH(processor ${bash-vars} "distributePKI.in" outFiles)
+GENERATE_BASH(processor ${bash-vars} "safe_copyPKI.in" outFiles)
 
 ADD_CUSTOM_TARGET(ProcessFiles-initfiles-bash-etc-init.d ALL DEPENDS ${outFiles})
 FOREACH( oFILES
@@ -37,3 +40,4 @@ if ( PLATFORM )
     install ( PROGRAMS hpcc-init.install DESTINATION etc/init.d/install COMPONENT Runtime )
     install ( PROGRAMS hpcc-init.uninstall DESTINATION etc/init.d/uninstall COMPONENT Runtime )
 endif()
+

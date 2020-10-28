@@ -76,9 +76,9 @@ enum JSOCKET_ERROR_CODES {
 //
 class jlib_decl IpAddress
 {
-    unsigned netaddr[4];
+    unsigned netaddr[4] = { 0, 0, 0, 0 };
 public:
-    IpAddress()                                         { ipset(NULL); }
+    IpAddress() = default;
     IpAddress(const IpAddress& other)                   { ipset(other); }
     explicit IpAddress(const char *text)                { ipset(text); }
     
@@ -140,11 +140,11 @@ extern jlib_decl IpAddress &localHostToNIC(IpAddress &ip);
 class jlib_decl SocketEndpoint : extends IpAddress
 {
 public:
-    SocketEndpoint()                                            { set(NULL,0); };
+    SocketEndpoint() = default;
     SocketEndpoint(const char *name,unsigned short _port=0)     { set(name,_port); };
     SocketEndpoint(unsigned short _port)                        { setLocalHost(_port); };
     SocketEndpoint(unsigned short _port, const IpAddress & _ip) { set(_port,_ip); };          
-    SocketEndpoint(const SocketEndpoint &other) : IpAddress(other) { port = other.port; }
+    SocketEndpoint(const SocketEndpoint &other) = default;
 
     void deserialize(MemoryBuffer & in);
     void serialize(MemoryBuffer & out) const;
@@ -168,14 +168,16 @@ public:
 
     unsigned hash(unsigned prev) const;
     
-    unsigned short port;
-
+    unsigned short port = 0;
+    // Ensure that all the bytes in the data structure are initialised to avoid complains from valgrind when it is written to a socket
+    unsigned short portPadding = 0;
 };
 
 class jlib_decl SocketEndpointArray : public StructArrayOf<SocketEndpoint>
 { 
 public:
     StringBuffer &getText(StringBuffer &text);
+    bool fromName(const char *name, unsigned defport);
     void fromText(const char *s,unsigned defport);
 };
 
@@ -644,22 +646,22 @@ extern jlib_decl bool isIPV4(const char *ip);
 extern jlib_decl bool isIPV6(const char *ip);
 extern jlib_decl bool isIPAddress(const char *ip);
 
-interface IWhiteListHandler : extends IInterface
+interface IAllowListHandler : extends IInterface
 {
-    virtual bool isWhiteListed(const char *ip, unsigned __int64 role, StringBuffer *responseText=nullptr) const = 0;
-    virtual StringBuffer &getWhiteList(StringBuffer &out) const = 0;
+    virtual bool isAllowListed(const char *ip, unsigned __int64 role, StringBuffer *responseText=nullptr) const = 0;
+    virtual StringBuffer &getAllowList(StringBuffer &out) const = 0;
     virtual void refresh() = 0;
 };
 
-interface IWhiteListWriter : extends IInterface
+interface IAllowListWriter : extends IInterface
 {
     virtual void add(const char *ip, unsigned __int64 role) = 0;
     virtual void setAllowAnonRoles(bool tf) = 0;
 };
 
-typedef std::function<bool(IWhiteListWriter &)> WhiteListPopulateFunction;
-typedef std::function<StringBuffer &(StringBuffer &, unsigned __int64)> WhiteListFormatFunction;
-extern jlib_decl IWhiteListHandler *createWhiteListHandler(WhiteListPopulateFunction populateFunc, WhiteListFormatFunction roleFormatFunc = {}); // format function optional
+typedef std::function<bool(IAllowListWriter &)> AllowListPopulateFunction;
+typedef std::function<StringBuffer &(StringBuffer &, unsigned __int64)> AllowListFormatFunction;
+extern jlib_decl IAllowListHandler *createAllowListHandler(AllowListPopulateFunction populateFunc, AllowListFormatFunction roleFormatFunc = {}); // format function optional
 
 #endif
 

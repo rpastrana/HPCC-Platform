@@ -26,7 +26,6 @@ project( agentexec )
 
 set (    SRCS 
          agentexec.cpp 
-         agentexec.hpp 
     )
 
 include_directories ( 
@@ -34,10 +33,12 @@ include_directories (
          ./../../system/include 
          ./../../system/jlib 
          ./../../dali/remote 
+         ./../../common/environment
          ./../../common/workunit 
          ./../../system/mp 
          ./../../dali/base
          ./../../system/security/shared
+         ./../eclagent
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )
@@ -48,5 +49,6 @@ target_link_libraries ( agentexec
          jlib 
          dalibase 
          eclrtl 
+         environment
          workunit
     )

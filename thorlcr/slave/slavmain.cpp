@@ -48,7 +48,7 @@
 #include "thgraphslave.hpp"
 #include "slave.ipp"
 #include "thcompressutil.hpp"
-#include "dalienv.hpp"
+#include "environment.hpp"
 #include "eclhelper_dyn.hpp"
 #include "rtlcommon.hpp"
 #include "../activities/keyedjoin/thkeyedjoincommon.hpp"
@@ -62,7 +62,7 @@ void enableThorSlaveAsDaliClient()
 {
 #ifdef ISDALICLIENT
     PROGLOG("Slave activated as a Dali client");
-    const char *daliServers = globals->queryProp("@DALISERVERS");
+    const char *daliServers = globals->queryProp("@daliServers");
     if (!daliServers)
         throw MakeStringException(0, "No Dali server list specified");
     Owned<IGroup> serverGroup = createIGroup(daliServers, DALI_SERVER_PORT);
@@ -87,7 +87,6 @@ void enableThorSlaveAsDaliClient()
             Sleep(retry*2000);
         }
     }
-    setPasswordsFromSDS();
 #endif
 }
 
@@ -351,7 +350,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 if (RecordTranslationMode::AlwaysDisk == translationMode)
                     translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), publishedFormat->queryRecordAccessor(true)));
                 else if (RecordTranslationMode::AlwaysECL == translationMode)
+                {
+                    if (publishedFormatCrc && publishedFormatCrc != expectedFormatCrc)
+                        DBGLOG("Overriding stored record layout reading file %s", tracing);
                     translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), expectedFormat->queryRecordAccessor(true)));
+                }
                 else if (publishedFormatCrc && publishedFormatCrc != expectedFormatCrc)
                 {
                     if (!projectedFormat)
@@ -454,6 +457,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         Linked<CKeyLookupContext> ctx;
         Owned<IKeyManager> keyManager;
         unsigned handle = 0;
+        Owned<IHThorKeyedJoinArg> helper;
     public:
         CKMContainer(CKJService &_service, CKeyLookupContext *_ctx)
             : service(_service), ctx(_ctx)
@@ -464,6 +468,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             if (translator)
                 keyManager->setLayoutTranslator(translator);
             handle = service.getUniqId();
+            helper.set(ctx->queryHelper());
         }
         ~CKMContainer()
         {
@@ -472,6 +477,14 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CKeyLookupContext &queryCtx() const { return *ctx; }
         IKeyManager *queryKeyManager() const { return keyManager; }
         unsigned queryHandle() const { return handle; }
+        void setContexts(MemoryBuffer &parentCtxMb, MemoryBuffer &startCtxMb, MemoryBuffer &createCtxMb)
+        {
+            // Only create a new helper, if either parent or start are present, in which case onStart evaluation may vary.
+            if (parentCtxMb.length() || startCtxMb.length())
+                helper.setown(service.createHelper(*service.currentJob, ctx->queryKey().id, createCtxMb));
+            helper->onStart((const byte *)parentCtxMb.toByteArray(), startCtxMb.length() ? &startCtxMb : nullptr);
+        }
+        inline IHThorKeyedJoinArg *queryHelper() const { return helper; }
     };
     template<class KEY, class ITEM>
     class CKeyedCacheEntry : public CInterface
@@ -505,7 +518,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     {
     protected:
         Linked<CActivityContext> activityCtx;
-        IHThorKeyedJoinArg *helper;
         std::vector<const void *> rows;
         rank_t sender;
         mptag_t replyTag;
@@ -516,7 +528,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CLookupRequest(CActivityContext *_activityCtx, rank_t _sender, mptag_t _replyTag)
             : activityCtx(_activityCtx), sender(_sender), replyTag(_replyTag)
         {
-            helper = activityCtx->queryHelper();
         }
         ~CLookupRequest()
         {
@@ -654,6 +665,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     };
     class CKeyLookupRequest : public CLookupRequest
     {
+        IHThorKeyedJoinArg *helper = nullptr;
         Linked<CKMContainer> kmc;
 
         rowcount_t abortLimit = 0;
@@ -719,6 +731,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CKeyLookupRequest(CKJService &_service, CKeyLookupContext *_ctx, CKMContainer *_kmc, rank_t _sender, mptag_t _replyTag)
             : CLookupRequest(_ctx->queryActivityCtx(), _sender, _replyTag), kmc(_kmc)
         {
+            helper = kmc->queryHelper();
             allocator = activityCtx->queryLookupInputAllocator();
             deserializer = activityCtx->queryLookupInputDeserializer();
             joinFieldsAllocator = activityCtx->queryJoinFieldsAllocator();
@@ -752,6 +765,9 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 unsigned rowCount = getRowCount();
                 unsigned rowNum = 0;
                 unsigned rowStart = 0;
+                unsigned __int64 startSeeks = kmc->queryKeyManager()->querySeeks();
+                unsigned __int64 startScans = kmc->queryKeyManager()->queryScans();
+                unsigned __int64 startWildSeeks = kmc->queryKeyManager()->queryWildSeeks();
                 while (!abortSoon)
                 {
                     OwnedConstThorRow row = getRowClear(rowNum++);
@@ -761,6 +777,9 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     if (last || (replyMb.length() >= DEFAULT_KEYLOOKUP_MAXREPLYSZ))
                     {
                         countMarker.write(rowNum-rowStart);
+                        replyMb.append(kmc->queryKeyManager()->querySeeks()-startSeeks);
+                        replyMb.append(kmc->queryKeyManager()->queryScans()-startScans);
+                        replyMb.append(kmc->queryKeyManager()->queryWildSeeks()-startWildSeeks);
                         if (activityCtx->useMessageCompression())
                         {
                             fastLZCompressToBuffer(replyMsg, tmpMB.length(), tmpMB.toByteArray());
@@ -818,6 +837,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     };
     class CFetchLookupRequest : public CLookupRequest
     {
+        IHThorKeyedJoinArg *helper = nullptr;
         Linked<CFetchContext> fetchContext;
         const unsigned defaultMaxFetchLookupReplySz = 0x100000;
         const IDynamicTransform *translator = nullptr;
@@ -847,7 +867,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 MemoryBufferBuilder aBuilder(diskFetchRowMb, 0);
                 LocalVirtualFieldCallback fieldCallback("<MORE>", requestHeader.fpos, 0);
                 translator->translate(aBuilder, fieldCallback, diskFetchRow);
-                diskFetchRow = reinterpret_cast<const byte *>(diskFetchRowMb.toByteArray());
+                diskFetchRow = aBuilder.getSelf();
             }
             size32_t fetchReplySz = sizeof(FetchReplyHeader);
             if (helper->fetchMatch(fetchKey, diskFetchRow))
@@ -877,6 +897,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             StringBuffer tracing;
             translator = fetchContext->queryTranslator(fetchContext->queryKey().getTracing(tracing));
             prefetcher = fetchContext->queryPrefetcher();
+            helper = queryCtx().queryHelper();
         }
         virtual void process(bool &abortSoon) override
         {
@@ -977,7 +998,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     CriticalSection kMCrit, lCCrit;
     Owned<IThreadPool> processorPool;
 
-    CActivityContext *createActivityContext(CJobBase &job, activity_id id, MemoryBuffer &createCtxMb)
+    IHThorKeyedJoinArg *createHelper(CJobBase &job, activity_id id, MemoryBuffer &createCtxMb)
     {
         VStringBuffer helperName("fAc%u", (unsigned)id);
         EclHelperFactory helperFactory = (EclHelperFactory) job.queryDllEntry().getEntry(helperName.str());
@@ -987,7 +1008,13 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         ICodeContext &codeCtx = job.queryJobChannel(0).querySharedMemCodeContext();
         Owned<IHThorKeyedJoinArg> helper = static_cast<IHThorKeyedJoinArg *>(helperFactory());
         helper->onCreate(&codeCtx, nullptr, &createCtxMb); // JCS->GH - will I ever need colocalParent here?
-        return new CActivityContext(*this, id, helper.getClear(), &codeCtx);
+        return helper.getClear();
+    }
+    CActivityContext *createActivityContext(CJobBase &job, activity_id id, MemoryBuffer &createCtxMb)
+    {
+        IHThorKeyedJoinArg *helper = createHelper(job, id, createCtxMb);
+        ICodeContext &codeCtx = job.queryJobChannel(0).querySharedMemCodeContext();
+        return new CActivityContext(*this, id, helper, &codeCtx);
     }
     CActivityContext *ensureActivityContext(CJobBase &job, activity_id id, MemoryBuffer &createCtxMb)
     {
@@ -1290,6 +1317,16 @@ public:
                         MemoryBuffer createCtxMb;
                         createCtxMb.setBuffer(createCtxSz, (void *)msg.readDirect(createCtxSz)); // NB: read only
 
+                        size32_t parentCtxSz;
+                        msg.read(parentCtxSz);
+                        MemoryBuffer parentCtxMb;
+                        parentCtxMb.setBuffer(parentCtxSz, (void *)msg.readDirect(parentCtxSz)); // NB: read only
+
+                        size32_t startCtxSz;
+                        msg.read(startCtxSz);
+                        MemoryBuffer startCtxMb;
+                        startCtxMb.setBuffer(startCtxSz, (void *)msg.readDirect(startCtxSz)); // NB: read only
+
                         bool created;
                         Owned<CKeyLookupContext> keyLookupContext = ensureKeyLookupContext(*currentJob, key, createCtxMb, &created); // ensure entry in keyLookupContextsHT, will be removed by last CKMContainer
                         bool messageCompression;
@@ -1313,6 +1350,7 @@ public:
                                 keyLookupContext->setTranslation(translationMode, publishedFormat, publishedFormatCrc, projectedFormat);
                         }
                         Owned<CKMContainer> kmc = createActiveKeyManager(keyLookupContext); // owns keyLookupContext
+                        kmc->setContexts(parentCtxMb, startCtxMb, createCtxMb);
                         processKeyLookupRequest(msg, kmc, sender, replyTag);
                         break;
                     }
@@ -1520,11 +1558,11 @@ public:
     }
     virtual void reset() override
     {
-        DBGLOG("KJService reset()");
+        LOG(MCthorDetailedDebugInfo, thorJob, "KJService reset()");
         processorPool->stopAll(true);
         processorPool->joinAll(false);
         clearAll();
-        DBGLOG("KJService reset() done");
+        LOG(MCthorDetailedDebugInfo, thorJob, "KJService reset() done");
     }
     virtual void start() override
     {
@@ -1535,7 +1573,7 @@ public:
     {
         if (aborted)
             return;
-        PROGLOG("KJService stop()");
+        LOG(MCthorDetailedDebugInfo, thorJob, "KJService stop()");
         queryNodeComm().cancel(RANK_ALL, keyLookupMpTag);
         processorPool->stopAll(true);
         processorPool->joinAll(true);
@@ -1633,7 +1671,7 @@ public:
         for (unsigned sc=1; sc<channelsPerSlave; sc++)
         {
             unsigned port = getMachinePortBase() + (sc * localThorPortInc);
-            IMPServer *mpServer = startNewMPServer(port);
+            IMPServer *mpServer = startNewMPServer(port, true);
             if (reconnect)
                 mpServer->setOpt(mpsopt_channelreopen, "true");
             mpServers.append(*mpServer);
@@ -1641,16 +1679,25 @@ public:
     }
     ~CJobListener()
     {
-        for (unsigned sc=1; sc<channelsPerSlave; sc++)
-            mpServers.item(sc).stop();
-        mpServers.kill();
-        stop();
+        try
+        {
+            for (unsigned sc=1; sc<channelsPerSlave; sc++)
+                mpServers.item(sc).stop();
+            mpServers.kill();
+            stop();
+        }
+        catch (IException *e)
+        {
+            e->Release();
+        }
+        // do we ignore other exceptions (...) here ?
+        // if so, we may have std::terminate call abort() ...
     }
     void stop()
     {
         queryNodeComm().cancel(0, masterSlaveMpTag);
     }
-    virtual void slaveMain()
+    void slaveMain(ILogMsgHandler *logHandler)
     {
         rank_t slaveProc = queryNodeGroup().rank()-1;
         unsigned totSlaveProcs = queryNodeClusterWidth();
@@ -1816,7 +1863,12 @@ public:
                         StringBuffer user;
                         workUnitInfo->getProp("user", user);
 
-                        PROGLOG("Started wuid=%s, user=%s, graph=%s\n", wuid.get(), user.str(), graphName.get());
+                        unsigned maxLogDetail = workUnitInfo->getPropInt("Debug/maxlogdetail", DefaultDetail);
+                        ILogMsgFilter *existingLogHandler = queryLogMsgManager()->queryMonitorFilter(logHandler);
+                        dbgassertex(existingLogHandler);
+                        verifyex(queryLogMsgManager()->changeMonitorFilterOwn(logHandler, getCategoryLogMsgFilter(existingLogHandler->queryAudienceMask(), existingLogHandler->queryClassMask(), maxLogDetail)));
+
+                        PROGLOG("Started wuid=%s, user=%s, graph=%s [log detail level=%u]\n", wuid.get(), user.str(), graphName.get(), maxLogDetail);
                         PROGLOG("Using query: %s", soPath.str());
 
                         if (!globals->getPropBool("Debug/@slaveDaliClient") && workUnitInfo->getPropBool("Debug/slavedaliclient", false))
@@ -1830,7 +1882,10 @@ public:
                         Owned<CJobSlave> job = new CJobSlave(watchdog, workUnitInfo, graphName, querySo, slaveMsgTag);
                         job->setXGMML(deps);
                         for (unsigned sc=0; sc<channelsPerSlave; sc++)
-                            job->addChannel(&mpServers.item(sc));
+                        {
+                            CJobChannel *channel = job->addChannel(&mpServers.item(sc));
+                            channel->reservePortKind(TPORT_mp);
+                        }
                         jobs.replace(*job.getLink());
                         job->startJob();
 
@@ -1863,6 +1918,10 @@ public:
                         }
                         jobs.removeExact(job);
                         PROGLOG("QueryDone, removed %s from jobs", key.get());
+
+                        // reset for next job
+                        setProcessAborted(false);
+
                         if (exception)
                             throw exception.getClear(); // NB: this will cause exception to be part of the reply to master
 
@@ -2274,7 +2333,7 @@ public:
     virtual IKJService &queryKeyedJoinService() override { return *kjService.get(); }
 };
 
-void slaveMain(bool &jobListenerStopped)
+void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
 {
     unsigned masterMemMB = globals->getPropInt("@masterTotalMem");
     HardwareInfo hdwInfo;
@@ -2292,8 +2351,8 @@ void slaveMain(bool &jobListenerStopped)
     }
     roxiemem::setTotalMemoryLimit(gmemAllowHugePages, gmemAllowTransparentHugePages, gmemRetainMemory, ((memsize_t)gmemSize) * 0x100000, 0, thorAllocSizes, NULL);
 
-    CJobListener jobListener(jobListenerStopped);
     CThorResourceSlave slaveResource;
+    CJobListener jobListener(jobListenerStopped);
     setIThorResource(slaveResource);
 
 #ifdef __linux__
@@ -2313,7 +2372,7 @@ void slaveMain(bool &jobListenerStopped)
 
 #endif
 
-    jobListener.slaveMain();
+    jobListener.slaveMain(logHandler);
 }
 
 void abortSlave()

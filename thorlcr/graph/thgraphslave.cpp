@@ -126,7 +126,8 @@ bool CThorInput::isFastThrough() const
 }
 // 
 
-CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_container), CEdgeProgress(this)
+CSlaveActivity::CSlaveActivity(CGraphElementBase *_container, const StatisticsMapping &statsMapping)
+    : CActivityBase(_container, statsMapping), CEdgeProgress(this)
 {
     data = NULL;
 }
@@ -136,7 +137,7 @@ CSlaveActivity::~CSlaveActivity()
     inputs.kill();
     outputs.kill();
     if (data) delete [] data;
-    ActPrintLog("DESTROYED");
+    ::ActPrintLog(this, thorDetailedLogLevel, "DESTROYED");
 }
 
 bool CSlaveActivity::hasLookAhead(unsigned index) const
@@ -378,7 +379,7 @@ void CSlaveActivity::start()
 
 void CSlaveActivity::startAllInputs()
 {
-    ActivityTimer s(totalCycles, timeActivities);
+    ActivityTimer s(slaveTimerStats, timeActivities);
     ForEachItemIn(i, inputs)
     {
         try { startInput(i); }
@@ -540,16 +541,24 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
                 break;
         }
     }
-    unsigned __int64 _totalCycles = queryTotalCycles();
-    if (_totalCycles < inputCycles) // not sure how/if possible, but guard against
+    unsigned __int64 localCycles = queryTotalCycles();
+    if (localCycles < inputCycles) // not sure how/if possible, but guard against
         return 0;
-    return _totalCycles-inputCycles;
+    localCycles -= inputCycles;
+    const unsigned __int64 blockedCycles = queryBlockedCycles();
+    if (localCycles < blockedCycles)
+        return 0;
+    return localCycles-blockedCycles;
 }
 
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
-    CriticalBlock b(crit);
-    mb.append((unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    CriticalBlock b(crit); // JCSMORE not sure what this is protecting..
+
+    // JCS->GH - should these be serialized as cycles, and a different mapping used on master?
+    stats.setStatistic(StTimeLocalExecute, (unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    stats.setStatistic(StTimeBlocked, (unsigned __int64)cycle_to_nanosec(queryBlockedCycles()));
+    stats.serialize(mb);
     ForEachItemIn(i, outputs)
     {
         IThorDataLink *output = queryOutput(i);
@@ -1219,7 +1228,11 @@ bool CSlaveGraph::serializeStats(MemoryBuffer &mb)
 {
     unsigned beginPos = mb.length();
     mb.append(queryGraphId());
-    mb.append(numExecuted);
+
+    CRuntimeStatisticCollection stats(graphStatistics);
+    stats.setStatistic(StNumExecutions, numExecuted);
+    stats.serialize(mb);
+
     unsigned cPos = mb.length();
     unsigned count = 0;
     mb.append(count);
@@ -1234,13 +1247,9 @@ bool CSlaveGraph::serializeStats(MemoryBuffer &mb)
             {
                 CGraphElementBase &element = iter->query();
                 CSlaveActivity &activity = (CSlaveActivity &)*element.queryActivity();
-                unsigned pos = mb.length();
                 mb.append(activity.queryContainer().queryId());
                 activity.serializeStats(mb);
-                if (pos == mb.length()-sizeof(activity_id))
-                    mb.rewrite(pos);
-                else
-                    ++count;
+                ++count;
             }
             mb.writeDirect(cPos, sizeof(count), &count);
         }
@@ -1299,7 +1308,7 @@ void CSlaveGraph::serializeDone(MemoryBuffer &mb)
 void CSlaveGraph::getDone(MemoryBuffer &doneInfoMb)
 {
     if (!started) return;
-    GraphPrintLog("Entering getDone");
+    ::GraphPrintLog(this, thorDetailedLogLevel, "Entering getDone");
     if (!queryOwner() || isGlobal())
     {
         try
@@ -1314,12 +1323,12 @@ void CSlaveGraph::getDone(MemoryBuffer &doneInfoMb)
         }
         catch (IException *)
         {
-            GraphPrintLog("Leaving getDone");
+            ::GraphPrintLog(this, thorDetailedLogLevel, "Leaving getDone");
             getDoneSem.signal();
             throw;
         }
     }
-    GraphPrintLog("Leaving getDone");
+    ::GraphPrintLog(this, thorDetailedLogLevel, "Leaving getDone");
     getDoneSem.signal();
 }
 
@@ -1552,7 +1561,7 @@ public:
         if (_foreignNode && !_foreignNode->isNull())
             foreignNode.set(*_foreignNode);
         else
-            foreignNode.set(globals->queryProp("@DALISERVERS"));
+            foreignNode.set(globals->queryProp("@daliServers"));
         return ::getGlobalUniqueIds(num, &foreignNode);
     }
     virtual bool allowDaliAccess() const
@@ -1693,7 +1702,7 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
         actInitWaitTimeMins = queryMaxLfnBlockTimeMins()+1;
 }
 
-void CJobSlave::addChannel(IMPServer *mpServer)
+CJobChannel *CJobSlave::addChannel(IMPServer *mpServer)
 {
     unsigned nextChannelNum = jobChannels.ordinality();
     CJobSlaveChannel *channel = new CJobSlaveChannel(*this, mpServer, nextChannelNum);
@@ -1701,6 +1710,7 @@ void CJobSlave::addChannel(IMPServer *mpServer)
     unsigned slaveNum = channel->queryMyRank();
     jobChannelSlaveNumbers[nextChannelNum] = slaveNum;
     jobSlaveChannelNum[slaveNum-1] = nextChannelNum;
+    return channel;
 }
 
 void CJobSlave::startJob()
@@ -1734,11 +1744,14 @@ void CJobSlave::reportGraphEnd(graph_id gid)
 {
     if (nodesLoaded) // wouldn't mean much if parallel jobs running
         PROGLOG("Graph[%" GIDPF "u] - JHTree node stats:\ncacheAdds=%d\ncacheHits=%d\nnodesLoaded=%d\nblobCacheHits=%d\nblobCacheAdds=%d\nleafCacheHits=%d\nleafCacheAdds=%d\nnodeCacheHits=%d\nnodeCacheAdds=%d\n", gid, cacheAdds.load(), cacheHits.load(), nodesLoaded.load(), blobCacheHits.load(), blobCacheAdds.load(), leafCacheHits.load(), leafCacheAdds.load(), nodeCacheHits.load(), nodeCacheAdds.load());
-    JSocketStatistics stats;
-    getSocketStatistics(stats);
-    StringBuffer s;
-    getSocketStatisticsString(stats,s);
-    PROGLOG("Graph[%" GIDPF "u] - Socket statistics : %s\n", gid, s.str());
+    if (!REJECTLOG(MCthorDetailedDebugInfo))
+    {        
+        JSocketStatistics stats;
+        getSocketStatistics(stats);
+        StringBuffer s;
+        getSocketStatisticsString(stats,s);
+        LOG(MCthorDetailedDebugInfo, thorJob, "Graph[%" GIDPF "u] - Socket statistics : %s\n", gid, s.str());
+    }
     resetSocketStatistics();
 }
 
@@ -1777,7 +1790,7 @@ mptag_t CJobSlave::deserializeMPTag(MemoryBuffer &mb)
     deserializeMPtag(mb, tag);
     if (TAG_NULL != tag)
     {
-        PROGLOG("CJobSlave::deserializeMPTag: tag = %d", (int)tag);
+        LOG(MCthorDetailedDebugInfo, thorJob, "CJobSlave::deserializeMPTag: tag = %d", (int)tag);
         for (unsigned c=0; c<queryJobChannels(); c++)
             queryJobChannel(c).queryJobComm().flush(tag);
     }

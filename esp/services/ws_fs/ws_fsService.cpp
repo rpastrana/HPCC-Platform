@@ -39,6 +39,7 @@
 #include "portlist.h"
 #include "sacmd.hpp"
 #include "exception_util.hpp"
+#include "LogicFileWrapper.hpp"
 
 #define DFU_WU_URL          "DfuWorkunitsAccess"
 #define DFU_EX_URL          "DfuExceptionsAccess"
@@ -634,21 +635,6 @@ void setRoxieClusterPartDiskMapping(const char *clusterName, const char *default
         spec.setRepeatedCopies(CPDMSRP_lastRepeated,false);
     wuFSpecDest->setClusterPartDiskMapSpec(clusterName,spec);
     wuOptions->setReplicate(replicate);
-}
-
-StringBuffer& getNodeGroupFromLFN(StringBuffer& nodeGroup, const char* lfn, const char* username, const char* passwd)
-{
-    Owned<IUserDescriptor> udesc;
-    if(username != NULL && *username != '\0')
-    {
-        udesc.setown(createUserDescriptor());
-        udesc->set(username, passwd);
-    }
-
-    Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(lfn, udesc, false, false, false, nullptr, defaultPrivilegedUser);
-    if (!df)
-        throw MakeStringException(ECLWATCH_FILE_NOT_EXIST, "Failed to find file: %s", lfn);
-    return df->getClusterGroupName(0, nodeGroup);
 }
 
 StringBuffer& constructFileMask(const char* filename, StringBuffer& filemask)
@@ -1560,8 +1546,8 @@ bool markWUFailed(IDFUWorkUnitFactory *f, const char *wuid)
     return false;
 }
 
-static unsigned NumOfDFUWUActionNames = 5;
-static const char *DFUWUActionNames[] = { "Delete", "Protect" , "Unprotect" , "Restore" , "SetToFailed" };
+static unsigned NumOfDFUWUActionNames = 6;
+static const char *DFUWUActionNames[] = { "Delete", "Protect" , "Unprotect" , "Restore" , "SetToFailed", "Archive" };
 
 bool CFileSprayEx::onDFUWorkunitsAction(IEspContext &context, IEspDFUWorkunitsActionRequest &req, IEspDFUWorkunitsActionResponse &resp)
 {
@@ -1572,35 +1558,48 @@ bool CFileSprayEx::onDFUWorkunitsAction(IEspContext &context, IEspDFUWorkunitsAc
         CDFUWUActions action = req.getType();
         if (action == DFUWUActions_Undefined)
             throw MakeStringException(ECLWATCH_INVALID_INPUT, "Action not defined.");
+        const char* actionStr = (action < NumOfDFUWUActionNames) ? DFUWUActionNames[action] : "Unknown";
 
         StringArray& wuids = req.getWuids();
         if (!wuids.ordinality())
             throw MakeStringException(ECLWATCH_INVALID_INPUT, "Workunit not defined.");
 
-        Owned<INode> node;
-        Owned<ISashaCommand> cmd;
-        StringBuffer sashaAddress;
-        if (action == CDFUWUActions_Restore)
+        if ((action == CDFUWUActions_Restore) || (action == CDFUWUActions_Archive))
         {
-            IArrayOf<IConstTpSashaServer> sashaservers;
-            CTpWrapper dummy;
-            dummy.getTpSashaServers(sashaservers);
-            ForEachItemIn(i, sashaservers)
+            StringBuffer msg;
+            ForEachItemIn(i, wuids)
             {
-                IConstTpSashaServer& sashaserver = sashaservers.item(i);
-                IArrayOf<IConstTpMachine> &sashaservermachine = sashaserver.getTpMachines();
-                sashaAddress.append(sashaservermachine.item(0).getNetaddress());
+                StringBuffer wuidStr(wuids.item(i));
+                const char* wuid = wuidStr.trim().str();
+                if (isEmptyString(wuid))
+                    msg.appendf("Empty Workunit ID at %u. ", i);
             }
-            if (sashaAddress.length() < 1)
-            {
-                throw MakeStringException(ECLWATCH_ARCHIVE_SERVER_NOT_FOUND,"Archive server not found.");
-            }
+            if (!msg.isEmpty())
+                throw makeStringException(ECLWATCH_INVALID_INPUT, msg);
 
-            SocketEndpoint ep(sashaAddress.str(), DEFAULT_SASHA_PORT);
-            node.setown(createINode(ep));
-            cmd.setown(createSashaCommand());
-            cmd->setAction(SCA_RESTORE);
-            cmd->setDFU(true);
+            Owned<ISashaCommand> cmd = archiveOrRestoreWorkunits(wuids, nullptr, action == CDFUWUActions_Archive, true);
+            IArrayOf<IEspDFUActionResult> results;
+            ForEachItemIn(x, wuids)
+            {
+                Owned<IEspDFUActionResult> res = createDFUActionResult();
+                res->setID(wuids.item(x));
+                res->setAction(actionStr);
+
+                StringBuffer reply;
+                if (action == CDFUWUActions_Restore)
+                    reply.set("Restore ID: ");
+                else
+                    reply.set("Archive ID: ");
+
+                if (cmd->getId(x, reply))
+                    res->setResult(reply.str());
+                else
+                    res->setResult("Failed to get Archive/restore ID.");
+
+                results.append(*res.getLink());
+            }
+            resp.setDFUActionResults(results);
+            return true;
         }
 
         IArrayOf<IEspDFUActionResult> results;
@@ -1608,7 +1607,6 @@ bool CFileSprayEx::onDFUWorkunitsAction(IEspContext &context, IEspDFUWorkunitsAc
         for(unsigned i = 0; i < wuids.ordinality(); ++i)
         {
             const char* wuid = wuids.item(i);
-            const char* actionStr = (action < NumOfDFUWUActionNames) ? DFUWUActionNames[action] : "Unknown";
 
             Owned<IEspDFUActionResult> res = createDFUActionResult("", "");
             res->setID(wuid);
@@ -1625,19 +1623,6 @@ bool CFileSprayEx::onDFUWorkunitsAction(IEspContext &context, IEspDFUWorkunitsAc
                     if (!factory->deleteWorkUnit(wuid))
                         throw MakeStringException(ECLWATCH_CANNOT_DELETE_WORKUNIT, "Failed in deleting workunit.");
                     res->setResult("Success");
-                    break;
-                case CDFUWUActions_Restore:
-                    cmd->addId(wuid);
-                    if (!cmd->send(node,1*60*1000))
-                        throw MakeStringException(ECLWATCH_CANNOT_CONNECT_ARCHIVE_SERVER,
-                            "Sasha (%s) took too long to respond from: Restore workunit %s.",
-                            sashaAddress.str(), wuid);
-                    {
-                        StringBuffer reply("Restore ID: ");
-                        if (!cmd->getId(0, reply))
-                            throw MakeStringException(ECLWATCH_CANNOT_UPDATE_WORKUNIT, "Failed to get ID.");
-                        res->setResult(reply.str());
-                    }
                     break;
                 case CDFUWUActions_Protect:
                 case CDFUWUActions_Unprotect:
@@ -1992,6 +1977,8 @@ bool CFileSprayEx::onSprayFixed(IEspContext &context, IEspSprayFixed &req, IEspS
             options->setPull(true);
         if (req.getPush())
             options->setPush(true);
+        if (!req.getNoCommon_isNull())
+            options->setNoCommon(req.getNoCommon());
 
         if (req.getFailIfNoSourceFile())
             options->setFailIfNoSourceFile(true);
@@ -1999,7 +1986,8 @@ bool CFileSprayEx::onSprayFixed(IEspContext &context, IEspSprayFixed &req, IEspS
         if (req.getRecordStructurePresent())
             options->setRecordStructurePresent(true);
 
-        options->setExpireDays(req.getExpireDays());
+        if (!req.getExpireDays_isNull())
+            options->setExpireDays(req.getExpireDays());
 
         resp.setWuid(wu->queryId());
         resp.setRedirectUrl(StringBuffer("/FileSpray/GetDFUWorkunit?wuid=").append(wu->queryId()).str());
@@ -2184,7 +2172,8 @@ bool CFileSprayEx::onSprayVariable(IEspContext &context, IEspSprayVariable &req,
         if (req.getRecordStructurePresent())
             options->setRecordStructurePresent(true);
 
-        options->setExpireDays(req.getExpireDays());
+        if (!req.getExpireDays_isNull())
+            options->setExpireDays(req.getExpireDays());
 
         resp.setWuid(wu->queryId());
         resp.setRedirectUrl(StringBuffer("/FileSpray/GetDFUWorkunit?wuid=").append(wu->queryId()).str());
@@ -2473,7 +2462,7 @@ bool CFileSprayEx::onCopy(IEspContext &context, IEspCopy &req, IEspCopyResponse 
         const char* destNodeGroupReq = req.getDestGroup();
         if(!destNodeGroupReq || !*destNodeGroupReq)
         {
-            getNodeGroupFromLFN(destNodeGroup, srcname, context.queryUserId(), context.queryPassword());
+            getNodeGroupFromLFN(context, srcname, destNodeGroup);
             DBGLOG("Destination node group not specified, using source node group %s", destNodeGroup.str());
         }
         else
@@ -2575,6 +2564,8 @@ bool CFileSprayEx::onCopy(IEspContext &context, IEspCopy &req, IEspCopyResponse 
 
         if(req.getNosplit())
             wuOptions->setNoSplit(true);
+        if (!req.getNoCommon_isNull())
+            wuOptions->setNoCommon(req.getNoCommon());
 
         if (bRoxie)
         {
@@ -2802,7 +2793,7 @@ bool CFileSprayEx::onFileList(IEspContext &context, IEspFileListRequest &req, IE
 #endif
         rfn.setPath(ep, sPath.str());
         Owned<IFile> f = createIFile(rfn);
-        if(!f->isDirectory())
+        if (f->isDirectory()!=fileBool::foundYes)
             throw MakeStringException(ECLWATCH_INVALID_DIRECTORY, "%s is not a directory.", path);
 
         IArrayOf<IEspPhysicalFileStruct> files;
@@ -2925,7 +2916,7 @@ void CFileSprayEx::searchDropZoneFiles(IEspContext& context, IpAddress& ip, cons
     ep.ipset(ip);
     rfn.setPath(ep, dir);
     Owned<IFile> f = createIFile(rfn);
-    if(!f->isDirectory())
+    if(f->isDirectory()!=fileBool::foundYes)
         throw MakeStringException(ECLWATCH_INVALID_DIRECTORY, "%s is not a directory.", dir);
 
     const char pathSep = getPathSepChar(dir);
@@ -3143,7 +3134,7 @@ bool CFileSprayEx::getDropZoneFiles(IEspContext &context, const char* dropZone, 
 
     rfn.setPath(ep, path);
     Owned<IFile> f = createIFile(rfn);
-    if(!f->isDirectory())
+    if(f->isDirectory()!=fileBool::foundYes)
         throw MakeStringException(ECLWATCH_INVALID_DIRECTORY, "%s is not a directory.", path);
 
     IArrayOf<IEspPhysicalFileStruct> files;
@@ -3317,7 +3308,7 @@ bool CFileSprayEx::onDeleteDropZoneFiles(IEspContext &context, IEspDeleteDropZon
 
         rfn.setPath(ep, path.str());
         Owned<IFile> f = createIFile(rfn);
-        if(!f->isDirectory())
+        if(f->isDirectory()!=fileBool::foundYes)
             throw MakeStringException(ECLWATCH_INVALID_DIRECTORY, "%s is not a directory.", directory);
 
         bool bAllSuccess = true;

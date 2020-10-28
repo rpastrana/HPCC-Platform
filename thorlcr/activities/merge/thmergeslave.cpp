@@ -232,7 +232,7 @@ public:
             }
 #endif
 
-            ActPrintLog("Merge: partitionpos[%d] = %" I64F "d",i,partitionpos[i]);
+            ::ActPrintLog(this, thorDetailedLogLevel, "Merge: partitionpos[%d] = %" I64F "d",i,partitionpos[i]);
         }
         delete [] intertags;
         provider.init(this,queryRowSerializer(),intertag);
@@ -274,7 +274,6 @@ public:
 
     void abort()
     {
-        ActPrintLog("abort");
         CSlaveActivity::abort();
         provider.stop();
     }
@@ -283,7 +282,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         ForEachItemIn(i, inputs)
         {
             IThorDataLink * input = queryInput(i);
@@ -424,16 +423,11 @@ public:
         setRequireInitData(false);
         appendOutputLinked(this);
     }
-    void abort()
-    {
-        ActPrintLog("abort");
-        CSlaveActivity::abort();
-    }
 
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         ForEachItemIn(i, inputs)
         {
             IThorDataLink *input = queryInput(i);
@@ -472,7 +466,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon) {
             OwnedConstThorRow row = out->nextRow();
             if (row) {
@@ -564,7 +558,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow ret = merger.nextRow();
         if (ret)
         {
@@ -580,7 +574,7 @@ public:
     }
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow ret = merger.nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret)
         {

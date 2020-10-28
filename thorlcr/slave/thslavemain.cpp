@@ -52,6 +52,10 @@
 
 #include "slavmain.hpp"
 
+#ifdef _CONTAINERIZED
+#include "dafsserver.hpp"
+#endif
+
 // #define USE_MP_LOG
 
 static INode *masterNode = NULL;
@@ -74,12 +78,7 @@ static unsigned mySlaveNum;
 static const unsigned defaultStrandBlockSize = 512;
 static const unsigned defaultForceNumStrands = 0;
 
-static char **cmdArgs;
-void mergeCmdParams(IPropertyTree *props)
-{
-    while (*cmdArgs)
-        loadCmdProp(props, *cmdArgs++);
-}
+static const char **cmdArgs;
 
 static void replyError(unsigned errorCode, const char *errorMsg)
 {
@@ -90,7 +89,7 @@ static void replyError(unsigned errorCode, const char *errorMsg)
     Owned<IException> e = MakeStringException(errorCode, "%s", str.str());
     CMessageBuffer msg;
     serializeException(e, msg);
-    queryWorldCommunicator().send(msg, 0, MPTAG_THORREGISTRATION);
+    queryNodeComm().send(msg, 0, MPTAG_THORREGISTRATION);
 }
 
 static std::atomic<bool> isRegistered {false};
@@ -106,28 +105,51 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         ep.port = getFixedPort(getMasterPortBase(), TPORT_mp);
         Owned<INode> masterNode = createINode(ep);
         CMessageBuffer msg;
+        msg.append(mySlaveNum);
+        queryWorldCommunicator().send(msg, masterNode, MPTAG_THORREGISTRATION);
         if (!queryWorldCommunicator().recv(msg, masterNode, MPTAG_THORREGISTRATION))
             return false;
         PROGLOG("Initialization received");
         unsigned vmajor, vminor;
         msg.read(vmajor);
         msg.read(vminor);
+        Owned<IGroup> processGroup = deserializeIGroup(msg);
+        mySlaveNum = (unsigned)processGroup->rank(queryMyNode());
+        assertex(NotFound != mySlaveNum);
+        mySlaveNum++; // 1 based;
+        unsigned configSlaveNum = globals->getPropInt("@slavenum", NotFound);
+        if (NotFound != configSlaveNum)
+            assertex(mySlaveNum == configSlaveNum);
+
+        globals.setown(createPTree(msg));
+
+        /* NB: preserve command line option overrides
+         * Not sure if any cmdline options are actually needed by this stage..
+         */
+        loadArgsIntoConfiguration(globals, cmdArgs);
+
+#ifdef _DEBUG
+        unsigned holdSlave = globals->getPropInt("@holdSlave", NotFound);
+        if (mySlaveNum == holdSlave)
+        {
+            DBGLOG("Thor slave %u paused for debugging purposes, attach and set held=false to release", mySlaveNum);
+            bool held = true;
+            while (held)
+                Sleep(5);
+        }
+#endif
+        unsigned channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
+        unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
+        unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
+        setupCluster(masterNode, processGroup, channelsPerSlave, slaveBasePort, localThorPortInc);
+
         if (vmajor != THOR_VERSION_MAJOR || vminor != THOR_VERSION_MINOR)
         {
             replyError(TE_FailedToRegisterSlave, "Thor master/slave version mismatch");
             return false;
         }
-        Owned<IGroup> rawGroup = deserializeIGroup(msg);
-        globals->Release();
-        globals = createPTree(msg);
-        mergeCmdParams(globals); // cmd line
 
-        unsigned slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
-        unsigned channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
-        unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
-        unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
-        setClusterGroup(masterNode, rawGroup, slavesPerNode, channelsPerSlave, slaveBasePort, localThorPortInc);
-
+        ensurePTree(globals, "Debug");
         unsigned numStrands, blockSize;
         if (globals->hasProp("Debug/@forceNumStrands"))
             numStrands = globals->getPropInt("Debug/@forceNumStrands");
@@ -160,14 +182,15 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         }
         readUnderlyingType<mptag_t>(msg, masterSlaveMpTag);
         readUnderlyingType<mptag_t>(msg, kjServiceMpTag);
-        msg.clear();
-        msg.setReplyTag(MPTAG_THORREGISTRATION);
-        if (!queryNodeComm().reply(msg))
-            return false;
 
-        PROGLOG("Registration confirmation sent");
-        if (!queryNodeComm().recv(msg, 0, MPTAG_THORREGISTRATION)) // when all registered
+        msg.clear();
+        if (!queryNodeComm().send(msg, 0, MPTAG_THORREGISTRATION))
             return false;
+        PROGLOG("Registration confirmation sent");
+
+        if (!queryNodeComm().recv(msg, 0, MPTAG_THORREGISTRATION))
+            return false;
+        PROGLOG("Registration confirmation receipt received");
 
         ::masterNode = LINK(masterNode);
 
@@ -255,22 +278,30 @@ public:
 #endif
 
 
-void startSlaveLog()
+ILogMsgHandler *startSlaveLog()
 {
+    ILogMsgHandler *logHandler = nullptr;
+#ifndef _CONTAINERIZED
     StringBuffer fileName("thorslave");
     Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(globals->queryProp("@logDir"), "thor");
     StringBuffer slaveNumStr;
     lf->setPostfix(slaveNumStr.append(mySlaveNum).str());
     lf->setCreateAliasFile(false);
     lf->setName(fileName.str());//override default filename
-    lf->beginLogging();
+    logHandler = lf->beginLogging();
+#ifndef _DEBUG 
+    // keep duplicate logging output to stderr to aide debugging
+    queryLogMsgManager()->removeMonitor(queryStderrLogMsgHandler());
+#endif
 
-    StringBuffer url;
-    createUNCFilename(lf->queryLogFileSpec(), url);
-
-    LOG(MCdebugProgress, thorJob, "Opened log file %s", url.str());
+    LOG(MCdebugProgress, thorJob, "Opened log file %s", lf->queryLogFileSpec());
+#else
+    setupContainerizedLogMsgHandler();
+    logHandler = queryStderrLogMsgHandler();
+#endif
+    //setupContainerizedStorageLocations();
     LOG(MCdebugProgress, thorJob, "Build %s", BUILD_TAG);
-    globals->setProp("@logURL", url.str());
+    return logHandler;
 }
 
 void setSlaveAffinity(unsigned processOnNode)
@@ -294,8 +325,7 @@ void setSlaveAffinity(unsigned processOnNode)
         bindMemoryToLocalNodes();
 }
 
-
-int main( int argc, char *argv[]  )
+int main( int argc, const char *argv[]  )
 {
     // If using systemd, we will be using daemon code, writing own pid
     for (unsigned i=0;i<(unsigned)argc;i++) {
@@ -328,13 +358,7 @@ int main( int argc, char *argv[]  )
     Owned<CReleaseMutex> globalNamedMutex;
 #endif 
 
-    if (globals)
-        globals->Release();
-
-    {
-        Owned<IFile> iFile = createIFile("thor.xml");
-        globals = iFile->exists() ? createPTree(*iFile, ipt_caseInsensitive) : createPTree("Thor", ipt_caseInsensitive);
-    }
+    globals.setown(createPTree("Thor"));
     unsigned multiThorMemoryThreshold = 0;
 
     Owned<IException> unregisterException;
@@ -346,14 +370,26 @@ int main( int argc, char *argv[]  )
             return 1;
         }
         cmdArgs = argv+1;
-        mergeCmdParams(globals);
-        cmdArgs = argv+1;
+#ifdef _CONTAINERIZED
+        globals.setown(loadConfiguration(thorDefaultConfigYaml, argv, "thor", "THOR", nullptr, nullptr));
+#else
+        loadArgsIntoConfiguration(globals, cmdArgs);
+#endif
 
-        const char *master = globals->queryProp("@MASTER");
+        const char *master = globals->queryProp("@master");
         if (!master)
             usage();
 
-        const char *slave = globals->queryProp("@SLAVE");
+        mySlaveNum = globals->getPropInt("@slavenum", NotFound);
+        /* NB: in cloud/non-local storage mode, slave number is not known until after registration with the master
+        * For the time being log file names are based on their slave number, so can only start when known.
+        */
+        ILogMsgHandler *slaveLogHandler = nullptr;
+        if (NotFound != mySlaveNum)
+            slaveLogHandler = startSlaveLog();
+
+        // In container world, SLAVE= will not be used
+        const char *slave = globals->queryProp("@slave");
         if (slave)
         {
             slfEp.set(slave);
@@ -362,15 +398,16 @@ int main( int argc, char *argv[]  )
         else 
             slfEp.setLocalHost(0);
 
-        mySlaveNum = globals->getPropInt("@SLAVENUM");
+        // TBD: use new config/init system for generic handling of init settings vs command line overrides
+        if (0 == slfEp.port) // assume default from config if not on command line
+            slfEp.port = globals->getPropInt("@slaveport", THOR_BASESLAVE_PORT);
 
+        startMPServer(DCR_ThorSlave, slfEp.port, false, true);
+        if (0 == slfEp.port)
+            slfEp.port = queryMyNode()->endpoint().port;
         setMachinePortBase(slfEp.port);
-        slfEp.port = getMachinePortBase();
-        startSlaveLog();
 
-        setSlaveAffinity(globals->getPropInt("@SLAVEPROCESSNUM"));
-
-        startMPServer(getFixedPort(TPORT_mp));
+        setSlaveAffinity(globals->getPropInt("@slaveprocessnum"));
 
         if (globals->getPropBool("@MPChannelReconnect"))
             getMPServer()->setOpt(mpsopt_channelreopen, "true");
@@ -383,8 +420,12 @@ int main( int argc, char *argv[]  )
         localHostToNIC(masterEp);
         setMasterPortBase(masterEp.port);
         markNodeCentral(masterEp);
+
         if (RegisterSelf(masterEp))
         {
+            if (!slaveLogHandler)
+                slaveLogHandler = startSlaveLog();
+
             if (globals->getPropBool("Debug/@slaveDaliClient"))
                 enableThorSlaveAsDaliClient();
 
@@ -431,10 +472,10 @@ int main( int argc, char *argv[]  )
                 globals->setProp("@thorTempDirectory", tempDirStr.str());
             else
                 tempDirStr.append(globals->queryProp("@thorTempDirectory"));
-            addPathSepChar(tempDirStr).append(getMachinePortBase());
+            addPathSepChar(tempDirStr).append(mySlaveNum);
 
             logDiskSpace(); // Log before temp space is cleared
-            SetTempDir(tempDirStr.str(), "thtmp", true);
+            SetTempDir(mySlaveNum, tempDirStr.str(), "thtmp", true);
 
             useMemoryMappedRead(globals->getPropBool("@useMemoryMappedRead"));
 
@@ -491,7 +532,45 @@ int main( int argc, char *argv[]  )
             if (pinterval)
                 startPerformanceMonitor(pinterval, PerfMonStandard, nullptr);
 
-            slaveMain(jobListenerStopped);
+#ifdef _CONTAINERIZED
+            class CServerThread : public CSimpleInterfaceOf<IThreaded>
+            {
+                CThreaded threaded;
+                Owned<IRemoteFileServer> dafsInstance;
+            public:
+                CServerThread() : threaded("CServerThread")
+                {
+                    dafsInstance.setown(createRemoteFileServer());
+                    threaded.init(this);
+                }
+                ~CServerThread()
+                {
+                    PROGLOG("Stopping dafilesrv");
+                    dafsInstance->stop();
+                    threaded.join();
+                }
+            // IThreaded
+                virtual void threadmain() override
+                {
+                    SocketEndpoint listenEp(DAFILESRV_PORT);
+                    try
+                    {
+                        PROGLOG("Starting dafilesrv");
+                        dafsInstance->run(SSLNone, listenEp);
+                    }
+                    catch (IException *e)
+                    {
+                        EXCLOG(e, "dafilesrv error");
+                        throw;
+                    }
+                }
+            };
+            OwnedPtr<CServerThread> dafsThread;
+            if (globals->getPropBool("@_dafsStorage"))
+                dafsThread.setown(new CServerThread);
+#endif
+            installDefaultFileHooks(globals);
+            slaveMain(jobListenerStopped, slaveLogHandler);
         }
 
         LOG(MCdebugProgress, thorJob, "ThorSlave terminated OK");
@@ -519,7 +598,6 @@ int main( int argc, char *argv[]  )
     stopLogMsgReceivers();
 #endif
     stopMPServer();
-    ::Release(globals);
     releaseAtoms(); // don't know why we can't use a module_exit to destruct these...
 
     ExitModuleObjects(); // not necessary, atexit will call, but good for leak checking

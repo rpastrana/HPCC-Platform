@@ -78,7 +78,7 @@ protected:
         sendLoopingCount(0, 0);
     }
 public:
-    CLoopSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container)
+    CLoopSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container, loopActivityStatistics)
     {
         maxEmptyLoopIterations = getOptUInt(THOROPT_LOOP_MAX_EMPTY, 1000);
         loopIsInGlobalGraph = container.queryOwner().isGlobal();
@@ -115,15 +115,15 @@ public:
     {
         initMetaInfo(info);
     }
-    void processDone(MemoryBuffer &mb)
+    virtual void processDone(MemoryBuffer &mb) override
     {
         CSlaveActivity::processDone(mb);
         ((CSlaveGraph *)queryContainer().queryLoopGraph()->queryGraph())->serializeDone(mb);
     }
-    virtual void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-        mb.append(loopCounter);
+        stats.setStatistic(StNumIterations, loopCounter);
+        PARENT::serializeStats(mb);
     }
 };
 
@@ -273,7 +273,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         eof = false;
         helper->createParentExtract(extractBuilder);
@@ -297,7 +297,7 @@ public:
     }
     const void *getNextRow(bool stopping)
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon && !eof)
         {
             unsigned emptyIterations = 0;
@@ -477,7 +477,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         executed = false;
         maxIterations = helper->numIterations();
@@ -515,10 +515,12 @@ public:
             for (; loopCounter<=maxIterations; loopCounter++)
             {
                 unsigned condLoopCounter = (helper->getFlags() & IHThorGraphLoopArg::GLFcounter) ? loopCounter : 0;
-                Owned<IThorGraphResults> results = queryGraph().createThorGraphResults(1);
+                Owned<IThorGraphResults> results = boundGraph->queryGraph()->createThorGraphResults(1);
                 if (condLoopCounter)
                     boundGraph->prepareCounterResult(*this, results, condLoopCounter, 0);
                 sendLoopingCount(loopCounter, 0);
+                size32_t parentExtractSz;
+                const byte *parentExtract = queryGraph().queryParentExtract(parentExtractSz);
                 boundGraph->queryGraph()->executeChild(parentExtractSz, parentExtract, results, loopResults);
             }
             int iNumResults = loopResults->count();
@@ -572,7 +574,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         curRow = 0;
         abortSoon = false;
@@ -598,7 +600,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon)
         {
             OwnedConstThorRow row = resultStream->nextRow();
@@ -654,7 +656,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         lastNull = eoi = false;
         abortSoon = false;
@@ -670,7 +672,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon && !eoi)
             return NULL;
         OwnedConstThorRow row = inputStream->nextRow();
@@ -866,7 +868,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         stopUnselectedInputs();
         if (queryInput(branch))
         {
@@ -890,7 +892,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon)
             return nullptr;
         if (!selectedInputStream)
@@ -922,7 +924,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         branch = helper->getCondition() ? 0 : 1;
         PARENT::start();
     }
@@ -945,7 +947,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         branch = helper->getBranch();
         if (branch >= queryNumInputs())
             branch = queryNumInputs() - 1;
@@ -975,7 +977,7 @@ public:
     virtual void process() override
     {
         processed = THORDATALINK_STARTED;
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         cond = helper->getCondition();
         if (cond)
         {
@@ -1030,7 +1032,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         started = false;
         eos = false;
@@ -1099,7 +1101,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         eos = false;
     }
@@ -1149,7 +1151,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         gathered = eos = false;
         aggregated.clear();
@@ -1216,7 +1218,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         ok = false;
         numProcessedLastGroup = getDataLinkCount(); // is this right?
@@ -1296,7 +1298,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         abortSoon = false;
         unsigned sequence = helper->querySequence();
         if ((int)sequence >= 0)
@@ -1318,7 +1320,7 @@ public:
     virtual bool isGrouped() const override { return false; }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!abortSoon)
         {
             OwnedConstThorRow row = resultStream->nextRow();

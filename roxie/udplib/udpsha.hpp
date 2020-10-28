@@ -28,7 +28,7 @@ typedef bool (*PKT_CMP_FUN) (const void *pkData, const void *key);
 
 
 // Flag bits in pktSeq field
-#define UDP_PACKET_COMPLETE           0x80000000  // Packet completes a single slave request
+#define UDP_PACKET_COMPLETE           0x80000000  // Packet completes a single agent request
 #define UDP_PACKET_RESERVED           0x40000000  // Not used - could move UDP_SEQUENCE_COMPLETE here?
 #define UDP_PACKET_SEQUENCE_MASK      0x3fffffff
 
@@ -40,7 +40,7 @@ struct UdpPacketHeader
     unsigned       msgSeq;      // sequence number of messages ever sent from given node, used with ruid to tell which packets are from same message
     unsigned       pktSeq;      // sequence number of this packet within the message (top bit signifies final packet)
     // information below is duplicated in the Roxie packet header - we could remove? However, would make aborts harder, and at least ruid is needed at receive end
-    ruid_t         ruid;        // The uid allocated by the server to this slave transaction
+    ruid_t         ruid;        // The uid allocated by the server to this agent transaction
     unsigned       msgId;       // sub-id allocated by the server to this request within the transaction
 };
 
@@ -75,10 +75,9 @@ class queue_t
 public: 
     void interrupt();
     void pushOwn(roxiemem::DataBuffer *buffer);
-    roxiemem::DataBuffer *pop();
-    bool empty() ;
+    roxiemem::DataBuffer *pop(bool block);
     bool dataQueued(const void *key, PKT_CMP_FUN pkCmpFn);
-    bool removeData(const void *key, PKT_CMP_FUN pkCmpFn);
+    unsigned removeData(const void *key, PKT_CMP_FUN pkCmpFn);
     int  free_slots(); //block if no free slots
     void set_queue_size(unsigned int queue_size); //must be called immediately after constructor if default constructor is used
     queue_t(unsigned int queue_size);

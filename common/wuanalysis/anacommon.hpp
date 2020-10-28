@@ -23,11 +23,6 @@
 #include "eclhelper.hpp"
 #include "anaerrorcodes.hpp"
 
-#ifdef WUANALYSIS_EXPORTS
-    #define WUANALYSIS_API DECL_EXPORT
-#else
-    #define WUANALYSIS_API DECL_IMPORT
-#endif
 
 interface IWuScope
 {
@@ -68,14 +63,25 @@ public:
     void createException(IWorkUnit * we);
 
     void set(AnalyzerErrorCode _errorCode, stat_type _cost, const char * msg, ...) __attribute__((format(printf, 4, 5)));
+    void setLocation(const char * definition);
     void setScope(const char *_scope) { scope.set(_scope); }
     stat_type getCost() const         { return cost; }
 
 private:
-    AnalyzerErrorCode errorCode;
+    AnalyzerErrorCode errorCode = ANA_GENERICERROR_ID;
+    StringBuffer filename;
+    unsigned line = 0;
+    unsigned column = 0;
     StringAttr scope;
     stat_type cost = 0;      // number of nanoseconds lost as a result.
     StringBuffer comment;
+};
+
+typedef enum { watOptFirst=0, watOptMinInterestingTime=0, watOptMinInterestingCost, watOptSkewThreshold, watOptMinRowsPerNode, watPreFilteredKJThreshold, watOptMax } WutOptionType ;
+
+interface IAnalyserOptions
+{
+    virtual stat_type queryOption(WutOptionType opt) const = 0;
 };
 
 extern int compareIssuesCostOrder(CInterface * const * _l, CInterface * const * _r);

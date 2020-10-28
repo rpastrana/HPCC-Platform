@@ -274,12 +274,7 @@ IStartableEngineRowStream *createRowStreamLookAhead(CSlaveActivity *activity, IE
 
 void initMetaInfo(ThorDataLinkMetaInfo &info)
 {
-    memset(&info,0,sizeof(info));
-    //info.rowsdone = xx;
-    info.totalRowsMin = 0;          
-    info.totalRowsMax = -1; // rely on inputs to set
-    info.spilled = (offset_t)-1;
-    info.byteTotal = (offset_t)-1;
+    info = {}; // Reset to default values.
 }
 
 void calcMetaInfoSize(ThorDataLinkMetaInfo &info, IThorDataLink *link)
@@ -717,6 +712,12 @@ IFileIO *createMultipleWrite(CActivityBase *activity, IPartDescriptor &partDesc,
     partDesc.getFilename(0, rfn);
     StringBuffer primaryName;
     rfn.getPath(primaryName);
+    if (isUrl(primaryName))
+    {
+        twFlags &= ~TW_RenameToPrimary;
+        twFlags |= TW_Direct;
+    }
+
     if (twFlags & TW_Direct)
     {
         if (0 == outLocationName.length())
@@ -741,7 +742,7 @@ IFileIO *createMultipleWrite(CActivityBase *activity, IPartDescriptor &partDesc,
     Owned<IFileIO> fileio;
     if (compress)
     {
-        unsigned compMethod = COMPRESS_METHOD_LZW;
+        unsigned compMethod = COMPRESS_METHOD_LZ4;
         // rowdif used if recordSize > 0, else fallback to compMethod
         if (!ecomp)
         {
@@ -762,6 +763,8 @@ IFileIO *createMultipleWrite(CActivityBase *activity, IPartDescriptor &partDesc,
                 compMethod = COMPRESS_METHOD_FASTLZ;
             else if (activity->getOptBool(THOROPT_COMP_FORCELZ4, false))
                 compMethod = COMPRESS_METHOD_LZ4;
+            else if (activity->getOptBool(THOROPT_COMP_FORCELZ4HC, false))
+                compMethod = COMPRESS_METHOD_LZ4HC;
         }
         fileio.setown(createCompressedFileWriter(file, recordSize, 0 != (twFlags & TW_Extend), true, ecomp, compMethod));
         if (!fileio)

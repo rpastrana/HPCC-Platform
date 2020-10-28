@@ -897,6 +897,7 @@ public:
         throwUnexpected();
     }
     virtual void enter() override {}
+    virtual void reenter(ICodeContext *codeCtx) override {}
     virtual void exit() override {}
     virtual void importFunction(size32_t lenChars, const char *utf)
     {
@@ -935,20 +936,15 @@ protected:
 };
 
 static __thread V8JavascriptEmbedFunctionContext * theFunctionContext;  // We reuse per thread, for speed
-static __thread ThreadTermFunc threadHookChain;
 
-static void releaseContext()
+static bool releaseContext(bool isPooled)
 {
     if (theFunctionContext)
     {
         ::Release(theFunctionContext);
         theFunctionContext = NULL;
     }
-    if (threadHookChain)
-    {
-        (*threadHookChain)();
-        threadHookChain = NULL;
-    }
+    return false;
 }
 
 class V8JavascriptEmbedContext : public CInterfaceOf<IEmbedContext>
@@ -968,7 +964,7 @@ public:
         if (!theFunctionContext)
         {
             theFunctionContext = new V8JavascriptEmbedFunctionContext;
-            threadHookChain = addThreadTermFunc(releaseContext);
+            addThreadTermFunc(releaseContext);
         }
         theFunctionContext->setActivityContext(activityContext);
         return LINK(theFunctionContext);

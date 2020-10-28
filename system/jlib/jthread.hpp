@@ -60,15 +60,17 @@ extern jlib_decl unsigned threadLogID();  // for use in logging
 // so the hook function should clear any variables if necessary rather than assuming that they will be cleared
 // at thread startup time.
 
-typedef void (*ThreadTermFunc)();
-extern jlib_decl ThreadTermFunc addThreadTermFunc(ThreadTermFunc onTerm);
-extern jlib_decl void callThreadTerminationHooks();
+typedef bool (*ThreadTermFunc)(bool isPooled);
+extern jlib_decl void addThreadTermFunc(ThreadTermFunc onTerm);
+extern jlib_decl void callThreadTerminationHooks(bool isPooled);
 
 //An exception safe way of ensuring that the thread termination hooks are called.
 class jlib_decl QueryTerminationCleanup
 {
+    bool isPooled;
 public:
-    inline ~QueryTerminationCleanup() { callThreadTerminationHooks(); }
+    inline QueryTerminationCleanup(bool _isPooled) : isPooled(_isPooled) { }
+    inline ~QueryTerminationCleanup() { callThreadTerminationHooks(isPooled); }
 };
 
 class jlib_decl Thread : public CInterface, public IThread
@@ -204,6 +206,40 @@ public:
     virtual void Do(unsigned idx=0)=0;
 };
 
+template <typename AsyncFunc>
+class CAsyncForFunc final : public CAsyncFor
+{
+public:
+    CAsyncForFunc(AsyncFunc _func) : func(_func) {}
+    virtual void Do(unsigned idx=0) { func(idx); }
+private:
+    AsyncFunc func;
+};
+
+//Utility functions for executing a lambda function in parallel, but allow the number of concurrent iterations
+//action on exception, and shuffling to be controlled.
+template <typename AsyncFunc>
+inline void asyncFor(unsigned num, unsigned maxAtOnce, bool abortFollowingException, bool shuffled, AsyncFunc func)
+{
+    CAsyncForFunc<AsyncFunc> async(func);
+    async.For(num, maxAtOnce, abortFollowingException, shuffled);
+}
+template <typename AsyncFunc>
+inline void asyncFor(unsigned num, unsigned maxAtOnce, bool abortFollowingException, AsyncFunc func)
+{
+    asyncFor(num, maxAtOnce, abortFollowingException, false, func);
+}
+template <typename AsyncFunc>
+inline void asyncFor(unsigned num, unsigned maxAtOnce, AsyncFunc func)
+{
+    asyncFor(num, maxAtOnce, false, false, func);
+}
+template <typename AsyncFunc>
+inline void asyncFor(unsigned num, AsyncFunc func)
+{
+    asyncFor(num, num, false, false, func);
+}
+
 // ---------------------------------------------------------------------------
 // Thread Pools
 // ---------------------------------------------------------------------------
@@ -241,6 +277,7 @@ interface IThreadPool : extends IInterface
         virtual PooledThreadHandle startNoBlock(void *param)=0; // starts a new thread if it can do so without blocking, else throws exception
         virtual PooledThreadHandle startNoBlock(void *param,const char *name)=0;    // starts a new thread if it can do so without blocking, else throws exception
         virtual void setStartDelayTracing(unsigned secs) = 0;        // set start delay tracing period
+        virtual bool waitAvailable(unsigned timeout) = 0;            // wait until a pool member is available
 };
 
 extern jlib_decl IThreadPool *createThreadPool(

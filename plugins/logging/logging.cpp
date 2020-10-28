@@ -40,6 +40,7 @@ static const char * EclDefinition =
 "  varstring getGlobalId() : c,context,entrypoint='logGetGlobalId'; \n"
 "  varstring getLocalId() : c,context,entrypoint='logGetLocalId'; \n"
 "  varstring getCallerId() : c,context,entrypoint='logGetCallerId'; \n"
+"  varstring generateGloballyUniqueId() : c,entrypoint='logGenerateGloballyUniqueId'; \n"
 "END;";
 
 LOGGING_API bool getECLPluginDefinition(ECLPluginDefinitionBlock *pb) 
@@ -64,7 +65,14 @@ LOGGING_API bool getECLPluginDefinition(ECLPluginDefinitionBlock *pb)
 
 LOGGING_API void LOGGING_CALL logDbgLog(unsigned srcLen, const char * src)
 {
-    DBGLOG("%.*s", srcLen, src);
+    StringBuffer log(srcLen, src);
+    StringArray loglines;
+    log.replace('\r', ' ');
+    loglines.appendList(log, "\n", false);
+    ForEachItemIn(idx, loglines)
+    {
+        DBGLOG("%s", loglines.item(idx));
+    }
 }
 
 LOGGING_API char *  LOGGING_CALL logGetGlobalId(ICodeContext *ctx)
@@ -82,5 +90,12 @@ LOGGING_API char *  LOGGING_CALL logGetLocalId(ICodeContext *ctx)
 LOGGING_API char *  LOGGING_CALL logGetCallerId(ICodeContext *ctx)
 {
     StringBuffer ret(ctx->queryContextLogger().queryCallerId());
+    return ret.detach();
+}
+
+LOGGING_API char * LOGGING_CALL logGenerateGloballyUniqueId()
+{
+    StringBuffer ret;
+    appendGloballyUniqueId(ret);
     return ret.detach();
 }

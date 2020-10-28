@@ -15,6 +15,9 @@
     limitations under the License.
 ############################################################################## */
 
+#include <future>
+#include <vector>
+
 #include "jlib.hpp"
 #include "jset.hpp"
 #include "jqueue.tpp"
@@ -292,7 +295,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         if (!grouped && parallel)
         {
             //NB starts inputs on each thread
@@ -309,10 +312,10 @@ public:
                 unsigned i;
                 for (i=0; i<inputs.ordinality(); i++) eog[i] = false;
             }
-            current = NULL;
             currentMarker = 0;
             readThisInput = 0;
-            ForEachItemIn(i, inputs)
+
+            auto startInputNFunc = [&](unsigned i)
             {
                 try { startInput(i); }
                 catch (CATCHALL)
@@ -320,9 +323,37 @@ public:
                     ActPrintLog("FUNNEL(%" ACTPF "d): Error staring input %d", container.queryId(), i);
                     throw;
                 }
-                if (!current)
-                    current = queryInputStream(i);
+            };
+
+            std::vector<std::future<void>> results;
+
+            // NB: one input can be launched synchronously (use deferred), others need a thread (async)
+            ForEachItemIn(i, inputs)
+                results.push_back(std::async((0 == i) ? std::launch::deferred : std::launch::async, startInputNFunc, i));
+
+            // NB: 1st future checked is deferred, i.e. it will be run on this thread
+            Owned<IException> exception;
+            for (auto &f: results)
+            {
+                try
+                {
+                    f.get(); // may throw
+                }
+                catch (IException *e)
+                {
+                    if (!exception)
+                        exception.setown(e);
+                    else
+                    {
+                        EXCLOG(e, nullptr);
+                        e->Release();
+                    }
+                }
             }
+            if (exception)
+                throw exception.getClear();
+
+            current = queryInputStream(0);
         }
         dataLinkStart();
     }
@@ -390,7 +421,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (parallelOutput)
         {
             OwnedConstThorRow row = parallelOutput->nextRow();
@@ -473,7 +504,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         eogNext = false;
         ForEachItemIn(i, inputs)
         {
@@ -493,7 +524,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         for (;;)
         {
             bool eog = false;
@@ -573,7 +604,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         curinput = 0;
         eogNext = false;
         ForEachItemIn(i, inputs)
@@ -594,7 +625,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         unsigned n = inputs.ordinality();
         IRowStream *current = queryInputStream(curinput);
         for (;;)
@@ -696,7 +727,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         curinput = 0;
         anyThisGroup = anyThisInput = eogNext = false;
         ForEachItemIn(i, inputs)
@@ -718,7 +749,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eoi) 
             return NULL; 
         if (eogNext) { 
@@ -776,7 +807,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
 
         unsigned whichInput = helper->getInputIndex();
         selectedInput = nullptr;
@@ -829,7 +860,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!selectedStream)
             return NULL;
         OwnedConstThorRow ret = selectedStream->nextRow();
@@ -855,7 +886,7 @@ public:
     }
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!selectedStream)
             return NULL;
         return selectedStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
@@ -904,7 +935,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         bool selectionIsAll;
         size32_t selectionLen;
         rtlDataAttr selection;

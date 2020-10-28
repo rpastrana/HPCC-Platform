@@ -911,8 +911,7 @@ public:
 
     SoapEnumParamNew(enumtype defvalue_)
     {
-        defvalue = defvalue_;
-        value = (enumtype)-1;
+        defvalue = value = defvalue_;
         count_ = 0;
     }
 
@@ -926,6 +925,8 @@ public:
                 throw MakeStringException(-1, "Invalid value for type %s: %s", typeName_.get(), s);
             else
                 defvalue = (enumtype)tempval;
+            if (value == -1)
+                value = defvalue;
         }
     }
 
@@ -1021,7 +1022,8 @@ public:
 
     void marshall(IRpcMessage &rpc_call, const char *tagname, const char* itemname, const char* elementtype="",const char *basepath="", const char *prefix="")
     {
-        rpc_call.add_value(basepath, prefix, tagname, "string", enumstrings.item(value));
+        if ((value >= 0) && (value < enumstrings.length()))
+            rpc_call.add_value(basepath, prefix, tagname, "string", enumstrings.item(value));
     }
 
     bool unmarshall(IRpcMessage &rpc_call, const char *tagname, const char *basepath="", const char* optGroup=NULL, const char *prefix="")

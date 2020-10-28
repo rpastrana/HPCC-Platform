@@ -1,17 +1,17 @@
-var dojoConfig;
-var debugHPCC_JS = false; //  Should never be TRUE in a PR  ---
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+var fs = require("fs");
 
 function getConfig(env) {
     // dojoRoot is defined if we're running in node (i.e. building)
     var dojoRoot = env.dojoRoot;
     var baseUrl = dojoRoot ? "." : "/esp/files";
-    var hpccBaseUrl = baseUrl + "/node_modules/@hpcc-js";
-    var hpccMin = debugHPCC_JS ? "" : ".min";
+    var hpccBaseUrl = fs.existsSync(baseUrl + "/node_modules/@hpcc-js") ? baseUrl + "/node_modules/@hpcc-js" : baseUrl + "/../../../hpcc-js/packages";
 
     return {
         baseUrl: baseUrl,
         deps: ["hpcc/stub"],
         async: true,
+        // locale: "zh",   // Testing only  ---
 
         parseOnLoad: false,
         isDebug: (typeof debugConfig !== "undefined"),
@@ -25,40 +25,32 @@ function getConfig(env) {
             "templates": baseUrl + "/eclwatch/templates",
             "ecl": baseUrl + "/eclwatch/ecl",
             "css": baseUrl + "/loader/css",
-            "d3-array": baseUrl + "/node_modules/d3-array/dist/d3-array" + hpccMin,
-            "d3-collection": baseUrl + "/node_modules/d3-collection/dist/d3-collection" + hpccMin,
-            "d3-color": baseUrl + "/node_modules/d3-color/dist/d3-color" + hpccMin,
-            "d3-format": baseUrl + "/node_modules/d3-format/dist/d3-format" + hpccMin,
-            "d3-interpolate": baseUrl + "/node_modules/d3-interpolate/dist/d3-interpolate" + hpccMin,
-            "d3-scale": baseUrl + "/node_modules/d3-scale/build/d3-scale" + hpccMin,
-            "d3-selection": baseUrl + "/node_modules/d3-selection/dist/d3-selection" + hpccMin,
-            "d3-time": baseUrl + "/node_modules/d3-time/dist/d3-time" + hpccMin,
-            "d3-time-format": baseUrl + "/node_modules/d3-time-format/dist/d3-time-format" + hpccMin,
-            "@hpcc-js/api": baseUrl + "/node_modules/@hpcc-js/api/dist/index" + hpccMin,
-            "@hpcc-js/chart": baseUrl + "/node_modules/@hpcc-js/chart/dist/index" + hpccMin,
-            "@hpcc-js/common": baseUrl + "/node_modules/@hpcc-js/common/dist/index" + hpccMin,
-            "@hpcc-js/comms": baseUrl + "/node_modules/@hpcc-js/comms/dist/index" + hpccMin,
-            "@hpcc-js/composite": baseUrl + "/node_modules/@hpcc-js/composite/dist/index" + hpccMin,
-            "@hpcc-js/dgrid": baseUrl + "/node_modules/@hpcc-js/dgrid/dist/index" + hpccMin,
-            "@hpcc-js/dgrid-shim": baseUrl + "/node_modules/@hpcc-js/dgrid-shim/dist/index" + hpccMin,
-            "@hpcc-js/eclwatch": baseUrl + "/node_modules/@hpcc-js/eclwatch/dist/index" + hpccMin,
-            "@hpcc-js/form": baseUrl + "/node_modules/@hpcc-js/form/dist/index" + hpccMin,
-            "@hpcc-js/graph": baseUrl + "/node_modules/@hpcc-js/graph/dist/index" + hpccMin,
-            "@hpcc-js/layout": baseUrl + "/node_modules/@hpcc-js/layout/dist/index" + hpccMin,
-            "@hpcc-js/html": baseUrl + "/node_modules/@hpcc-js/html/dist/index" + hpccMin,
-            "@hpcc-js/map": baseUrl + "/node_modules/@hpcc-js/map/dist/index" + hpccMin,
-            "@hpcc-js/other": baseUrl + "/node_modules/@hpcc-js/other/dist/index" + hpccMin,
-            "@hpcc-js/timeline": baseUrl + "/node_modules/@hpcc-js/timeline/dist/index" + hpccMin,
-            "@hpcc-js/tree": baseUrl + "/node_modules/@hpcc-js/tree/dist/index" + hpccMin,
-            "@hpcc-js/util": baseUrl + "/node_modules/@hpcc-js/util/dist/index" + hpccMin,
-            "@hpcc-js/TopoJSON": dojoRoot ? "/esp/files/dist/TopoJSON" : baseUrl + "/node_modules/@hpcc-js/map/TopoJSON",
+            "@hpcc-js/api": hpccBaseUrl + "/api/dist/index",
+            "@hpcc-js/chart": hpccBaseUrl + "/chart/dist/index",
+            "@hpcc-js/codemirror": hpccBaseUrl + "/codemirror/dist/index",
+            "@hpcc-js/common": hpccBaseUrl + "/common/dist/index",
+            "@hpcc-js/comms": hpccBaseUrl + "/comms/dist/index",
+            "@hpcc-js/composite": hpccBaseUrl + "/composite/dist/index",
+            "@hpcc-js/dgrid": hpccBaseUrl + "/dgrid/dist/index",
+            "@hpcc-js/dgrid-shim": hpccBaseUrl + "/dgrid-shim/dist/index",
+            "@hpcc-js/eclwatch": hpccBaseUrl + "/eclwatch/dist/index",
+            "@hpcc-js/form": hpccBaseUrl + "/form/dist/index",
+            "@hpcc-js/graph": hpccBaseUrl + "/graph/dist/index",
+            "@hpcc-js/layout": hpccBaseUrl + "/layout/dist/index",
+            "@hpcc-js/phosphor": hpccBaseUrl + "/phosphor/dist/index",
+            "@hpcc-js/html": hpccBaseUrl + "/html/dist/index",
+            "@hpcc-js/map": hpccBaseUrl + "/map/dist/index",
+            "@hpcc-js/other": hpccBaseUrl + "/other/dist/index",
+            "@hpcc-js/react": hpccBaseUrl + "/react/dist/index",
+            "@hpcc-js/timeline": hpccBaseUrl + "/timeline/dist/index",
+            "@hpcc-js/tree": hpccBaseUrl + "/tree/dist/index",
+            "@hpcc-js/util": hpccBaseUrl + "/util/dist/index",
+            "@hpcc-js/TopoJSON": dojoRoot ? "/esp/files/dist/TopoJSON" : hpccBaseUrl + "/map/TopoJSON",
             "clipboard": baseUrl + "/node_modules/clipboard/dist/clipboard",
             "codemirror": baseUrl + "/node_modules/codemirror",
             "crossfilter": baseUrl + "/node_modules/crossfilter2/crossfilter.min",
-            "font-awesome": baseUrl + "/node_modules/@hpcc-js/common/font-awesome",
-            "tslib": baseUrl + "/node_modules/tslib/tslib",
-            "react": baseUrl + "/node_modules/react/umd/react.production.min",
-            "react-dom": baseUrl + "/node_modules/react-dom/umd/react-dom.production.min"
+            "font-awesome": hpccBaseUrl + "/common/font-awesome",
+            "tslib": baseUrl + "/node_modules/tslib/tslib"
         },
         packages: [
             {
@@ -100,10 +92,5 @@ function getConfig(env) {
     };
 }
 
-// For Webpack, export the config.  This is needed both at build time and on the client at runtime
-// for the packed application.
-if (typeof module !== 'undefined' && module) {
-    module.exports = getConfig;
-} else {
-    dojoConfig = getConfig({});
-}
+// eslint-disable-next-line no-undef
+module.exports = getConfig;

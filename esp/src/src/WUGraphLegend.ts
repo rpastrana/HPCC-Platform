@@ -1,6 +1,6 @@
+import { local as d3Local, select as d3Select } from "@hpcc-js/common";
 import { Vertex } from "@hpcc-js/graph";
 import { Legend } from "@hpcc-js/layout";
-import { local as d3Local, select as d3Select } from "d3-selection";
 
 export interface WUGraphLegendData {
     kind: number;
@@ -112,9 +112,9 @@ export class WUGraphLegend extends Legend {
                     .render();
             })
             .remove();
-        this._g.attr("transform", `translate(32, 16)`);
+        this._g.attr("transform", "translate(32, 16)");
         const bbox = this.getBBox(true, true);
-        this.resize({width: bbox.width + 32, height: bbox.height + 16});
+        this.resize({ width: bbox.width + 32, height: bbox.height + 16 });
     }
 
     //  Events  ---

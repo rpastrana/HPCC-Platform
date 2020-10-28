@@ -43,6 +43,7 @@ static const char* const SESSION_TIMEOUT_COOKIE = "ESPSessionTimeoutSeconds";
 static const char* const SESSION_ID_TEMP_COOKIE = "ESPAuthIDTemp";
 static const char* const SESSION_AUTH_OK_COOKIE = "ESPAuthenticated";
 static const char* const SESSION_AUTH_MSG_COOKIE = "ESPAuthenticationMSG";
+static const char* const USER_ACCT_ERROR_COOKIE = "ESPUserAcctError";
 static const char* const DEFAULT_LOGIN_URL = "/esp/files/Login.html";
 static const char* const DEFAULT_LOGIN_LOGO_URL = "/esp/files/eclwatch/img/Loginlogo.png";
 static const char* const DEFAULT_GET_USER_NAME_URL = "/esp/files/GetUserName.html";
@@ -107,7 +108,7 @@ static const char* const PropSessionLoginURL = "@loginurl";
 
 interface IEspSecureContext;
 
-esp_http_decl IEspContext* createEspContext(IEspSecureContext* secureContext = NULL);
+esp_http_decl IEspContext* createEspContext(IEspSecureContext* secureContext = nullptr);
 
 // Get URL parameters (include these from Content)
 // Return: a=b&c=d format. 
@@ -145,5 +146,9 @@ esp_http_decl const char* getBuildVersion();
 esp_http_decl void setBuildLevel(const char* buildLevel);
 esp_http_decl const char* getBuildLevel();
 esp_http_decl IEspServer* queryEspServer();
+
+#define SDSSESSION_CONNECT_TIMEOUTMS (180*1000)
+interface IRemoteConnection;
+esp_http_decl IRemoteConnection* getSDSConnectionWithRetry(const char* xpath, unsigned mode, unsigned timeoutMs);
 #endif
 

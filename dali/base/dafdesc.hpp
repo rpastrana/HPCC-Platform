@@ -276,6 +276,15 @@ interface IClusterInfo: extends IInterface  // used by IFileDescriptor and IDist
 
 };
 
+//I'm not sure if this should be used in place of an IGroup, probably as system gradually changes
+interface IStoragePlane: extends IInterface
+{
+    virtual const char * queryPrefix() const = 0;
+    virtual unsigned numDevices() const = 0;
+    virtual const char * queryHosts() const = 0;
+    virtual const char * querySingleHost() const = 0;
+};
+
 IClusterInfo *createClusterInfo(const char *grpname,                  // NULL if roxie label set
                                 IGroup *grp,
                                 const ClusterPartDiskMapSpec &mspec,
@@ -321,6 +330,10 @@ extern da_decl const char *queryPartMask();
 extern da_decl StringBuffer &getPartMask(StringBuffer &ret,const char *lname=NULL,unsigned partmax=0);
 extern da_decl void setPartMask(const char * mask);
 extern da_decl bool setReplicateDir(const char *name,StringBuffer &out, bool isrep=true,const char *baseDir=NULL,const char *repDir=NULL); // changes directory of name passed to backup directory
+
+extern da_decl void initializeStorageGroups(bool createPlanesFromGroups);
+extern da_decl const char * queryDefaultStoragePlane();
+extern da_decl IStoragePlane * getStoragePlane(const char * name, bool required);
 
 extern da_decl IFileDescriptor *createFileDescriptor();
 extern da_decl IFileDescriptor *createFileDescriptor(IPropertyTree *attr);      // ownership of attr tree is taken

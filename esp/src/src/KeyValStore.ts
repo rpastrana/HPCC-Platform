@@ -1,5 +1,8 @@
+import { detect } from "detect-browser";
 import { Store, ValueChangedMessage } from "@hpcc-js/comms";
 import { Dispatch, IObserverHandle } from "@hpcc-js/util";
+
+declare const dojoConfig;
 
 export interface IKeyValStore {
     set(key: string, value: string, broadcast?: boolean): Promise<void>;
@@ -13,18 +16,82 @@ export interface IKeyValStore {
  *  Global Store
  *      Stores info in Dali, ignores user ID
  *      No push notifications outside of current tab
- **/
+ */
 export function globalKeyValStore(): IKeyValStore {
     return Store.attach({ baseUrl: "" }, "HPCCApps", "ECLWatch", false);
+}
+
+// Initialize Global Store  ---
+const store = globalKeyValStore();
+store.set("", "", false);
+
+// Grab some aprox metrics - ignoring obvious race condition
+const browser = detect();
+const majorVersion = browser.version.split(".")[0];
+const now = new Date(Date.now()).toISOString();
+store.get("browser-stats").then(statsStr => {
+    try {
+        const stats = JSON.parse(statsStr || "{}") || {};
+        if (!stats.since) stats.since = now;
+        if (browser.type === "browser") {
+            //  Browser Stats  ---
+            if (!stats[browser.name]) stats[browser.name] = {};
+            if (!stats[browser.name][majorVersion]) stats[browser.name][majorVersion] = {};
+            stats[browser.name][majorVersion].lastSeen = now;
+
+            if (!stats[browser.name][majorVersion].count) stats[browser.name][majorVersion].count = 0;
+            stats[browser.name][majorVersion].count++;
+
+            //  OS Stats  ---
+            if (!stats[browser.os]) stats[browser.os] = {};
+            stats[browser.os].lastSeen = now;
+
+            if (!stats[browser.os].count) stats[browser.os].count = 0;
+            stats[browser.os].count++;
+
+            store.set("browser-stats", JSON.stringify(stats), false);
+        }
+    } catch (e) {
+        console.warn("Failed to wrtie stats", e);
+    }
+});
+
+export function fetchStats() {
+    const store = globalKeyValStore();
+    return store.get("browser-stats").then(statsStr => {
+        const browser = [];
+        const os = [];
+        try {
+            const stats = JSON.parse(statsStr);
+            for (const key in stats) {
+                if (key !== "since") {
+                    const val = stats[key];
+                    if (val.count === undefined) {
+                        for (const bKey in val) {
+                            browser.push([`${key}-${bKey}`, val[bKey].count]);
+                        }
+                    } else {
+                        os.push([`${key}`, val.count]);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to read stats", e);
+        }
+        return {
+            browser,
+            os
+        };
+    });
 }
 
 /**
  *  User Store
  *      Stores info in Dali by user ID
  *      No push notifications outside of current tab
- **/
+ */
 export function userKeyValStore(): IKeyValStore {
-    const userName = globalThis.dojoConfig.username;
+    const userName = dojoConfig.username;
     if (!userName) {
         //  Fallback to local storage  ---
         return localKeyValStore();
@@ -45,14 +112,14 @@ class LocalStorage implements IKeyValStore {
         this._prefixLength = this._prefix.length;
 
         if (typeof StorageEvent !== void (0)) {
-            window.addEventListener('storage', (event: StorageEvent) => {
+            window.addEventListener("storage", (event: StorageEvent) => {
                 if (this.isECLWatchKey(event.key)) {
                     this._dispatch.post(new ValueChangedMessage(this.extractKey(event.key), event.newValue, event.oldValue));
                 }
             });
         } else {
             console.log("Browser doesn't support multi-tab communication");
-        };
+        }
     }
 
     isECLWatchKey(key: string): boolean {
@@ -110,7 +177,7 @@ let _localStorage: LocalStorage;
  *  Local Store
  *      Stores info in local storage
  *      Includes push notifications outside of current tab
- **/
+ */
 export function localKeyValStore(): IKeyValStore {
     if (!_localStorage) {
         _localStorage = new LocalStorage();
@@ -133,7 +200,7 @@ let _sessionStorage: SessionStorage;
  *  Session Store
  *      Stores info in session storage
  *      Includes push notifications outside of current tab
- **/
+ */
 export function sessionKeyValStore(): IKeyValStore {
     if (!_sessionStorage) {
         _sessionStorage = new SessionStorage();

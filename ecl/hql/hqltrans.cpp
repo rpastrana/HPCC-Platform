@@ -37,8 +37,10 @@
  //#define TRACE_DEEP_SCOPES
 #endif
 
+#ifdef OPTIMIZE_TRANSFORM_ALLOCATOR
 static unsigned transformerDepth;
 static CLargeMemoryAllocator * transformerHeap;
+#endif
 
 #define ALLOCATOR_MIN_PAGES     10
 
@@ -920,6 +922,7 @@ IHqlExpression * QuickHqlTransformer::createTransformedBody(IHqlExpression * exp
     case no_getresult:
         if (!expr->queryRecord())
             break;
+        //fallthrough
     case no_newtransform:
     case no_transform:
     case no_rowsetrange:
@@ -1326,7 +1329,7 @@ void NewHqlTransformer::analyseExpr(IHqlExpression * expr)
         {
             IHqlExpression * ds = expr->queryChild(0);
 #ifdef _DEBUG
-            IHqlExpression * field = expr->queryChild(1);
+            IHqlExpression * field __attribute__((unused)) = expr->queryChild(1);  // to simplify viewing in a debugger
 #endif
             if (isNewSelector(expr))
                 analyseExpr(ds);
@@ -2027,29 +2030,42 @@ IHqlExpression * NewHqlTransformer::doUpdateOrphanedSelectors(IHqlExpression * e
     //Happens in constant folding when filters etc. are replaced with a very different child
     //Happens when also hoisting a non-table expression e.g, globalAutoHoist
 
-    IHqlExpression * newDs = transformed->queryChild(0);
-    if (!newDs || !newDs->isDataset())
-        return LINK(transformed);
-
+    // Check this before unwinding the arguments
     childDatasetType childType = getChildDatasetType(expr);
     if (!(childType & childdataset_hasdataset))
         return LINK(transformed);
 
-    LinkedHqlExpr updated = transformed;
+    HqlExprArray args;
+    unwindChildren(args, transformed);
+    if (updateOrphanedSelectors(args, expr))
+        return transformed->clone(args);
+    return LINK(transformed);
+}
+
+bool NewHqlTransformer::updateOrphanedSelectors(HqlExprArray & args, IHqlExpression * expr)
+{
+    //See the comments in doUpdateOrphanedSelectors() above
+    childDatasetType childType = getChildDatasetType(expr);
+    if (!(childType & childdataset_hasdataset))
+        return false;
+
+    IHqlExpression * newDs = &args.item(0);
+    if (!newDs || !newDs->isDataset())
+        return false;
+
     IHqlExpression * ds = expr->queryChild(0);
+    bool changed = false;
     for (;;)
     {
         if (newDs == ds)
-            return updated.getClear();
+            return changed;
 
         OwnedHqlExpr transformedSelector = transformSelector(ds->queryNormalizedSelector());
         IHqlExpression * newSelector = newDs->queryNormalizedSelector();
         if (transformedSelector != newSelector)
         {
-            HqlExprArray args;
-            args.append(*LINK(updated->queryChild(0)));
-            replaceSelectors(args, updated, 1, transformedSelector, newSelector);
-            updated.setown(updated->clone(args));
+            changed = true;
+            replaceSelectors(args, 1, transformedSelector, newSelector);
         }
 
         //In unusual situations we also need to map selectors for any parent datasets that are in scope
@@ -2063,11 +2079,18 @@ IHqlExpression * NewHqlTransformer::doUpdateOrphanedSelectors(IHqlExpression * e
             break;
 
         //ds.x has changed to ds'.x - need to map any selectors from ds to ds'
-        newDs = queryDatasetCursor(newRoot->queryChild(0));
-        ds = queryDatasetCursor(oldRoot->queryChild(0));
+        newDs = newRoot->queryChild(0);
+        ds = oldRoot->queryChild(0);
+        // If ds.x is mapped to r.y.x then only map ds to r.y
+        while ((ds->getOperator() == no_select) && !ds->isDataset() && !ds->isDictionary())
+        {
+            if (newDs->getOperator() != no_select)
+                break;
+            ds = ds->queryChild(0);
+            newDs = newDs->queryChild(0);
+        }
     }
-
-    return updated.getClear();
+    return changed;
 }
 
 //---------------------------------------------------------------------------
@@ -3061,7 +3084,7 @@ void MergingHqlTransformer::pushChildContext(IHqlExpression * expr, IHqlExpressi
     IHqlExpression * scope = expr;
     //NB: Do no call createComma because that calls createDataset which unwinds a comma list!
     if (childScope)
-        childScope.setown(createValue(no_comma,LINK(scope), childScope.getClear()));
+        childScope.setown(createValue(no_comma, nullptr, LINK(scope), childScope.getClear()));
     else
         childScope.set(scope);
     initializeActiveSelector(expr, transformed);
@@ -3223,6 +3246,26 @@ NewSelectorReplacingTransformer::NewSelectorReplacingTransformer() : NewHqlTrans
     isHidden=false; 
 }
 
+void NewSelectorReplacingTransformer::initNullMapping(IHqlExpression * selector)
+{
+    node_operator op = selector->getOperator();
+    assertex(op == no_left || op == no_right);
+
+    setNullMapping(selector, selector->queryRecord(), false);
+    setNullMapping(selector, selector->queryRecord(), true);
+
+    //Also map the selector to the a null row
+    OwnedHqlExpr nullValue = createNullExpr(selector);
+    setRootMapping(selector, nullValue, false);
+    setRootMapping(selector, nullValue, true);
+
+    //And map MATCHED(RIGHT) -> false since that can be used inside a JOIN ONFAIL() clause.
+    OwnedHqlExpr matchedExpr = createValue(no_matched_injoin, makeBoolType(), LINK(selector));
+    setSelectorMapping(matchedExpr, queryBoolExpr(false));
+    setMappingOnly(matchedExpr, queryBoolExpr(false));
+
+    oldSelector.set(selector);
+}
 
 void NewSelectorReplacingTransformer::initSelectorMapping(IHqlExpression * oldDataset, IHqlExpression * newDataset)
 {
@@ -3278,6 +3321,32 @@ void NewSelectorReplacingTransformer::setNestedMapping(IHqlExpression * oldSel, 
                     OwnedHqlExpr newSelected = createSelectExpr(LINK(newSel), LINK(cur));
                     setRootMapping(oldSelected, newSelected, oldField->queryRecord(), isSelector);
                 }
+                break;
+            }
+        }
+    }
+}
+
+void NewSelectorReplacingTransformer::setNullMapping(IHqlExpression * selector, IHqlExpression * record, bool isSelector)
+{
+    ForEachChild(i, record)
+    {
+        IHqlExpression * cur = record->queryChild(i);
+        switch (cur->getOperator())
+        {
+        case no_record:
+            setNullMapping(selector, cur, isSelector);
+            break;
+        case no_ifblock:
+            setNullMapping(selector, cur->queryChild(1), isSelector);
+            break;
+        case no_field:
+            {
+                IHqlExpression * field = cur;
+                OwnedHqlExpr selected = createSelectExpr(LINK(selector), LINK(field));
+                OwnedHqlExpr newValue = createNullExpr(selected);
+                setRootMapping(selected, newValue, field->queryRecord(), isSelector);
+                break;
             }
         }
     }
@@ -4571,8 +4640,8 @@ void ScopedTransformer::throwScopeError()
 
 ScopedDependentTransformer::ScopedDependentTransformer(HqlTransformerInfo & _info) : ScopedTransformer(_info)
 {
-    cachedLeft.setown(createValue(no_left));
-    cachedRight.setown(createValue(no_right));
+    cachedLeft.setown(createValue(no_left, makeNullType()));
+    cachedRight.setown(createValue(no_right, makeNullType()));
 }
 
 bool ScopedDependentTransformer::setDataset(IHqlExpression * ds, IHqlExpression * transformedDs)
@@ -4669,7 +4738,7 @@ void ScopedDependentTransformer::pushChildContext(IHqlExpression * expr, IHqlExp
     {
         //NB: Do no call createComma because that calls createDataset which unwinds a comma list!
         if (childScope)
-            childScope.setown(createValue(no_comma,LINK(scope), childScope.getClear()));
+            childScope.setown(createValue(no_comma, nullptr, LINK(scope), childScope.getClear()));
         else
             childScope.set(scope);
 
@@ -4755,7 +4824,7 @@ void SplitterVerifier::analyseExpr(IHqlExpression * expr)
         {
 #ifdef _DEBUG
             IHqlExpression * id = expr->queryAttribute(_uid_Atom);
-            unsigned idValue = (id ? (unsigned)getIntValue(id->queryChild(0)) : 0);
+            unsigned idValue __attribute__((unused)) = (id ? (unsigned)getIntValue(id->queryChild(0)) : 0);  // to simplify viewing in a debugger
 #endif
             unsigned splitSize = (unsigned)getIntValue(expr->queryChild(1), 0);
             if (extra->useCount > splitSize)

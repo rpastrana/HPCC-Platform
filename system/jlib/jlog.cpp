@@ -90,7 +90,7 @@ void LogMsgSysInfo::deserialize(MemoryBuffer & in)
 
 class LoggingFieldColumns
 {
-    const EnumMapping MsgFieldMap[15] =
+    const EnumMapping MsgFieldMap[16] =
     {
         { MSGFIELD_msgID,     "MsgID    " },
         { MSGFIELD_audience,  "Audience " },
@@ -106,7 +106,8 @@ class LoggingFieldColumns
         { MSGFIELD_node,      "Node                " },
         { MSGFIELD_job,       "JobID  " },
         { MSGFIELD_user,      "UserID  " },
-        { MSGFIELD_component, "Compo " }
+        { MSGFIELD_component, "Compo " },
+        { MSGFIELD_quote,     "Quoted "}
     };
     const unsigned sizeMsgFieldMap = arraysize(MsgFieldMap);
 public:
@@ -194,7 +195,7 @@ StringBuffer & LogMsg::toStringPlain(StringBuffer & out, unsigned fields) const
     if(fields & MSGFIELD_audience)
         out.append("aud=").append(LogMsgAudienceToVarString(category.queryAudience())).append(' ');
     if(fields & MSGFIELD_class)
-        out.append("cls=").append(LogMsgClassToVarString(category.queryClass())).append(' ');
+        out.append("cls=").append(LogMsgClassToFixString(category.queryClass())).append(' ');
     if(fields & MSGFIELD_detail)
         out.appendf("det=%d ", category.queryDetail());
     if(fields & MSGFIELD_timeDate)
@@ -447,7 +448,7 @@ void LogMsg::fprintPlain(FILE * handle, unsigned fields) const
     if(fields & MSGFIELD_audience)
         fprintf(handle, "aud=%s", LogMsgAudienceToVarString(category.queryAudience()));
     if(fields & MSGFIELD_class)
-        fprintf(handle, "cls=%s", LogMsgClassToVarString(category.queryClass()));
+        fprintf(handle, "cls=%s", LogMsgClassToFixString(category.queryClass()));
     if(fields & MSGFIELD_detail)
         fprintf(handle, "det=%d ", category.queryDetail());
     if(fields & MSGFIELD_timeDate)
@@ -1001,14 +1002,24 @@ void FileLogMsgHandlerXML::addToPTree(IPropertyTree * tree) const
 }
 
 // RollingFileLogMsgHandler
+#define MIN_LOGFILE_SIZE_LIMIT 10000
+#define LOG_LINE_SIZE_ESTIMATE 80
 
-RollingFileLogMsgHandler::RollingFileLogMsgHandler(const char * _filebase, const char * _fileextn, unsigned _fields, bool _append, bool _flushes, const char *initialName, const char *_alias, bool daily)
-  : handle(0), messageFields(_fields), alias(_alias), filebase(_filebase), fileextn(_fileextn), append(_append), flushes(_flushes)
+RollingFileLogMsgHandler::RollingFileLogMsgHandler(const char * _filebase, const char * _fileextn, unsigned _fields, bool _append, bool _flushes, const char *initialName, const char *_alias, bool daily, long _maxLogFileSize)
+  : handle(0), messageFields(_fields), alias(_alias), filebase(_filebase), fileextn(_fileextn), append(_append), flushes(_flushes), maxLogFileSize(_maxLogFileSize)
 {
+    if (_maxLogFileSize)
+    {
+        if (_maxLogFileSize < MIN_LOGFILE_SIZE_LIMIT)                 // Setting the cap too low, doesn't work well
+            maxLogFileSize = MIN_LOGFILE_SIZE_LIMIT;
+        maxLogFileSize = _maxLogFileSize - (LOG_LINE_SIZE_ESTIMATE*2); // Trying to keep log file size below capped
+    };
+
     time_t tNow;
     time(&tNow);
     localtime_r(&tNow, &startTime);
     doRollover(daily, initialName);
+    checkRollover();
 }
 
 RollingFileLogMsgHandler::~RollingFileLogMsgHandler()
@@ -1046,8 +1057,6 @@ void RollingFileLogMsgHandler::addToPTree(IPropertyTree * tree) const
     tree->addPropTree("handler", handlerTree);
 }
 
-#define ROLLOVER_PERIOD 86400
-
 void RollingFileLogMsgHandler::checkRollover()
 {
     time_t tNow;
@@ -1058,6 +1067,24 @@ void RollingFileLogMsgHandler::checkRollover()
     {
         localtime_r(&tNow, &startTime);  // reset the start time for next rollover check
         doRollover(true);
+    }
+    else if (maxLogFileSize)
+    {
+        linesSinceSizeChecked++;
+        if (linesSinceSizeChecked > sizeCheckNext)
+        {
+            long fsize = ftell(handle);
+            if ((fsize==-1 && errno==EOVERFLOW) || (fsize >= maxLogFileSize))
+            {
+                localtime_r(&tNow, &startTime);
+                doRollover(false);
+            }
+            else
+                // Calc how many lines to skip before next log file size check
+                //  - using (LOG_LINE_SIZE_ESTIMATE*2) to ensure the size check is done well before limit
+                sizeCheckNext = (maxLogFileSize - fsize) / (LOG_LINE_SIZE_ESTIMATE*2);
+            linesSinceSizeChecked = 0;
+        }
     }
 }
 
@@ -2177,9 +2204,9 @@ ILogMsgHandler * getFileLogMsgHandler(const char * filename, const char * header
     return new FileLogMsgHandlerTable(filename, headertext, fields, append, flushes);
 }
 
-ILogMsgHandler * getRollingFileLogMsgHandler(const char * filebase, const char * fileextn, unsigned fields, bool append, bool flushes, const char *initialName, const char *alias, bool daily)
+ILogMsgHandler * getRollingFileLogMsgHandler(const char * filebase, const char * fileextn, unsigned fields, bool append, bool flushes, const char *initialName, const char *alias, bool daily, long maxLogSize)
 {
-    return new RollingFileLogMsgHandler(filebase, fileextn, fields, append, flushes, initialName, alias, daily);
+    return new RollingFileLogMsgHandler(filebase, fileextn, fields, append, flushes, initialName, alias, daily, maxLogSize);
 }
 
 ILogMsgHandler * getBinLogMsgHandler(const char * filename, bool append)
@@ -2203,7 +2230,7 @@ ILogMsgHandler * getLogMsgHandlerFromPTree(IPropertyTree * tree)
         if(isdigit(fstr[0]))
             fields = atoi(fstr);
         else
-            fields = LogMsgFieldsFromAbbrevs(fstr);
+            fields = logMsgFieldsFromAbbrevs(fstr);
     }
     if(strcmp(type.str(), "stderr")==0)
         return getHandleLogMsgHandler(stderr, fields, tree->hasProp("@writeXML"));
@@ -2322,6 +2349,82 @@ MODULE_EXIT()
     thePassLocalFilter = NULL;
     thePassAllFilter = NULL;
 }
+
+#ifdef _CONTAINERIZED
+
+static constexpr const char * logFieldsAtt = "@fields";
+static constexpr const char * logMsgDetailAtt = "@detail";
+static constexpr const char * logMsgAudiencesAtt = "@audiences";
+static constexpr const char * logMsgClassesAtt = "@classes";
+static constexpr const char * useLogQueueAtt = "@useLogQueue";
+static constexpr const char * logQueueLenAtt = "@queueLen";
+static constexpr const char * logQueueDropAtt = "@queueDrop";
+static constexpr const char * logQueueDisabledAtt = "@disabled";
+static constexpr const char * useSysLogpAtt ="@enableSysLog";
+
+#ifdef _DEBUG
+static constexpr bool useQueueDefault = false;
+#else
+static constexpr bool useQueueDefault = true;
+#endif
+
+static constexpr unsigned queueLenDefault = 512;
+static constexpr unsigned queueDropDefault = 32;
+static constexpr bool useSysLogDefault = false;
+
+void setupContainerizedLogMsgHandler()
+{
+    IPropertyTree * logConfig = queryComponentConfig().queryPropTree("logging");
+    if (logConfig)
+    {
+        if (logConfig->getPropBool(logQueueDisabledAtt, false))
+        {
+            removeLog();
+            return;
+        }
+        if (logConfig->hasProp(logFieldsAtt))
+        {
+            //Supported logging fields: AUD,CLS,DET,MID,TIM,DAT,PID,TID,NOD,JOB,USE,SES,COD,MLT,MCT,NNT,COM,QUO,PFX,ALL,STD
+            const char *logFields = logConfig->queryProp(logFieldsAtt);
+            if (!isEmptyString(logFields))
+                theStderrHandler->setMessageFields(logMsgFieldsFromAbbrevs(logFields));
+        }
+
+        //Only recreate filter if at least one filter attribute configured
+        if (logConfig->hasProp(logMsgDetailAtt) || logConfig->hasProp(logMsgAudiencesAtt) || logConfig->hasProp(logMsgClassesAtt))
+        {
+            LogMsgDetail logDetail = logConfig->getPropInt(logMsgDetailAtt, DefaultDetail);
+
+            unsigned msgClasses = MSGCLS_all;
+            const char *logClasses = logConfig->queryProp(logMsgClassesAtt);
+            if (!isEmptyString(logClasses))
+                msgClasses = logMsgClassesFromAbbrevs(logClasses);
+
+            unsigned msgAudiences = MSGAUD_all;
+            const char *logAudiences = logConfig->queryProp(logMsgAudiencesAtt);
+            if (!isEmptyString(logAudiences))
+                msgAudiences = logMsgAudsFromAbbrevs(logAudiences);
+
+            const bool local = true; // Do not include remote messages from other components
+            Owned<ILogMsgFilter> filter = getCategoryLogMsgFilter(msgAudiences, msgClasses, logDetail, local);
+            theManager->changeMonitorFilter(theStderrHandler, filter);
+        }
+
+        bool useLogQueue = logConfig->getPropBool(useLogQueueAtt, useQueueDefault);
+        if (useLogQueue)
+        {
+            unsigned queueLen = logConfig->getPropInt(logQueueLenAtt, queueLenDefault);
+            unsigned queueDrop = logConfig->getPropInt(logQueueDropAtt, queueDropDefault);
+
+            queryLogMsgManager()->enterQueueingMode();
+            queryLogMsgManager()->setQueueDroppingLimit(queueLen, queueDrop);
+        }
+
+        if (logConfig->getPropBool(useSysLogpAtt, useSysLogDefault))
+            UseSysLogForOperatorMessages();
+    }
+}
+#endif
 
 ILogMsgManager * queryLogMsgManager()
 {
@@ -2790,6 +2893,7 @@ private:
     StringBuffer logDir;        //access via queryLogDir()
     StringBuffer aliasFileSpec; //access via queryAliasFileSpec()
     StringBuffer expandedLogSpec;//access via queryLogFileSpec()
+    long         maxLogFileSize = 0;
 
 private:
     void setDefaults()
@@ -2799,7 +2903,7 @@ private:
         flushes = true;
         const char *logFields = queryEnvironmentConf().queryProp("logfields");
         if (!isEmptyString(logFields))
-            msgFields = LogMsgFieldsFromAbbrevs(logFields);
+            msgFields = logMsgFieldsFromAbbrevs(logFields);
         else
             msgFields = MSGFIELD_STANDARD;
         msgAudiences = MSGAUD_all;
@@ -2844,7 +2948,7 @@ public:
     void setAliasName(const char * _aliasName)   { aliasName.set(_aliasName); }
     void setLogDirSubdir(const char * _subdir)   { logDirSubdir.set(_subdir); }
     void setRolling(const bool _rolls)       { rolling = _rolls; }
-
+    void setMaxLogFileSize( const long _size)    { maxLogFileSize = _size; }
     //ILogMsgHandler fields
     void setAppend(const bool _append)       { append = _append; }
     void setFlushes(const bool _flushes)     { flushes = _flushes; }
@@ -2902,7 +3006,7 @@ public:
         ILogMsgHandler * lmh;
         if (rolling)
         {
-            lmh = getRollingFileLogMsgHandler(logFileSpec.str(), extension, msgFields, append, flushes, NULL, aliasFileSpec.str(), true);
+            lmh = getRollingFileLogMsgHandler(logFileSpec.str(), extension, msgFields, append, flushes, NULL, aliasFileSpec.str(), true, maxLogFileSize);
         }
         else
         {

@@ -1,15 +1,12 @@
 import * as lang from "dojo/_base/lang";
-import "dojo/i18n";
-// @ts-ignore
-import * as nlsHPCC from "dojo/i18n!hpcc/nls/hpcc";
 import * as aspect from "dojo/aspect";
 import * as dom from "dojo/dom";
 
 import * as registry from "dijit/registry";
 
-import { hashSum } from "@hpcc-js/util";
 import { ScopeGraph, Workunit } from "@hpcc-js/comms";
 import { Graph as GraphWidget, Subgraph, Vertex } from "@hpcc-js/graph";
+import { hashSum } from "@hpcc-js/util";
 
 // @ts-ignore
 import * as _Widget from "hpcc/_Widget";
@@ -22,7 +19,8 @@ import "dijit/layout/ContentPane";
 import "dijit/Toolbar";
 import "dijit/ToolbarSeparator";
 
-import { declareDecorator } from './DeclareDecorator';
+import { declareDecorator } from "./DeclareDecorator";
+import nlsHPCC from "./nlsHPCC";
 import { WUScopeController } from "./WUScopeController";
 
 type _Widget = {
@@ -239,7 +237,7 @@ export class Graph7Widget {
                         break;
                 }
             });
-        ;
+
         this._graph.tooltipHTML((v: Vertex) => {
             return this._gc.calcGraphTooltip2(v);
         });

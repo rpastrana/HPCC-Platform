@@ -186,6 +186,7 @@ int CEspHttpServer::processRequest()
 {
     m_request->setPersistentEnabled(m_apport->queryProtocol()->persistentEnabled() && !shouldClose);
     m_response->setPersistentEnabled(m_apport->queryProtocol()->persistentEnabled() && !shouldClose);
+    m_response->enableCompression();
     try
     {
         if (m_request->receive(NULL)==-1) // MORE - pass in IMultiException if we want to see exceptions (which are not fatal)
@@ -453,7 +454,15 @@ int CEspHttpServer::onGetApplicationFrame(CHttpRequest* request, CHttpResponse* 
         response->setContentType("text/html; charset=UTF-8");
         response->setStatus(HTTP_STATUS_OK);
 
-        const char *timestr=ctime(&modtime);
+        char timestr[128];
+#ifdef _WIN32
+        ctime_s(timestr, 128, &modtime);
+#else
+        ctime_r(&modtime, timestr);
+#endif
+        int timelen = strlen(timestr);
+        if (timelen > 0 && timestr[timelen -1] == '\n')
+            timestr[timelen - 1] = '\0';
         response->addHeader("Last-Modified", timestr);
         response->send();
     }
@@ -857,15 +866,29 @@ int CEspHttpServer::onGet()
 {   
     if (m_request && m_request->queryParameters()->hasProp("config_") && m_viewConfig)
     {
-        StringBuffer mimetype, etag, lastModified;
-        MemoryBuffer content;
-        bool modified = true;
-        m_request->getHeader("If-None-Match", etag);
-        m_request->getHeader("If-Modified-Since", lastModified);
-        httpContentFromFile("esp.xml", mimetype, content, modified, lastModified, etag);
-        m_response->setVersion(HTTP_VERSION);
-        m_response->CheckModifiedHTTPContent(modified, lastModified.str(), etag.str(), HTTP_TYPE_APPLICATION_XML_UTF8, content);
-        m_response->send();
+        if (getESPContainer() && getESPContainer()->queryApplicationConfig())
+        {
+            StringBuffer content("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            if (m_request->queryParameters() && m_request->queryParameters()->hasProp("display"))
+                content.append("<?xml-stylesheet type=\"text/xsl\" href=\"/esp/xslt/xmlformatter.xsl\"?>");
+            toXML(getESPContainer()->queryApplicationConfig(), content);
+            m_response->setContentType("application/xml");
+            m_response->setContent(content);
+            m_response->setVersion(HTTP_VERSION);
+            m_response->send();
+        }
+        else
+        {
+            StringBuffer mimetype, etag, lastModified;
+            MemoryBuffer content;
+            bool modified = true;
+            m_request->getHeader("If-None-Match", etag);
+            m_request->getHeader("If-Modified-Since", lastModified);
+            httpContentFromFile("esp.xml", mimetype, content, modified, lastModified, etag);
+            m_response->CheckModifiedHTTPContent(modified, lastModified.str(), etag.str(), HTTP_TYPE_APPLICATION_XML_UTF8, content);
+            m_response->setVersion(HTTP_VERSION);
+            m_response->send();
+        }
     }
     else
     {
@@ -1046,6 +1069,7 @@ EspAuthState CEspHttpServer::preCheckAuth(EspAuthRequest& authReq)
                 clearCookie(authReq.authBinding->querySessionIDCookieName());
                 clearCookie(SESSION_ID_TEMP_COOKIE);
                 clearCookie(SESSION_TIMEOUT_COOKIE);
+                clearCookie(USER_ACCT_ERROR_COOKIE);
             }
             else
                 clearSessionCookies(authReq);
@@ -1182,10 +1206,11 @@ void CEspHttpServer::verifyCookie(EspAuthRequest& authReq, CESPCookieVerificatio
         verifyESPAuthenticatedCookie(authReq, cookie);
     else if (strieq(name, USER_NAME_COOKIE))
         verifyESPUserNameCookie(authReq, cookie);
-    else if (strieq(name, SESSION_TIMEOUT_COOKIE) || strieq(name, SESSION_AUTH_MSG_COOKIE))
+    else if (strieq(name, SESSION_TIMEOUT_COOKIE) || strieq(name, SESSION_AUTH_MSG_COOKIE) || strieq(name, USER_ACCT_ERROR_COOKIE))
     {
         //SESSION_TIMEOUT_COOKIE: used to pass timeout settings to a client.
         //SESSION_AUTH_MSG_COOKIE: used to pass authentication message to a client.
+        //USER_ACCT_ERROR_COOKIE: used to pass user account status to a client.
         //A client should clean it as soon as received. ESP always returns invalid if it is asked.
         cookie.verificationDetails.set("ESP cannot verify this cookie. It is one-time use only.");
     }
@@ -1413,6 +1438,9 @@ EspAuthState CEspHttpServer::checkUserAuthPerSession(EspAuthRequest& authReq, St
 
     if (authReq.authBinding->isDomainAuthResources(authReq.httpPath.str()))
         return authSucceeded;//Give the permission to send out some pages used for login or logout.
+
+    if (authReq.authBinding->isUnrestrictedSSType(authReq.stype))
+        return authSucceeded;//Give the permission to send out some pages which do not need user authentication.
 
     if (!authorizationHeader.isEmpty() && !isServiceMethodReq(authReq, "esp", "login")
         && !isServiceMethodReq(authReq, "esp", "unlock"))
@@ -1993,8 +2021,8 @@ void CEspHttpServer::logoutSession(EspAuthRequest& authReq, unsigned sessionID, 
                 if (user)
                 {
                     //inform security manager that user is logged out
-                    Owned<ISecUser> secUser = secmgr->createUser(user);
-                    secmgr->logoutUser(*secUser);
+                    Owned<ISecUser> secUser = secmgr->createUser(user, ctx->querySecureContext());
+                    secmgr->logoutUser(*secUser, ctx->querySecureContext());
                 }
             }
 
@@ -2024,17 +2052,33 @@ void CEspHttpServer::logoutSession(EspAuthRequest& authReq, unsigned sessionID, 
 EspAuthState CEspHttpServer::handleAuthFailed(bool sessionAuth, EspAuthRequest& authReq, bool unlock, const char* msg)
 {
     ISecUser *user = authReq.ctx->queryUser();
-    if (user && user->getAuthenticateStatus() == AS_PASSWORD_VALID_BUT_EXPIRED)
+    if (user)
     {
-        ESPLOG(LogMin, "ESP password expired for %s. Asking update ...", authReq.ctx->queryUserId());
-        if (sessionAuth) //For session auth, store the userid to cookie for the updatepasswordinput form.
-            addCookie(SESSION_ID_TEMP_COOKIE, authReq.ctx->queryUserId(), 0, true);
-        m_response->redirect(*m_request.get(), "/esp/updatepasswordinput");
-        return authSucceeded;
+        switch (user->getAuthenticateStatus())
+        {
+        case AS_PASSWORD_VALID_BUT_EXPIRED :
+            ESPLOG(LogMin, "ESP password expired for %s. Asking update ...", authReq.ctx->queryUserId());
+            if (sessionAuth) //For session auth, store the userid to cookie for the updatepasswordinput form.
+                addCookie(SESSION_ID_TEMP_COOKIE, authReq.ctx->queryUserId(), 0, true);
+            m_response->redirect(*m_request.get(), "/esp/updatepasswordinput");
+            return authSucceeded;
+        case AS_PASSWORD_EXPIRED :
+            ESPLOG(LogMin, "ESP password expired for %s", authReq.ctx->queryUserId());
+            break;
+        case AS_ACCOUNT_DISABLED :
+            ESPLOG(LogMin, "Account disabled for %s", authReq.ctx->queryUserId());
+            addCookie(USER_ACCT_ERROR_COOKIE, "Account Disabled", 0, false);
+            break;
+        case AS_ACCOUNT_EXPIRED :
+            ESPLOG(LogMin, "Account expired for %s", authReq.ctx->queryUserId());
+            addCookie(USER_ACCT_ERROR_COOKIE, "Account Expired", 0, false);
+            break;
+        case AS_ACCOUNT_LOCKED :
+            ESPLOG(LogMin, "Account locked for %s", authReq.ctx->queryUserId());
+            addCookie(USER_ACCT_ERROR_COOKIE, "Account Locked", 0, false);
+            break;
+        }
     }
-
-    if (user && (user->getAuthenticateStatus() == AS_PASSWORD_EXPIRED))
-        ESPLOG(LogMin, "ESP password expired for %s", authReq.ctx->queryUserId());
 
     if (unlock)
     {
@@ -2154,9 +2198,9 @@ void CEspHttpServer::timeoutESPSessions(EspHttpBinding* authBinding, IPropertyTr
 void CEspHttpServer::authOptionalGroups(EspAuthRequest& authReq)
 {
     if (strieq(authReq.httpMethod.str(), GET_METHOD) && (authReq.stype==sub_serv_root) && authenticateOptionalFailed(*authReq.ctx, nullptr))
-        throw MakeStringException(-1, "Unauthorized Access to service root");
+        throw createEspHttpException(HTTP_STATUS_FORBIDDEN_CODE, "Unauthorized Access to service root", HTTP_STATUS_FORBIDDEN);
     if ((!strieq(authReq.httpMethod.str(), GET_METHOD) || !strieq(authReq.serviceName.str(), "esp")) && authenticateOptionalFailed(*authReq.ctx, authReq.authBinding))
-        throw MakeStringException(-1, "Unauthorized Access: %s %s", authReq.httpMethod.str(), authReq.serviceName.str());
+        throw createEspHttpException(HTTP_STATUS_FORBIDDEN_CODE, VStringBuffer("Unauthorized Access: %s %s", authReq.httpMethod.str(), authReq.serviceName.str()), HTTP_STATUS_FORBIDDEN);
 }
 
 IRemoteConnection* CEspHttpServer::getSDSConnection(const char* xpath, unsigned mode, unsigned timeout)
@@ -2202,6 +2246,7 @@ void CEspHttpServer::clearSessionCookies(EspAuthRequest& authReq)
     clearCookie(SESSION_AUTH_OK_COOKIE);
     clearCookie(SESSION_AUTH_MSG_COOKIE);
     clearCookie(SESSION_TIMEOUT_COOKIE);
+    clearCookie(USER_ACCT_ERROR_COOKIE);
 }
 
 void CEspHttpServer::clearCookie(const char* cookieName)

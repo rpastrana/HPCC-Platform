@@ -35,6 +35,9 @@ set ( ESPSCM_SRCS
       ws_machine.ecm
       ws_smc.ecm
       ws_topology.ecm
+      ws_workunits_struct.ecm
+      ws_workunits_req_resp.ecm
+      ws_workunits_queryset_req_resp.ecm
       ws_workunits.ecm
       ws_packageprocess.ecm
       ws_esdlconfig.ecm
@@ -44,6 +47,7 @@ set ( ESPSCM_SRCS
       ws_elk.ecm
       ws_store.ecm
       ws_codesign.ecm
+      ws_decoupledlogging.ecm
     )
 
 foreach ( loop_var ${ESPSCM_SRCS} )

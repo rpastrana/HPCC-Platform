@@ -1,37 +1,22 @@
 define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
-    "dojo/_base/array",
-    "dojo/on",
-    "dojo/dom-class",
-    "dojo/topic",
+    "src/nlsHPCC",
 
-    "dijit/registry",
-    "dijit/form/ToggleButton",
-    "dijit/ToolbarSeparator",
-
-    "dgrid/tree",
-
-    "src/WsELK",
-    "src/ESPWorkunit",
-    "hpcc/DelayLoadWidget",
     "hpcc/_TabContainerWidget",
-    "src/ESPUtil",
-    "src/Utility",
 
     "dojo/text!../templates/LogVisualizationWidget.html",
 
-    "dijit/form/Button"
+    "dijit/layout/BorderContainer",
+    "dijit/layout/TabContainer",
+    "dijit/Toolbar",
+    "dijit/form/Button",
+    "dijit/ToolbarSeparator",
+    "dijit/form/ToggleButton"
+], function (declare, nlsHPCCMod,
+    _TabContainerWidget) {
 
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, on, domClass, topic,
-    registry, ToggleButton, ToolbarSeparator,
-    tree,
-    WsELK, ESPWorkunit, DelayLoadWidget, _TabContainerWidget, ESPUtil, Utility,
-    template) {
-        return declare("LogVisualizationWidget", [_TabContainerWidget], {
-            i18n: nlsHPCC,
-
-        });
+    var nlsHPCC = nlsHPCCMod.default;
+    return declare("LogVisualizationWidget", [_TabContainerWidget], {
+        i18n: nlsHPCC
     });
+});

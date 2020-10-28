@@ -49,7 +49,6 @@ private:
     CriticalSection joinHelperCrit;
     Owned<IBarrier> barrier;
     SocketEndpoint server;
-    CRuntimeStatisticCollection spillStats;
 
     bool isUnstable()
     {
@@ -59,21 +58,17 @@ private:
 
     IRowStream * doLocalSelfJoin()
     {
-#if THOR_TRACE_LEVEL > 5
-        ActPrintLog("SELFJOIN: Performing local self-join");
-#endif
+        ::ActPrintLog(this, thorDetailedLogLevel, "SELFJOIN: Performing local self-join");
         Owned<IThorRowLoader> iLoader = createThorRowLoader(*this, ::queryRowInterfaces(input), compare, isUnstable() ? stableSort_none : stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_SELFJOIN);
         Owned<IRowStream> rs = iLoader->load(inputStream, abortSoon);
-        mergeStats(spillStats, iLoader);  // Not sure of the best policy if rs spills later on.
+        mergeStats(stats, iLoader, spillStatistics);  // Not sure of the best policy if rs spills later on.
         PARENT::stopInput(0);
         return rs.getClear();
     }
 
     IRowStream * doGlobalSelfJoin()
     {
-#if THOR_TRACE_LEVEL > 5
-        ActPrintLog("SELFJOIN: Performing global self-join");
-#endif
+        ::ActPrintLog(this, thorDetailedLogLevel, "SELFJOIN: Performing global self-join");
         sorter->Gather(::queryRowInterfaces(input), inputStream, compare, NULL, NULL, keyserializer, NULL, NULL, false, isUnstable(), abortSoon, NULL);
         PARENT::stopInput(0);
         if (abortSoon)
@@ -92,7 +87,7 @@ private:
 
 public:
     SelfJoinSlaveActivity(CGraphElementBase *_container, bool _isLocal, bool _isLightweight)
-        : CSlaveActivity(_container), spillStats(spillStatistics)
+        : CSlaveActivity(_container, joinActivityStatistics)
     {
         helper = static_cast <IHThorJoinArg *> (queryHelper());
         isLocal = _isLocal||_isLightweight;
@@ -109,7 +104,7 @@ public:
     ~SelfJoinSlaveActivity()
     {
         if(portbase) 
-            freePort(portbase,NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
     }
 
 // IThorSlaveActivity
@@ -120,19 +115,19 @@ public:
             mpTagRPC = container.queryJobChannel().deserializeMPTag(data);
             mptag_t barrierTag = container.queryJobChannel().deserializeMPTag(data);
             barrier.setown(container.queryJobChannel().createBarrier(barrierTag));
-            portbase = allocPort(NUMSLAVEPORTS);
+            portbase = queryJobChannel().allocPort(NUMSLAVEPORTS);
             server.setLocalHost(portbase);
             sorter.setown(CreateThorSorter(this, server,&container.queryJob().queryIDiskUsage(),&queryJobChannel().queryJobComm(),mpTagRPC));
             server.serialize(slaveData);
         }
         compare = helper->queryCompareLeft();                   // NB not CompareLeftRight
         keyserializer = helper->querySerializeLeft();           // hopefully never need right
-        if(isLightweight) 
-            ActPrintLog("SELFJOIN: LIGHTWEIGHT");
+        if (isLightweight) 
+            ::ActPrintLog(this, thorDetailedLogLevel, "SELFJOIN: LIGHTWEIGHT");
         else if(isLocal) 
-            ActPrintLog("SELFJOIN: LOCAL");
+            ::ActPrintLog(this, thorDetailedLogLevel, "SELFJOIN: LOCAL");
         else
-            ActPrintLog("SELFJOIN: GLOBAL");
+            ::ActPrintLog(this, thorDetailedLogLevel, "SELFJOIN: GLOBAL");
     }
     virtual void reset() override
     {
@@ -146,7 +141,7 @@ public:
         sorter.clear();
         if (portbase)
         {
-            freePort(portbase, NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
             portbase = 0;
         }
         PARENT::kill();
@@ -155,7 +150,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         bool hintunsortedoutput = getOptBool(THOROPT_UNSORTED_OUTPUT, (JFreorderable & helper->getJoinFlags()) != 0);
         bool hintparallelmatch = getOptBool(THOROPT_PARALLEL_MATCH, hintunsortedoutput); // i.e. unsorted, implies use parallel by default, otherwise no point
@@ -214,7 +209,7 @@ public:
     
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if(joinhelper) {
             OwnedConstThorRow row = joinhelper->nextRow();
             if (row) {
@@ -234,14 +229,13 @@ public:
     }
     virtual void serializeStats(MemoryBuffer &mb) override
     {
+        {
+            CriticalBlock b(joinHelperCrit);
+            rowcount_t p = joinhelper?joinhelper->getLhsProgress():0;
+            stats.setStatistic(StNumLeftRows, p);
+            mergeStats(stats, sorter, spillStatistics);    // No danger of a race with reset() because that never replaces a valid sorter
+        }
         CSlaveActivity::serializeStats(mb);
-        CriticalBlock b(joinHelperCrit);
-        rowcount_t p = joinhelper?joinhelper->getLhsProgress():0;
-        mb.append(p);
-
-        CRuntimeStatisticCollection mergedStats(spillStats);
-        mergeStats(mergedStats, sorter);    // No danger of a race with reset() because that never replaces a valid sorter
-        mergedStats.serialize(mb);
     }
 };
 

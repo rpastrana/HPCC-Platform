@@ -126,7 +126,7 @@ bool actionOnAbort()
 {
     stopServer();
     return true;
-} 
+}
 
 USE_JLIB_ALLOC_HOOK;
 
@@ -139,22 +139,72 @@ void usage(void)
     printf("--daemon|-d <instanceName>\t: run daemon as instance\n");
 }
 
+static IPropertyTree *getSecMgrPluginPropTree(const IPropertyTree *configTree)
+{
+    Owned<IPropertyTree> foundTree;
+
+#ifdef _CONTAINERIZED
+    // TODO
+#else
+    Owned<IRemoteConnection> conn = querySDS().connect("/Environment", 0, 0, INFINITE);
+
+    if (conn)
+    {
+        const IPropertyTree *proptree = conn->queryRoot()->queryPropTree("Software/DaliServerProcess[1]");
+
+        if (proptree)
+        {
+            const char* authMethod = proptree->queryProp("@authMethod");
+
+            if (strisame(authMethod, "secmgrPlugin"))
+            {
+                const char* authPluginType = proptree->queryProp("@authPluginType");
+
+                if (authPluginType)
+                {
+                    VStringBuffer xpath("SecurityManagers/SecurityManager[@name='%s']", authPluginType);
+
+                    foundTree.setown(configTree->getPropTree(xpath));
+
+                    if (!foundTree.get())
+                    {
+                        WARNLOG("secmgPlugin '%s' not defined in configuration", authPluginType);
+                    }
+                }
+            }
+        }
+    }
+#endif
+
+    return foundTree.getClear();
+}
+
 /* NB: Ideally this belongs within common/environment,
  * however, that would introduce a circular dependency.
  */
-static bool populateWhiteListFromEnvironment(IWhiteListWriter &writer)
+static bool populateAllowListFromEnvironment(IAllowListWriter &writer)
 {
+    if (isContainerized())
+        return false;
     Owned<IRemoteConnection> conn = querySDS().connect("/Environment", 0, 0, INFINITE);
     assertex(conn);
+    if (!conn->queryRoot()->hasProp("Software/DaliServerProcess"))
+        return false;
 
-    // only ever expecting 1 DaliServerProcess and 1 WhiteList
-    const IPropertyTree *whiteListTree = conn->queryRoot()->queryPropTree("Software/DaliServerProcess[1]/WhiteList[1]");
-    bool enabled = true;
-    if (whiteListTree)
+    // only ever expecting 1 DaliServerProcess and 1 AllowList
+    const IPropertyTree *allowListTree = conn->queryRoot()->queryPropTree("Software/DaliServerProcess[1]/AllowList[1]");
+    if (!allowListTree)
     {
-        enabled = whiteListTree->getPropBool("@enabled", true); // on by default
-        // Default for now is to allow clients that send no role (legacy) to connect if their IP is whitelisted.
-        writer.setAllowAnonRoles(whiteListTree->getPropBool("@allowAnonRoles", true));
+        // deprecated, but for backward compatibility..
+        allowListTree = conn->queryRoot()->queryPropTree("Software/DaliServerProcess[1]/WhiteList[1]");
+    }
+
+    bool enabled = true;
+    if (allowListTree)
+    {
+        enabled = allowListTree->getPropBool("@enabled", true); // on by default
+        // Default for now is to allow clients that send no role (legacy) to connect if their IP is in allowlist.
+        writer.setAllowAnonRoles(allowListTree->getPropBool("@allowAnonRoles", true));
     }
 
     std::unordered_map<std::string, std::string> machineMap;
@@ -247,7 +297,7 @@ static bool populateWhiteListFromEnvironment(IWhiteListWriter &writer)
                         StringBuffer ipSB;
                         const char *ip = resolveComputer(serverCompName, server.queryProp("@netAddress"), ipSB);
                         if (ip)
-                            writer.add(ip, DCR_RoxyMaster);
+                            writer.add(ip, DCR_Roxie);
                     }
                     break;
                 }
@@ -255,11 +305,21 @@ static bool populateWhiteListFromEnvironment(IWhiteListWriter &writer)
                 {
                     const char *masterCompName = component.queryProp("ThorMasterProcess/@computer");
                     StringBuffer ipSB;
-                    const char *ip = resolveComputer(masterCompName, component.queryProp("@netAddress"), ipSB);
+                    const char *ip = resolveComputer(masterCompName, nullptr, ipSB);
                     if (ip)
                     {
                         writer.add(ip, DCR_ThorMaster);
                         writer.add(ip, DCR_DaliAdmin);
+                    }
+
+                    // NB: slaves are currently seen as foreign clients and are only used by Std.File.GetUniqueInteger (which calls Dali v. occassionally)
+                    Owned<IPropertyTreeIterator> slaveIter = component.getElements("ThorSlaveProcess");
+                    ForEach(*slaveIter)
+                    {
+                        const char *slaveCompName = slaveIter->query().queryProp("@computer");
+                        const char *ip = resolveComputer(slaveCompName, nullptr, ipSB.clear());
+                        if (ip)
+                            writer.add(ip, DCR_ThorSlave);
                     }
                     break;
                 }
@@ -297,12 +357,12 @@ static bool populateWhiteListFromEnvironment(IWhiteListWriter &writer)
         }
     }
 
-    if (whiteListTree)
+    if (allowListTree)
     {
-        Owned<IPropertyTreeIterator> whiteListIter = whiteListTree->getElements("Entry");
-        ForEach(*whiteListIter)
+        Owned<IPropertyTreeIterator> allowListIter = allowListTree->getElements("Entry");
+        ForEach(*allowListIter)
         {
-            const IPropertyTree &entry = whiteListIter->query();
+            const IPropertyTree &entry = allowListIter->query();
             StringArray hosts, roles;
             hosts.appendListUniq(entry.queryProp("@hosts"), ",");
             roles.appendListUniq(entry.queryProp("@roles"), ",");
@@ -336,34 +396,26 @@ static StringBuffer &formatDaliRole(StringBuffer &out, unsigned __int64 role)
     return out.append(queryRoleName((DaliClientRole)role));
 }
 
+static constexpr const char * defaultYaml = R"!!(
+version: 1.0
+dali:
+  name: dali
+  dataPath: "/var/lib/HPCCSystems/dalistorage"
+  logging:
+    detail: 100
+)!!";
 
-int main(int argc, char* argv[])
+
+int main(int argc, const char* argv[])
 {
     rank_t myrank = 0;
-    char *server = nullptr;
+    const char *server = nullptr;
     int port = 0;
-    for (unsigned i=1;i<(unsigned)argc;i++) {
-        if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
-            if (daemon(1,0) || write_pidfile(argv[++i])) {
-                perror("Failed to daemonize");
-                return EXIT_FAILURE;
-            }
-        }
-        else if (streq(argv[i],"--server") || streq(argv[i],"-s"))
-            server = argv[++i];
-        else if (streq(argv[i],"--port") || streq(argv[i],"-p"))
-            port = atoi(argv[++i]);
-        else if (streq(argv[i],"--rank") || streq(argv[i],"-r"))
-            myrank = atoi(argv[++i]);
-        else {
-            usage();
-            return EXIT_FAILURE;
-        }
-    }
+
     InitModuleObjects();
     NoQuickEditSection x;
-    try {
-
+    try
+    {
         EnableSEHtoExceptionMapping();
 #ifndef __64BIT__
         // Restrict stack sizes on 32-bit systems
@@ -371,13 +423,33 @@ int main(int argc, char* argv[])
 #endif
         setAllocHook(true);
 
+        serverConfig.setown(loadConfiguration(defaultYaml, argv, "dali", "DALI", DALICONF, nullptr));
         Owned<IFile> sentinelFile = createSentinelTarget();
         removeSentinelFile(sentinelFile);
-	
-        OwnedIFile confIFile = createIFile(DALICONF);
-        if (confIFile->exists())
-            serverConfig.setown(createPTreeFromXMLFile(DALICONF));
+#ifndef _CONTAINERIZED
 
+        for (unsigned i=1;i<(unsigned)argc;i++) {
+            if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
+                if (daemon(1,0) || write_pidfile(argv[++i])) {
+                    perror("Failed to daemonize");
+                    return EXIT_FAILURE;
+                }
+            }
+            else if (streq(argv[i],"--server") || streq(argv[i],"-s"))
+                server = argv[++i];
+            else if (streq(argv[i],"--port") || streq(argv[i],"-p"))
+                port = atoi(argv[++i]);
+            else if (streq(argv[i],"--rank") || streq(argv[i],"-r"))
+                myrank = atoi(argv[++i]);
+            else if (!startsWith(argv[i],"--config"))
+            {
+                usage();
+                return EXIT_FAILURE;
+            }
+        }
+#endif
+
+#ifndef _CONTAINERIZED
         ILogMsgHandler * fileMsgHandler;
         {
             Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(serverConfig, "dali");
@@ -385,157 +457,172 @@ int main(int argc, char* argv[])
             lf->setName("DaServer");//override default filename
             fileMsgHandler = lf->beginLogging();
         }
-
+#else
+        setupContainerizedLogMsgHandler();
+#endif
         PROGLOG("Build %s", BUILD_TAG);
 
-        if (serverConfig)
+        StringBuffer dataPath;
+        StringBuffer mirrorPath;
+#ifdef _CONTAINERIZED
+        serverConfig->getProp("@dataPath", dataPath);
+        /* NB: mirror settings are unlikely to be used in a container setup
+           If detected, set in to legacy location under SDS/ for backward compatibility */
+        serverConfig->getProp("@remoteBackupLocation", mirrorPath);
+        if (mirrorPath.length())
+            serverConfig->setProp("SDS/@remoteBackupLocation", mirrorPath);
+#else
+        if (getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"dali","dali",serverConfig->queryProp("@name"),dataPath))
+            serverConfig->setProp("@dataPath",dataPath.str());
+        else if (getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"data","dali",serverConfig->queryProp("@name"),dataPath))
+            serverConfig->setProp("@dataPath",dataPath.str());
+        else
+            serverConfig->getProp("@dataPath",dataPath);
+        if (dataPath.length())
         {
-            StringBuffer dataPath;
-            if (getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"data","dali",serverConfig->queryProp("@name"),dataPath)) 
-                serverConfig->setProp("@dataPath",dataPath.str());
-            else
-                serverConfig->getProp("@dataPath",dataPath);
-            if (dataPath.length()) {
-                RemoteFilename rfn;
-                rfn.setRemotePath(dataPath);
-                if (!rfn.isLocal()) {
-                    OERRLOG("if a dataPath is specified, it must be on local machine");
-                    return 0;
-                }
-                addPathSepChar(dataPath);
-                serverConfig->setProp("@dataPath", dataPath.str());
-                if (dataPath.length())
-                    recursiveCreateDirectory(dataPath.str());
-            }
-
-            // JCSMORE remoteBackupLocation should not be a property of SDS section really.
-            StringBuffer mirrorPath;
-            if (!getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"mirror","dali",serverConfig->queryProp("@name"),mirrorPath)) 
-                serverConfig->getProp("SDS/@remoteBackupLocation",mirrorPath);
-
-            if (mirrorPath.length())
+            RemoteFilename rfn;
+            rfn.setRemotePath(dataPath);
+            if (!rfn.isLocal())
             {
+                OERRLOG("if a dataPath is specified, it must be on local machine");
+                return 0;
+            }
+        }
+        // JCSMORE remoteBackupLocation should not be a property of SDS section really.
+        if (!getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"mirror","dali",serverConfig->queryProp("@name"),mirrorPath))
+            serverConfig->getProp("SDS/@remoteBackupLocation",mirrorPath);
+
+#endif
+        if (dataPath.length())
+        {
+            addPathSepChar(dataPath); // ensures trailing path separator
+            serverConfig->setProp("@dataPath", dataPath.str());
+            recursiveCreateDirectory(dataPath.str());
+        }
+
+        if (mirrorPath.length())
+        {
+            try
+            {
+                addPathSepChar(mirrorPath);
                 try
                 {
-                    addPathSepChar(mirrorPath);
-                    try
-                    {
-                        StringBuffer backupURL;
-                        if (mirrorPath.length()<=2 || !isPathSepChar(mirrorPath.charAt(0)) || !isPathSepChar(mirrorPath.charAt(1)))
-                        { // local machine path, convert to url
-                            const char *backupnode = serverConfig->queryProp("SDS/@backupComputer");
-                            RemoteFilename rfn;
-                            if (backupnode&&*backupnode) {
-                                SocketEndpoint ep(backupnode);
-                                rfn.setPath(ep,mirrorPath.str());
-                            }
-                            else {
-                                OWARNLOG("Local path used for backup url: %s", mirrorPath.str());
-                                rfn.setLocalPath(mirrorPath.str());
-                            }
-                            rfn.getRemotePath(backupURL);
-                            mirrorPath.clear().append(backupURL);
+                    StringBuffer backupURL;
+                    if (mirrorPath.length()<=2 || !isPathSepChar(mirrorPath.charAt(0)) || !isPathSepChar(mirrorPath.charAt(1)))
+                    { // local machine path, convert to url
+                        const char *backupnode = serverConfig->queryProp("SDS/@backupComputer");
+                        RemoteFilename rfn;
+                        if (backupnode&&*backupnode) {
+                            SocketEndpoint ep(backupnode);
+                            rfn.setPath(ep,mirrorPath.str());
                         }
-                        else
-                            backupURL.append(mirrorPath);
-                        recursiveCreateDirectory(backupURL.str());
-                        addPathSepChar(backupURL);
-                        serverConfig->setProp("SDS/@remoteBackupLocation", backupURL.str());
-                        PROGLOG("Backup URL = %s", backupURL.str());
+                        else {
+                            OWARNLOG("Local path used for backup url: %s", mirrorPath.str());
+                            rfn.setLocalPath(mirrorPath.str());
+                        }
+                        rfn.getRemotePath(backupURL);
+                        mirrorPath.clear().append(backupURL);
                     }
-                    catch (IException *e)
-                    {
-                        EXCLOG(e, "Failed to create remote backup directory, disabling backups", MSGCLS_warning);
-                        serverConfig->removeProp("SDS/@remoteBackupLocation");
-                        mirrorPath.clear();
-                        e->Release();
-                    }
-
-                    if (mirrorPath.length())
-                    {
-                        PROGLOG("Checking backup location: %s", mirrorPath.str());
-#if defined(__linux__)
-                        if (serverConfig->getPropBool("@useNFSBackupMount", false))
-                        {
-                            RemoteFilename rfn;
-                            if (mirrorPath.length()<=2 || !isPathSepChar(mirrorPath.charAt(0)) || !isPathSepChar(mirrorPath.charAt(1)))
-                                rfn.setLocalPath(mirrorPath.str());
-                            else
-                                rfn.setRemotePath(mirrorPath.str());                
-                            
-                            if (!rfn.getPort() && !rfn.isLocal())
-                            {
-                                StringBuffer mountPoint;
-                                serverConfig->getProp("@mountPoint", mountPoint);
-                                if (!mountPoint.length())
-                                    mountPoint.append(DEFAULT_MOUNT_POINT);
-                                addPathSepChar(mountPoint);
-                                recursiveCreateDirectory(mountPoint.str());
-                                PROGLOG("Mounting url \"%s\" on mount point \"%s\"", mirrorPath.str(), mountPoint.str());
-                                bool ub = unmountDrive(mountPoint.str());
-                                if (!mountDrive(mountPoint.str(), rfn))
-                                {
-                                    if (!ub)
-                                        PROGLOG("Failed to remount mount point \"%s\", possibly in use?", mountPoint.str());
-                                    else
-                                        PROGLOG("Failed to mount \"%s\"", mountPoint.str());
-                                    return 0;
-                                }
-                                else
-                                    serverConfig->setProp("SDS/@remoteBackupLocation", mountPoint.str());
-                                mirrorPath.clear().append(mountPoint);
-                            }
-                        }
-#endif
-                        StringBuffer backupCheck(dataPath);
-                        backupCheck.append("bakchk.").append((unsigned)GetCurrentProcessId());
-                        OwnedIFile iFileDataDir = createIFile(backupCheck.str());
-                        OwnedIFileIO iFileIO = iFileDataDir->open(IFOcreate);
-                        iFileIO.clear();
-                        try
-                        {
-                            backupCheck.clear().append(mirrorPath).append("bakchk.").append((unsigned)GetCurrentProcessId());
-                            OwnedIFile iFileBackup = createIFile(backupCheck.str());
-                            if (iFileBackup->exists())
-                            {
-                                PROGLOG("remoteBackupLocation and dali data path point to same location! : %s", mirrorPath.str()); 
-                                iFileDataDir->remove();
-                                return 0;
-                            }
-                        }
-                        catch (IException *)
-                        {
-                            try { iFileDataDir->remove(); } catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
-                            throw;
-                        }
-                        iFileDataDir->remove();
-
-                        StringBuffer dest(mirrorPath.str());
-                        dest.append(DALICONF);
-                        copyFile(dest.str(), DALICONF);
-                        StringBuffer covenPath(dataPath);
-                        OwnedIFile ifile = createIFile(covenPath.append(DALICOVEN).str());
-                        if (ifile->exists())
-                        {
-                            dest.clear().append(mirrorPath.str()).append(DALICOVEN);
-                            copyFile(dest.str(), covenPath.str());
-                        }
-                    }
-                    if (serverConfig->getPropBool("@daliServixCaching", true))
-                        setDaliServixSocketCaching(true);
+                    else
+                        backupURL.append(mirrorPath);
+                    recursiveCreateDirectory(backupURL.str());
+                    addPathSepChar(backupURL);
+                    serverConfig->setProp("SDS/@remoteBackupLocation", backupURL.str());
+                    PROGLOG("Backup URL = %s", backupURL.str());
                 }
                 catch (IException *e)
                 {
-                    StringBuffer s("Failure whilst preparing dali backup location: ");
-                    LOG(MCoperatorError, unknownJob, e, s.append(mirrorPath).append(". Backup disabled").str());
+                    EXCLOG(e, "Failed to create remote backup directory, disabling backups", MSGCLS_warning);
                     serverConfig->removeProp("SDS/@remoteBackupLocation");
+                    mirrorPath.clear();
                     e->Release();
                 }
+
+                if (mirrorPath.length())
+                {
+                    PROGLOG("Checking backup location: %s", mirrorPath.str());
+#if defined(__linux__)
+                    if (serverConfig->getPropBool("@useNFSBackupMount", false))
+                    {
+                        RemoteFilename rfn;
+                        if (mirrorPath.length()<=2 || !isPathSepChar(mirrorPath.charAt(0)) || !isPathSepChar(mirrorPath.charAt(1)))
+                            rfn.setLocalPath(mirrorPath.str());
+                        else
+                            rfn.setRemotePath(mirrorPath.str());
+
+                        if (!rfn.getPort() && !rfn.isLocal())
+                        {
+                            StringBuffer mountPoint;
+                            serverConfig->getProp("@mountPoint", mountPoint);
+                            if (!mountPoint.length())
+                                mountPoint.append(DEFAULT_MOUNT_POINT);
+                            addPathSepChar(mountPoint);
+                            recursiveCreateDirectory(mountPoint.str());
+                            PROGLOG("Mounting url \"%s\" on mount point \"%s\"", mirrorPath.str(), mountPoint.str());
+                            bool ub = unmountDrive(mountPoint.str());
+                            if (!mountDrive(mountPoint.str(), rfn))
+                            {
+                                if (!ub)
+                                    PROGLOG("Failed to remount mount point \"%s\", possibly in use?", mountPoint.str());
+                                else
+                                    PROGLOG("Failed to mount \"%s\"", mountPoint.str());
+                                return 0;
+                            }
+                            else
+                                serverConfig->setProp("SDS/@remoteBackupLocation", mountPoint.str());
+                            mirrorPath.clear().append(mountPoint);
+                        }
+                    }
+#endif
+                    StringBuffer backupCheck(dataPath);
+                    backupCheck.append("bakchk.").append((unsigned)GetCurrentProcessId());
+                    OwnedIFile iFileDataDir = createIFile(backupCheck.str());
+                    OwnedIFileIO iFileIO = iFileDataDir->open(IFOcreate);
+                    iFileIO.clear();
+                    try
+                    {
+                        backupCheck.clear().append(mirrorPath).append("bakchk.").append((unsigned)GetCurrentProcessId());
+                        OwnedIFile iFileBackup = createIFile(backupCheck.str());
+                        if (iFileBackup->exists())
+                        {
+                            PROGLOG("remoteBackupLocation and dali data path point to same location! : %s", mirrorPath.str());
+                            iFileDataDir->remove();
+                            return 0;
+                        }
+                    }
+                    catch (IException *)
+                    {
+                        try { iFileDataDir->remove(); } catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
+                        throw;
+                    }
+                    iFileDataDir->remove();
+
+#ifndef _CONTAINERIZED
+                    StringBuffer dest(mirrorPath.str());
+                    dest.append(DALICONF);
+                    copyFile(dest.str(), DALICONF);
+                    StringBuffer covenPath(dataPath);
+                    OwnedIFile ifile = createIFile(covenPath.append(DALICOVEN).str());
+                    if (ifile->exists())
+                    {
+                        dest.clear().append(mirrorPath.str()).append(DALICOVEN);
+                        copyFile(dest.str(), covenPath.str());
+                    }
+#endif
+                }
+                if (serverConfig->getPropBool("@daliServixCaching", true))
+                    setDaliServixSocketCaching(true);
+            }
+            catch (IException *e)
+            {
+                StringBuffer s("Failure whilst preparing dali backup location: ");
+                LOG(MCoperatorError, unknownJob, e, s.append(mirrorPath).append(". Backup disabled").str());
+                serverConfig->removeProp("SDS/@remoteBackupLocation");
+                e->Release();
             }
         }
-        else
-            serverConfig.setown(createPTree());
 
+#ifndef _CONTAINERIZED
         write_pidfile(serverConfig->queryProp("@name"));
         NamedMutex globalNamedMutex("DASERVER");
         if (!serverConfig->getPropBool("allowMultipleDalis"))
@@ -547,32 +634,35 @@ int main(int argc, char* argv[])
                 return 0;
             }
         }
-
+#endif
         SocketEndpoint ep;
         SocketEndpointArray epa;
-        if (!server) {
+        if (!server)
+        {
             ep.setLocalHost(DALI_SERVER_PORT);
             epa.append(ep);
         }
-        else {
-                if (!port)
-                    ep.set(server,DALI_SERVER_PORT);
-                else
-                    ep.set(server,port);
-                epa.append(ep);
+        else
+        {
+            if (!port)
+                ep.set(server,DALI_SERVER_PORT);
+            else
+                ep.set(server,port);
+            epa.append(ep);
         }
 
         unsigned short myport = epa.item(myrank).port;
-        startMPServer(DCR_DaliServer, myport, true);
+        startMPServer(DCR_DaliServer, myport, true, true);
         Owned<IMPServer> mpServer = getMPServer();
-        Owned<IWhiteListHandler> whiteListHandler = createWhiteListHandler(populateWhiteListFromEnvironment, formatDaliRole);
-        mpServer->installWhiteListCallback(whiteListHandler);
-
+        Owned<IAllowListHandler> allowListHandler = createAllowListHandler(populateAllowListFromEnvironment, formatDaliRole);
+        mpServer->installAllowListCallback(allowListHandler);
+#ifndef _CONTAINERIZED
         setMsgLevel(fileMsgHandler, serverConfig->getPropInt("SDS/@msgLevel", 100));
-        startLogMsgChildReceiver(); 
+#endif
+        startLogMsgChildReceiver();
         startLogMsgParentReceiver();
 
-        IGroup *group = createIGroup(epa); 
+        IGroup *group = createIGroup(epa);
         initCoven(group,serverConfig);
         group->Release();
         epa.kill();
@@ -591,7 +681,7 @@ int main(int argc, char* argv[])
             auditDir.set(lf->queryLogDir());
         }
 
-// SNMP logging     
+// SNMP logging
         bool enableSNMP = serverConfig->getPropBool("SDS/@enableSNMP");
         if (serverConfig->getPropBool("SDS/@enableSysLog",true))
             UseSysLogForOperatorMessages();
@@ -599,15 +689,12 @@ int main(int argc, char* argv[])
         addAbortHandler(actionOnAbort);
         startPerformanceMonitor(serverConfig->getPropInt("Coven/@perfReportDelay", DEFAULT_PERF_REPORT_DELAY)*1000);
         StringBuffer absPath;
-        StringBuffer dataPath;
-        serverConfig->getProp("@dataPath",dataPath);
         makeAbsolutePath(dataPath.str(), absPath);
         setPerformanceMonitorPrimaryFileSystem(absPath.str());
-        if(serverConfig->hasProp("SDS/@remoteBackupLocation"))
+        if (mirrorPath.length())
         {
             absPath.clear();
-            serverConfig->getProp("SDS/@remoteBackupLocation",dataPath.clear());
-            makeAbsolutePath(dataPath.str(), absPath);
+            makeAbsolutePath(mirrorPath.str(), absPath);
             setPerformanceMonitorSecondaryFileSystem(absPath.str());
         }
 
@@ -628,7 +715,16 @@ int main(int argc, char* argv[])
         }
         try {
 #ifndef _NO_LDAP
-            setLDAPconnection(createDaliLdapConnection(serverConfig->getPropTree("Coven/ldapSecurity")));
+            Owned<IPropertyTree> secMgrPropTree = getSecMgrPluginPropTree(serverConfig);
+
+            if (secMgrPropTree.get())
+            {
+                setLDAPconnection(createDaliSecMgrPluginConnection(secMgrPropTree));
+            }
+            else
+            {
+                setLDAPconnection(createDaliLdapConnection(serverConfig->getPropTree("Coven/ldapSecurity")));
+            }
 #endif
         }
         catch (IException *e) {
@@ -638,7 +734,7 @@ int main(int argc, char* argv[])
             throw;
         }
         PROGLOG("DASERVER[%d] starting - listening to port %d",myrank,queryMyNode()->endpoint().port);
-        startMPServer(DCR_DaliServer, myport,false);
+        startMPServer(DCR_DaliServer, myport, false, true);
         bool ok = true;
         ForEachItemIn(i2,servers)
         {

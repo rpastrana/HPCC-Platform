@@ -72,6 +72,7 @@
 #define WRN_DISALLOWED              1055
 #define WRN_EMBEDWARNING            1056
 #define WRN_EMBEDFOLD               1057
+#define WRN_FORMAT_IGNORED          1058
 
 //Do not define any warnings > 1099 - use the range below instead
 
@@ -516,6 +517,10 @@
 #define HQLERR_UnnamedOutputInLibrary           3158
 #define HQLERR_AlienUseData                     3159
 #define HQLERR_LibraryParamNoFunctions          3160
+#define HQLWRN_MergeInputUnordered              3161
+#define HQLWRN_MergeInputPartiallyOrdered       3162
+#define HQLWRN_MergeInputIncompatible           3163
+#define HQLWRN_MergeInputLastMissing            3164
 
 #define HQLERR_DedupFieldNotFound_Text          "Field removed from dedup could not be found"
 #define HQLERR_CycleWithModuleDefinition_Text   "Module definition contains an illegal cycle/recursive definition %s"

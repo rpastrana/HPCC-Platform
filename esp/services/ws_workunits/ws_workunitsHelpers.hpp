@@ -75,6 +75,7 @@ void ensureWsWorkunitAccess(IEspContext& cxt, IConstWorkUnit& cw, SecAccessFlags
 void ensureWsWorkunitAccess(IEspContext& context, const char* wuid, SecAccessFlags minAccess);
 void ensureWsWorkunitAccessByOwnerId(IEspContext& context, const char* owner, SecAccessFlags minAccess);
 void ensureWsCreateWorkunitAccess(IEspContext& cxt);
+bool validateWsWorkunitAccess(IEspContext& context, const char* wuid, SecAccessFlags minAccess);
 
 const char *getGraphNum(const char *s,unsigned &num);
 
@@ -133,6 +134,7 @@ private:
 #define WUINFO_IncludeHelpers           0x8000
 #define WUINFO_IncludeAllowedClusters   0x10000
 #define WUINFO_IncludeTotalClusterTime  0x20000
+#define WUINFO_IncludeServiceNames      0x40000
 #define WUINFO_All                      0xFFFFFFFF
 
 class WsWuInfo
@@ -142,7 +144,8 @@ class WsWuInfo
     void readArchiveFiles(IPropertyTree* archiveTree, const char* path, IArrayOf<IEspWUArchiveFile>& files);
     void outputALine(size32_t len, const char* content, MemoryBuffer& outputBuf, IFileIOStream* outIOS);
     bool parseLogLine(const char* line, const char* endWUID, unsigned& processID, const unsigned columnNumPID);
-    void readWorkunitLog(IFile* ios, MemoryBuffer& buf, const char* outFile);
+    void readWorkunitThorLog(const char* processName, const char* logSpec, const char* slaveIPAddress, unsigned slaveNum, MemoryBuffer& buf, const char* outFile);
+    void readWorkunitThorLogOneDay(IFile* ios, unsigned& processID, MemoryBuffer& buf, IFileIOStream* outIOS);
     void readFileContent(const char* sourceFileName, const char* sourceIPAddress,
         const char* sourceAlias, MemoryBuffer &mb, bool forDownload);
     void copyContentFromRemoteFile(const char* sourceFileName, const char* sourceIPAddress,
@@ -198,13 +201,15 @@ public:
     bool getResultEclSchemas(IConstWUResult &r, IArrayOf<IEspECLSchemaItem>& schemas);
     void getResult(IConstWUResult &r, IArrayOf<IEspECLResult>& results, unsigned long flags);
     void getStats(const WuScopeFilter & filter, const StatisticsFilter& statsFilter, bool createDescriptions, IArrayOf<IEspWUStatisticItem>& statistics);
+    void getServiceNames(IEspECLWorkunit &info, unsigned long flags);
 
-    void getWorkunitEclAgentLog(const char* eclAgentInstance, const char* agentPid, MemoryBuffer& buf, const char* outFile);
-    void getWorkunitThorLog(const char *processName, MemoryBuffer& buf, const char* outFile);
-    void getWorkunitThorSlaveLog(IGroup *nodeGroup, const char *ipAddress, const char* logDate,
+    void getWUProcessLogSpecs(const char* processName, const char* logSpec, const char* logDir, bool eclAgent, StringArray& logSpecs);
+    void getWorkunitEclAgentLog(const char *processName, const char* eclAgentInstance, const char* agentPid, MemoryBuffer& buf, const char* outFile);
+    void getWorkunitThorMasterLog(const char *processName, const char* fileName, MemoryBuffer& buf, const char* outFile);
+    void getWorkunitThorSlaveLog(IGroup *nodeGroup, const char *ipAddress, const char* processName, const char* logDate,
         const char* logDir, int slaveNum, MemoryBuffer& buf, const char* outIOS, bool forDownload);
-    void getWorkunitThorSlaveLog(IPropertyTree* directories, const char *process, const char* instanceName,
-        const char *ipAddress, const char* logDate, int slaveNum,
+    void getWorkunitThorSlaveLog(IPropertyTree* directories, const char *process,
+        const char* instanceName, const char *ipAddress, const char* logDate, int slaveNum,
         MemoryBuffer& buf, const char* outFile, bool forDownload);
     void getWorkunitResTxt(MemoryBuffer& buf);
     void getWorkunitArchiveQuery(IStringVal& str);
@@ -228,7 +233,6 @@ public:
 
     void addTimerToList(SCMStringBuffer& name, const char * scope, IConstWUStatistic & stat, IArrayOf<IEspECLTimer>& timers);
 protected:
-    unsigned getTotalThorTime();
     bool hasSubGraphTimings();
 
 public:
@@ -662,20 +666,20 @@ class CGetThorSlaveLogToFileThreadParam : public CInterface
     WsWuInfo* wuInfo;
     Linked<IGroup> nodeGroup;
     unsigned slaveNum;
-    StringAttr logDate, logDir, fileName;
+    StringAttr processName, logDir, fileName;
 
 public:
     IMPLEMENT_IINTERFACE;
 
     CGetThorSlaveLogToFileThreadParam(WsWuInfo* _wuInfo, IGroup* _nodeGroup,
-        const char*_logDate, const char*_logDir, unsigned _slaveNum, const char* _fileName)
-        : wuInfo(_wuInfo), nodeGroup(_nodeGroup), logDate(_logDate), logDir(_logDir),
+        const char*_processName, const char*_logDir, unsigned _slaveNum, const char* _fileName)
+        : wuInfo(_wuInfo), nodeGroup(_nodeGroup), processName(_processName), logDir(_logDir),
           slaveNum(_slaveNum), fileName(_fileName) { };
 
     virtual void doWork()
     {
         MemoryBuffer dummy;
-        wuInfo->getWorkunitThorSlaveLog(nodeGroup, nullptr, logDate.get(),
+        wuInfo->getWorkunitThorSlaveLog(nodeGroup, nullptr, processName.get(), nullptr,
             logDir.get(), slaveNum, dummy, fileName.get(), false);;
     }
 };

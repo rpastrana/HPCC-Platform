@@ -622,7 +622,6 @@ bool CBoolTypeInfo::assignableFrom(ITypeInfo *t2)
     switch(t2->getTypeCode())
     {
     case type_boolean:
-    case type_int:
     case type_any:
         return true;
     }
@@ -1136,7 +1135,7 @@ IValue *CEnumeratedTypeInfo::castFrom(size32_t len, const char * text)
     if (len<baselen)
     {
         char *pad = (char *)temp.allocate(baselen);
-        memcpy(pad, text, len);
+        memcpy_iflen(pad, text, len);
         memset(pad+len, ' ', baselen-len);
         text = pad;
     }
@@ -2021,7 +2020,7 @@ void ClearTypeCache()
     }
     for (i = 0; i < _elements_in(bftt); i++)
     {
-        int j;
+        unsigned j;
         for (j = 0; j < _elements_in(bftt[0]); j++)
             ReleaseAndClear(bftt[i][j]);
     }
@@ -2996,10 +2995,6 @@ ICharsetInfo * getCharset(IAtom * atom)
 
 ICollationInfo * getCollation(IAtom * atom)
 {
-#if _DEBUG
-    const char* name = str(atom);
-#endif
-
     if ((atom == NULL) || (atom == asciiAtom) || (atom == dataAtom) || (atom == utf8Atom))
     {
         if (!asciiCollation)

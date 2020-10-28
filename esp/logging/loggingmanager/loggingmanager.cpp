@@ -40,9 +40,22 @@ bool CLoggingManager::init(IPropertyTree* cfg, const char* service)
         return false;
     }
 
+    StringAttr failSafeLogsDir;
+    decoupledLogging = cfg->getPropBool(PropDecoupledLogging, false);
     oneTankFile = cfg->getPropBool("FailSafe", true);
-    if (oneTankFile)
-    {
+    if (decoupledLogging)
+    {   //Only set the failSafeLogsDir for decoupledLogging.
+        //The failSafeLogsDir tells a logging agent to work as a decoupledLogging agent,
+        //as well as where to read the tank file.
+        const char* logsDir = cfg->queryProp(PropFailSafeLogsDir);
+        if (!isEmptyString(logsDir))
+            failSafeLogsDir.set(logsDir);
+        else
+            failSafeLogsDir.set(DefaultFailSafeLogsDir);
+    }
+
+    if (oneTankFile || decoupledLogging)
+    {// the logFailSafe is used to create a tank file.
         logFailSafe.setown(createFailSafeLogger(cfg, service, cfg->queryProp("@name")));
         logContentFilter.readAllLogFilters(cfg);
     }
@@ -65,7 +78,7 @@ bool CLoggingManager::init(IPropertyTree* cfg, const char* service)
         }
         loggingAgent->init(agentName, agentType, &loggingAgentTree, service);
         loggingAgent->initVariants(&loggingAgentTree);
-        IUpdateLogThread* logThread = createUpdateLogThread(&loggingAgentTree, service, agentName, loggingAgent);
+        IUpdateLogThread* logThread = createUpdateLogThread(&loggingAgentTree, service, agentName, failSafeLogsDir.get(), loggingAgent);
         if(!logThread)
             throw MakeStringException(-1, "Failed to create update log thread for %s", agentName);
         loggingAgentThreads.push_back(logThread);
@@ -105,7 +118,7 @@ bool CLoggingManager::updateLog(IEspLogEntry* entry, StringBuffer& status)
     if (entry->getLogInfoTree())
         return updateLog(entry->getEspContext(), entry->getOption(), entry->getLogInfoTree(), entry->getExtraLog(), status);
 
-    return updateLog(entry->getEspContext(), entry->getOption(), entry->getUserContextTree(), entry->getUserRequestTree(),
+    return updateLog(entry->getEspContext(), entry->getOption(), entry->getUserContextTree(), entry->getUserRequestTree(), entry->getScriptValuesTree(),
         entry->getBackEndReq(), entry->getBackEndResp(), entry->getUserResp(), entry->getLogDatasets(), status);
 }
 
@@ -155,7 +168,7 @@ bool CLoggingManager::updateLog(IEspContext* espContext, const char* option, IPr
     return bRet;
 }
 
-bool CLoggingManager::updateLog(IEspContext* espContext, const char* option, IPropertyTree* userContext, IPropertyTree* userRequest,
+bool CLoggingManager::updateLog(IEspContext* espContext, const char* option, IPropertyTree* userContext, IPropertyTree* userRequest, IPropertyTree *scriptValues,
     const char* backEndReq, const char* backEndResp, const char* userResp, const char* logDatasets, StringBuffer& status)
 {
     if (!initialized)
@@ -188,6 +201,8 @@ bool CLoggingManager::updateLog(IEspContext* espContext, const char* option, IPr
         }
         Owned<IEspUpdateLogRequestWrap> req =  new CUpdateLogRequestWrap(nullptr, option, espContextTree.getClear(), LINK(userContext), LINK(userRequest),
             backEndReq, backEndResp, userResp, logDatasets);
+        if (scriptValues)
+            req->setScriptValuesTree(LINK(scriptValues));
         Owned<IEspUpdateLogResponse> resp =  createUpdateLogResponse();
         bRet = updateLog(espContext, *req, *resp, status);
     }
@@ -227,7 +242,8 @@ bool CLoggingManager::updateLog(IEspContext* espContext, IEspUpdateLogRequestWra
         if (espContext)
             espContext->addTraceSummaryTimeStamp(LogMin, "LMgr:startQLog");
 
-        if (oneTankFile)
+        Linked<IPropertyTree> scriptValues = req.getScriptValuesTree();
+        if (oneTankFile || decoupledLogging)
         {
             Owned<CLogRequestInFile> reqInFile = new CLogRequestInFile();
             if (!saveToTankFile(req, reqInFile))
@@ -245,12 +261,17 @@ bool CLoggingManager::updateLog(IEspContext* espContext, IEspUpdateLogRequestWra
             Owned<IEspUpdateLogRequest> logRequest = new CUpdateLogRequest("", "");
             logRequest->setOption(reqInFile->getOption());
             logRequest->setLogContent(logContent);
-            for (unsigned int x = 0; x < loggingAgentThreads.size(); x++)
+            if (!decoupledLogging)
             {
-                IUpdateLogThread* loggingThread = loggingAgentThreads[x];
-                if (loggingThread->hasService(LGSTUpdateLOG))
+                for (unsigned int x = 0; x < loggingAgentThreads.size(); x++)
                 {
-                    loggingThread->queueLog(logRequest);
+                    IUpdateLogThread* loggingThread = loggingAgentThreads[x];
+                    if (loggingThread->hasService(LGSTUpdateLOG))
+                    {
+                        if (checkSkipThreadQueue(scriptValues, *loggingThread))
+                            continue;
+                        loggingThread->queueLog(logRequest);
+                    }
                 }
             }
         }
@@ -261,6 +282,11 @@ bool CLoggingManager::updateLog(IEspContext* espContext, IEspUpdateLogRequestWra
                 IUpdateLogThread* loggingThread = loggingAgentThreads[x];
                 if (loggingThread->hasService(LGSTUpdateLOG))
                 {
+                    //leave the fact that a script can control the thread queue as an option undocumented, naming scheme could change,
+                    //  controlling the queue is a very low level mechanism and should be frowned upon
+                    //  once scripts can communicate with the agent that should be the mechanism to skip a particular type of logging
+                    if (checkSkipThreadQueue(scriptValues, *loggingThread))
+                        continue;
                     loggingThread->queueLog(&req);
                 }
             }
@@ -303,8 +329,16 @@ bool CLoggingManager::saveToTankFile(IEspUpdateLogRequestWrap& logRequest, CLogR
         return false;
     }
 
-    logFailSafe->AddACK(GUID);//Ack this logging request since the task will be done as soon as the next line is called.
-    logFailSafe->Add(GUID, reqBuf, reqInFile);
+    if (decoupledLogging)
+    {
+        Linked<IPropertyTree> scriptValues = logRequestFiltered->getScriptValuesTree();
+        logFailSafe->Add(GUID, scriptValues, reqBuf, reqInFile);
+    }
+    else
+    {
+        logFailSafe->AddACK(GUID);//Ack this logging request since the task will be done as soon as the next line is called.
+        logFailSafe->Add(GUID, nullptr, reqBuf, reqInFile);
+    }
 
     ESPLOG(LogNormal, "LThread:saveToTankFile: %dms\n", msTick() - startTime);
     return true;

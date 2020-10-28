@@ -50,11 +50,13 @@ include_directories (
          ./../../../common/roxiecommlib
          ./../../../common/workunit
          ./../../clients 
-         ./../../../dali/base 
+         ./../../../dali/base
+         ./../../../dali/sasha
          ./../../bindings 
          ./../../bindings/SOAP/xpp 
          ./../../../esp/platform 
          ./../../smc/SMCLib 
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 ADD_DEFINITIONS( -D_USRDLL )
@@ -73,6 +75,7 @@ target_link_libraries ( ws_machine
          dalibase 
          environment 
          workunit
+         SMCLib
     )
 
 IF (USE_OPENSSL)

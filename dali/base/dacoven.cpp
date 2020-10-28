@@ -182,7 +182,7 @@ public:
         if (server)
         {
             _ServerVersion.set(ServerVersion);
-            LOG(MCdebugInfo(100), unknownJob, "Server Version = %s, required minimum client version %s", ServerVersion, MinClientVersion);
+            LOG(MCdebugProgress, unknownJob, "Server Version = %s, required minimum client version %s", ServerVersion, MinClientVersion);
         }
         else
         {
@@ -291,10 +291,10 @@ public:
     }
 
 
-    virtual bool verifyAll(bool duplex=false, unsigned timeout=1000*60*30)
+    virtual bool verifyAll(bool duplex=false, unsigned timeout=1000*60*30, unsigned perConnectionTimeout=0)
     {
         assertex(comm);
-        return comm->verifyAll(duplex,timeout);
+        return comm->verifyAll(duplex, timeout, perConnectionTimeout);
     }
     
     // receive, returns senders rank or false if no message available in time given or cancel called

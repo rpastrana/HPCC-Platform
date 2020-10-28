@@ -21,7 +21,6 @@
 #include "jlib.hpp"
 #include "jflz.hpp"
 #include "daclient.hpp"
-#include "dalienv.hpp"
 #include "dadfs.hpp"
 #include "daaudit.hpp"
 #include "dautils.hpp"
@@ -48,18 +47,22 @@
 #include "fvresultset.ipp"
 #include "ws_wudetails.hpp"
 #include "wuerror.hpp"
+#include "TpWrapper.hpp"
+#include "LogicFileWrapper.hpp"
 
 #include "rtlformat.hpp"
 
 #include "package.h"
+#include "build-config.h"
 
 #ifdef _USE_ZLIB
 #include "zcrypt.hpp"
 #endif
 
 #define ESP_WORKUNIT_DIR "workunits/"
+static constexpr const char* zipFolder = "tempzipfiles" PATHSEPSTR;
 
-#define SDS_LOCK_TIMEOUT (5*60*1000) // 5 mins
+#define WU_SDS_LOCK_TIMEOUT (5*60*1000) // 5 mins
 const unsigned CHECK_QUERY_STATUS_THREAD_POOL_SIZE = 25;
 const unsigned MAX_ZAP_BUFFER_SIZE = 10000000; //10M
 
@@ -83,9 +86,9 @@ public:
 };
 
 //The ECLWUActionNames[] has to match with the ESPenum ECLWUActions in the ecm file.
-static unsigned NumOfECLWUActionNames = 11;
+static unsigned NumOfECLWUActionNames = 12;
 static const char *ECLWUActionNames[] = { "Abort", "Delete", "Deschedule", "Reschedule", "Pause",
-    "PauseNow", "Protect", "Unprotect", "Restore", "Resume", "SetToFailed", NULL };
+    "PauseNow", "Protect", "Unprotect", "Restore", "Resume", "SetToFailed", "Archive", nullptr };
 
 class CECLWUActionsEx : public SoapEnumParamNew<CECLWUActions>
 {
@@ -111,7 +114,38 @@ bool doAction(IEspContext& context, StringArray& wuids, CECLWUActions action, IP
     if (!wuids.length())
         return true;
 
-    Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
+    if ((action == CECLWUActions_Restore) || (action == CECLWUActions_Archive))
+    {
+        StringBuffer msg;
+        ForEachItemIn(i, wuids)
+        {
+            StringBuffer wuidStr(wuids.item(i));
+            const char* wuid = wuidStr.trim().str();
+            if (isEmpty(wuid))
+            {
+                msg.appendf("Empty Workunit ID at %u. ", i);
+                continue;
+            }
+            if ((action == CECLWUActions_Archive) && !validateWsWorkunitAccess(context, wuid, SecAccess_Full))
+                msg.appendf("Access denied for Workunit %s. ", wuid);
+        }
+        if (!msg.isEmpty())
+            throw makeStringException(ECLWATCH_INVALID_INPUT, msg);
+
+        Owned<ISashaCommand> cmd = archiveOrRestoreWorkunits(wuids, params, action == CECLWUActions_Archive, false);
+        ForEachItemIn(idx, wuids)
+        {
+            StringBuffer reply;
+            cmd->getId(idx, reply);
+
+            const char* wuid = wuids.item(idx);
+            if ((action == CECLWUActions_Restore) && !validateWsWorkunitAccess(context, wuid, SecAccess_Full))
+                reply.appendf("Access denied for Workunit %s. ", wuid);
+
+            AuditSystemAccess(context.queryUserId(), true, "%s", reply.str());
+        }
+        return true;
+    }
 
     bool bAllSuccess = true;
     const char* strAction = (action < NumOfECLWUActionNames) ? ECLWUActionNames[action] : "Unknown Action";
@@ -131,50 +165,13 @@ bool doAction(IEspContext& context, StringArray& wuids, CECLWUActions action, IP
                 throw MakeStringException(ECLWATCH_INVALID_INPUT, "Invalid Workunit ID: %s", wuid);
 
             PROGLOG("%s %s", strAction, wuid);
-            if ((action == CECLWUActions_Restore) || (action == CECLWUActions_EventDeschedule))
+            if (action == CECLWUActions_EventDeschedule)
             {
-                switch(action)
-                {
-                case CECLWUActions_Restore:
-                {
-                    SocketEndpoint ep;
-                    if (params->hasProp("sashaServerIP"))
-                        ep.set(params->queryProp("sashaServerIP"), params->getPropInt("sashaServerPort"));
-                    else
-                        getSashaNode(ep);
-
-                    Owned<ISashaCommand> cmd = createSashaCommand();
-                    cmd->setAction(SCA_RESTORE);
-                    cmd->addId(wuid);
-
-                    Owned<INode> node = createINode(ep);
-                    if (!node)
-                        throw MakeStringException(ECLWATCH_INODE_NOT_FOUND,"INode not found.");
-
-                    StringBuffer s;
-                    if (!cmd->send(node, 1*60*1000))
-                        throw MakeStringException(ECLWATCH_CANNOT_CONNECT_ARCHIVE_SERVER,
-                            "Sasha (%s) took too long to respond from: Restore workunit %s.",
-                            ep.getUrlStr(s).str(), wuid);
-
-                    if (cmd->numIds()==0)
-                        throw MakeStringException(ECLWATCH_CANNOT_UPDATE_WORKUNIT,"Could not Archive/restore %s",wuid);
-
-                    StringBuffer reply;
-                    cmd->getId(0,reply);
-
-                    AuditSystemAccess(context.queryUserId(), true, "Updated %s", wuid);
+                if (!context.validateFeatureAccess(OWN_WU_ACCESS, SecAccess_Full, false)
+                    || !context.validateFeatureAccess(OTHERS_WU_ACCESS, SecAccess_Full, false))
                     ensureWsWorkunitAccess(context, wuid, SecAccess_Full);
-                    break;
-                }
-                case CECLWUActions_EventDeschedule:
-                    if (!context.validateFeatureAccess(OWN_WU_ACCESS, SecAccess_Full, false)
-                        || !context.validateFeatureAccess(OTHERS_WU_ACCESS, SecAccess_Full, false))
-                        ensureWsWorkunitAccess(context, wuid, SecAccess_Full);
-                    descheduleWorkunit(wuid);
-                    AuditSystemAccess(context.queryUserId(), true, "Updated %s", wuid);
-                    break;
-                }
+                descheduleWorkunit(wuid);
+                AuditSystemAccess(context.queryUserId(), true, "Updated %s", wuid);
             }
             else
             {
@@ -316,7 +313,7 @@ bool doUnProtectWorkunits(IEspContext& context, StringArray& wuids, IArrayOf<ICo
 
 static void checkUpdateQuerysetLibraries()
 {
-    Owned<IRemoteConnection> globalLock = querySDS().connect("/QuerySets/", myProcessSession(), RTM_LOCK_WRITE|RTM_CREATE_QUERY, SDS_LOCK_TIMEOUT);
+    Owned<IRemoteConnection> globalLock = querySDS().connect("/QuerySets/", myProcessSession(), RTM_LOCK_WRITE|RTM_CREATE_QUERY, WU_SDS_LOCK_TIMEOUT);
     if (!globalLock)
         return;
 
@@ -356,7 +353,6 @@ void CWsWorkunitsEx::init(IPropertyTree *cfg, const char *process, const char *s
         OERRLOG("No Dali Connection Active.");
         throw MakeStringException(-1, "No Dali Connection Active. Please Specify a Dali to connect to in you configuration file");
     }
-    setPasswordsFromSDS();
 
     DBGLOG("Initializing %s service [process = %s]", service, process);
 
@@ -398,6 +394,11 @@ void CWsWorkunitsEx::init(IPropertyTree *cfg, const char *process, const char *s
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ThorSlaveLogThreadPoolSize", process, service);
     thorSlaveLogThreadPoolSize = cfg->getPropInt(xpath, THOR_SLAVE_LOG_THREAD_POOL_SIZE);
 
+    xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/WUResultMaxSizeMB", process, service);
+    unsigned wuResultMaxSizeMB = cfg->getPropInt(xpath);
+    if (wuResultMaxSizeMB > 0)
+        wuResultMaxSize = wuResultMaxSizeMB * 0x100000;
+
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ZAPEmail", process, service);
     IPropertyTree *zapEmail = cfg->queryPropTree(xpath.str());
     if (zapEmail)
@@ -434,6 +435,9 @@ void CWsWorkunitsEx::init(IPropertyTree *cfg, const char *process, const char *s
 
     recursiveCreateDirectory(ESP_WORKUNIT_DIR);
 
+    getConfigurationDirectory(directories, "data", "esp", process, dataDirectory);
+    wuFactory.setown(getWorkUnitFactory());
+
     m_sched.start();
     filesInUse.subscribe();
 
@@ -447,6 +451,21 @@ void CWsWorkunitsEx::init(IPropertyTree *cfg, const char *process, const char *s
 void CWsWorkunitsEx::refreshValidClusters()
 {
     validClusters.kill();
+#ifdef _CONTAINERIZED
+    // discovered from generated cluster names
+    Owned<IPropertyTreeIterator> iter = queryComponentConfig().getElements("queues");
+    ForEach(*iter)
+    {
+        IPropertyTree &queue = iter->query();
+        const char *qName = queue.queryProp("@name");
+        bool* found = validClusters.getValue(qName);
+        if (!found || !*found)
+        {
+            validClusters.setValue(qName, true);
+            PROGLOG("adding valid cluster: %s", qName);
+        }
+    }
+#else
     Owned<IStringIterator> it = getTargetClusters(NULL, NULL);
     ForEach(*it)
     {
@@ -456,6 +475,7 @@ void CWsWorkunitsEx::refreshValidClusters()
         if (!found || !*found)
             validClusters.setValue(val.str(), true);
     }
+#endif
 }
 
 bool CWsWorkunitsEx::isValidCluster(const char *cluster)
@@ -705,7 +725,7 @@ bool CWsWorkunitsEx::onWUAction(IEspContext &context, IEspWUActionRequest &req, 
 
         Owned<IProperties> params = createProperties(true);
         params->setProp("BlockTillFinishTimer", req.getBlockTillFinishTimer());
-        if ((action == CECLWUActions_Restore) && !sashaServerIp.isEmpty())
+        if (((action == CECLWUActions_Restore) || (action == CECLWUActions_Archive)) && !sashaServerIp.isEmpty())
         {
             params->setProp("sashaServerIP", sashaServerIp.get());
             params->setProp("sashaServerPort", sashaServerPort);
@@ -1197,7 +1217,10 @@ bool CWsWorkunitsEx::onWUWaitComplete(IEspContext &context, IEspWUWaitRequest &r
         WsWuHelpers::checkAndTrimWorkunit("WUWaitComplete", wuid);
         ensureWsWorkunitAccess(context, wuid.str(), SecAccess_Full);
         PROGLOG("WUWaitComplete: %s", wuid.str());
-        resp.setStateID(secWaitForWorkUnitToComplete(wuid.str(), *context.querySecManager(), *context.queryUser(), req.getWait(), req.getReturnOnWait()));
+        std::list<WUState> expectedStates;
+        if (req.getReturnOnWait())
+            expectedStates.push_back(WUStateWait);
+        resp.setStateID(secWaitForWorkUnitToComplete(wuid.str(), *context.querySecManager(), *context.queryUser(), req.getWait(), expectedStates));
     }
     catch(IException* e)
     {
@@ -1600,6 +1623,8 @@ bool CWsWorkunitsEx::onWUInfo(IEspContext &context, IEspWUInfoRequest &req, IEsp
                     flags|=WUINFO_IncludeAllowedClusters;
                 if (req.getIncludeTotalClusterTime())
                     flags|=WUINFO_IncludeTotalClusterTime;
+                if (req.getIncludeServiceNames())
+                    flags|=WUINFO_IncludeServiceNames;
 
                 PROGLOG("WUInfo: %s %lx", wuid.str(), flags);
 
@@ -1730,7 +1755,10 @@ bool addWUQueryFilter(WUSortField *filters, unsigned short &count, MemoryBuffer 
         return false;
     filters[count++] = value;
     if ((value & WUSFwild) != 0 && !containsWildcard(name))
-        buff.append("*").append(name).append("*");
+    {
+        VStringBuffer s("*%s*", name);
+        buff.append(s);
+    }
     else
         buff.append(name);
     return true;
@@ -1748,6 +1776,17 @@ bool addWUQueryFilterTime(WUSortField *filters, unsigned short &count, MemoryBuf
     VStringBuffer wuid("W%4d%02d%02d-%02d%02d%02d",year,month,day,hour,minute,second);
     filters[count++] = value;
     buff.append(wuid.str());
+    return true;
+}
+
+bool addWUQueryFilterTotalClusterTime(WUSortField *filters, unsigned short &count, MemoryBuffer &filterBuf, unsigned milliseconds, WUSortField value)
+{
+    if (milliseconds == 0)
+        return false;
+
+    VStringBuffer vBuf("%u", milliseconds);
+    filters[count++] = value;
+    filterBuf.append(vBuf);
     return true;
 }
 
@@ -1857,6 +1896,8 @@ void doWUQueryWithSort(IEspContext &context, IEspWUQueryRequest & req, IEspWUQue
     addWUQueryFilter(filters, filterCount, filterbuf, req.getOwner(), (WUSortField) (WUSFuser | WUSFnocase));
     addWUQueryFilter(filters, filterCount, filterbuf, req.getJobname(), (WUSortField) (WUSFjob | WUSFnocase));
     addWUQueryFilter(filters, filterCount, filterbuf, req.getECL(), (WUSortField) (WUSFecl | WUSFwild));
+
+    addWUQueryFilterTotalClusterTime(filters, filterCount, filterbuf, req.getTotalClusterTimeThresholdMilliSec(), WUSFtotalthortime);
 
     addWUQueryFilterTime(filters, filterCount, filterbuf, req.getStartDate(), WUSFwuid);
     addWUQueryFilterTime(filters, filterCount, filterbuf, req.getEndDate(), WUSFwuidhigh);
@@ -2804,9 +2845,24 @@ INewResultSet* createFilteredResultSet(INewResultSet* result, IArrayOf<IConstNam
     return filter->create();
 }
 
-void getWsWuResult(IEspContext &context, const char* wuid, const char *name, const char *logical, unsigned index, __int64 start,
-    unsigned& count, __int64& total, IStringVal& resname, bool bin, IArrayOf<IConstNamedValue>* filterBy, MemoryBuffer& mb,
-    WUState& wuState, bool xsd=true)
+
+static bool isResultRequestSzTooBig(unsigned __int64 start, unsigned requestCount, unsigned __int64 resultSz, unsigned resultRows, unsigned __int64 limitSz)
+{
+    if ((0 == requestCount) || (0 == resultRows))
+        return resultSz > limitSz;
+    else
+    {
+        if (start+requestCount > resultRows)
+            requestCount = resultRows-start;
+        unsigned __int64 avgRecSize = resultSz / resultRows;
+        unsigned __int64 estSize = requestCount * avgRecSize;
+        return estSize > limitSz;
+    }
+}
+
+void CWsWorkunitsEx::getWsWuResult(IEspContext &context, const char *wuid, const char *name, const char *logical, unsigned index, __int64 start,
+    unsigned &count, __int64 &total, IStringVal &resname, bool bin, IArrayOf<IConstNamedValue> *filterBy, MemoryBuffer &mb,
+    WUState &wuState, bool xsd)
 {
     Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
     Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
@@ -2835,6 +2891,7 @@ void getWsWuResult(IEspContext &context, const char* wuid, const char *name, con
 
     if (!result)
         throw MakeStringException(ECLWATCH_CANNOT_GET_WU_RESULT,"Cannot open the workunit result.");
+
     if (!resname.length())
         result->getResultName(resname);
 
@@ -2849,7 +2906,29 @@ void getWsWuResult(IEspContext &context, const char* wuid, const char *name, con
     else
         rs.setown(resultSetFactory->createNewResultSet(result, wuid));
     if (!filterBy || !filterBy->length())
+    {
+        unsigned __int64 resultSz;
+
+        if (0 == logicalName.length()) // could be a workunit owned file (OUTPUT, THOR)
+            result->getResultFilename(logicalName);
+        if (logicalName.length())
+        {
+            Owned<IDistributedFile> df = lookupLogicalName(context, logicalName.str(), false, false, false, nullptr, defaultPrivilegedUser);
+            if (!df)
+                throw makeStringExceptionV(ECLWATCH_FILE_NOT_EXIST, "Cannot find file %s.", logicalName.str());
+            resultSz = df->getDiskSize(true, false);
+        }
+        else
+            resultSz = result->getResultRawSize(nullptr, nullptr);
+
+        if (isResultRequestSzTooBig(start, count, resultSz, rs->getNumRows(), wuResultMaxSize))
+        {
+            throw makeStringExceptionV(ECLWATCH_INVALID_ACTION, "Failed to get the result for %s. The size is bigger than %lld MB.",
+                                       wuid, wuResultMaxSize/0x100000);
+        }
+
         appendResultSet(mb, rs, name, start, count, total, bin, xsd, context.getResponseFormat(), result->queryResultXmlns());
+    }
     else
     {
         Owned<INewResultSet> filteredResult = createFilteredResultSet(rs, filterBy);
@@ -3024,7 +3103,7 @@ bool CWsWorkunitsEx::onWUFile(IEspContext &context,IEspWULogFileRequest &req, IE
             }
             else if (strncmp(req.getType(), File_ThorLog, 7) == 0)
             {
-                winfo.getWorkunitThorLog(req.getName(), mb, nullptr);
+                winfo.getWorkunitThorMasterLog(nullptr, req.getName(), mb, nullptr);
                 openSaveFile(context, opt, req.getSizeLimit(), "thormaster.log", HTTP_TYPE_TEXT_PLAIN, mb, resp);
             }
             else if (strieq(File_ThorSlaveLog,req.getType()))
@@ -3035,7 +3114,7 @@ bool CWsWorkunitsEx::onWUFile(IEspContext &context,IEspWULogFileRequest &req, IE
             }
             else if (strieq(File_EclAgentLog,req.getType()))
             {
-                winfo.getWorkunitEclAgentLog(req.getName(), req.getProcess(), mb, nullptr);
+                winfo.getWorkunitEclAgentLog(nullptr, req.getName(), req.getProcess(), mb, nullptr);
                 openSaveFile(context, opt, req.getSizeLimit(), "eclagent.log", HTTP_TYPE_TEXT_PLAIN, mb, resp);
             }
             else if (strieq(File_XML,req.getType()) && notEmpty(req.getName()))
@@ -3166,15 +3245,28 @@ void getWorkunitCluster(IEspContext &context, const char *wuid, SCMStringBuffer 
     }
 }
 
-void getFileResults(IEspContext &context, const char *logicalName, const char *cluster, __int64 start, unsigned &count, __int64 &total,
+void CWsWorkunitsEx::getFileResults(IEspContext &context, const char *logicalName, const char *cluster, __int64 start, unsigned &count, __int64 &total,
     IStringVal &resname, bool bin, IArrayOf<IConstNamedValue> *filterBy, MemoryBuffer &buf, bool xsd)
 {
+    Owned<IDistributedFile> df = lookupLogicalName(context, logicalName, false, false, false, nullptr, defaultPrivilegedUser);
+    if (!df)
+        throw makeStringExceptionV(ECLWATCH_FILE_NOT_EXIST, "Cannot find file %s.", logicalName);
+
     Owned<IResultSetFactory> resultSetFactory = getSecResultSetFactory(context.querySecManager(), context.queryUser(), context.queryUserId(), context.queryPassword());
-    Owned<INewResultSet> result(resultSetFactory->createNewFileResultSet(logicalName, cluster));
+    Owned<INewResultSet> result(resultSetFactory->createNewFileResultSet(df, cluster));
     if (!filterBy || !filterBy->length())
+    {
+        if (isResultRequestSzTooBig(start, count, df->getDiskSize(true, false), result->getNumRows(), wuResultMaxSize))
+        {
+            throw makeStringExceptionV(ECLWATCH_INVALID_ACTION, "Failed to get the result from file %s. The size is bigger than %lld MB.",
+                                       logicalName, wuResultMaxSize/0x100000);
+        }
+    
         appendResultSet(buf, result, resname.str(), start, count, total, bin, xsd, context.getResponseFormat(), NULL);
+    }
     else
     {
+        // NB: this could be still be very big, appendResultSet should be changed to ensure filtered result doesn't grow bigger than wuResultMaxSize
         Owned<INewResultSet> filteredResult = createFilteredResultSet(result, filterBy);
         appendResultSet(buf, filteredResult, resname.str(), start, count, total, bin, xsd, context.getResponseFormat(), NULL);
     }
@@ -3525,7 +3617,20 @@ void getScheduledWUs(IEspContext &context, WUShowScheduledFilters *filters, cons
     if (notEmpty(serverName))
     {
         Owned<IWorkUnitFactory> factory = getWorkUnitFactory(context.querySecManager(), context.queryUser());
-        Owned<IScheduleReader> reader = getScheduleReader(serverName, filters->eventName);
+        Owned<IScheduleReader> reader;
+        try
+        {
+            reader.setown(getScheduleReader(serverName, filters->eventName));
+        }
+        catch (IException *e)
+        {
+            StringBuffer eMsg;
+            e->errorMessage(eMsg);
+            e->Release();
+            IWARNLOG("Failed to getScheduleReader for %s: %s", serverName, eMsg.str());
+            return;
+        }
+
         Owned<IScheduleReaderIterator> it(reader->getIterator());
         while(it->isValidEventName())
         {
@@ -4440,6 +4545,50 @@ int CWsWorkunitsSoapBindingEx::onGetForm(IEspContext &context, CHttpRequest* req
         FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
     }
     return onGetNotFound(context, request, response, service);
+}
+
+int CWsWorkunitsSoapBindingEx::onStartUpload(IEspContext &ctx, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method)
+{
+    StringArray fileNames, files;
+    StringBuffer source;
+    Owned<IMultiException> me = MakeMultiException(source.setf("WsWorkunits::%s()", method).str());
+    try
+    {
+        if (strieq(method, "ImportWUZAPFile"))
+        {
+            SecAccessFlags accessOwn, accessOthers;
+            getUserWuAccessFlags(ctx, accessOwn, accessOthers, false);
+            if ((accessOwn != SecAccess_Full) || (accessOthers != SecAccess_Full))
+                throw MakeStringException(-1, "Permission denied.");
+    
+            StringBuffer password;
+            request->getParameter("Password", password);
+
+            request->readContentToFiles(nullptr, zipFolder, fileNames);
+            unsigned count = fileNames.ordinality();
+            if (count == 0)
+                throw MakeStringException(ECLWATCH_INVALID_INPUT, "Failed to read upload content.");
+            //For now, we only support importing 1 ZAP report per ImportWUZAPFile request for a better response time.
+            //Some ZAP report could be very big. It may take a log time to import.
+            if (count > 1)
+                throw MakeStringException(ECLWATCH_INVALID_INPUT, "Only one WU ZAP report is allowed.");
+
+            VStringBuffer fileName("%s%s", zipFolder, fileNames.item(0));
+            wswService->queryWUFactory()->importWorkUnit(fileName, password,
+                wswService->getDataDirectory(), "ws_workunits", ctx.queryUserId(), ctx.querySecManager(), ctx.queryUser());
+        }
+        else
+            throw MakeStringException(ECLWATCH_INVALID_INPUT, "WsWorkunits::%s does not support the upload_ option.", method);
+    }
+    catch (IException* e)
+    {
+        me->append(*e);
+    }
+    catch (...)
+    {
+        me->append(*MakeStringExceptionDirect(ECLWATCH_INTERNAL_ERROR, "Unknown Exception"));
+    }
+    return onFinishUpload(ctx, request, response, serv, method, fileNames, files, me);
 }
 
 bool isDeploymentTypeCompressed(const char *type)
@@ -5383,4 +5532,111 @@ bool CWsWorkunitsEx::onWUEclDefinitionAction(IEspContext &context, IEspWUEclDefi
         FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
     }
    return true;
+}
+
+static const char *eclccPluginPath = "ECLCC_PLUGIN_PATH=";
+static unsigned eclccPluginPathLength = strlen(eclccPluginPath);
+
+//Run 'eclcc -showpaths' command which returns something like:
+//
+//...
+//ECLCC_PLUGIN_PATH=/opt/HPCCSystems/plugins:/opt/HPCCSystems/versioned/python2
+//...
+//
+//Find out the file paths after the ECLCC_PLUGIN_PATH=
+//In each file path, find out all of the .ecllib files and qualified .so files.
+bool CWsWorkunitsEx::onWUGetPlugins(IEspContext &context, IEspWUGetPluginsRequest &req, IEspWUGetPluginsResponse &resp)
+{
+    try
+    {
+        StringBuffer eclccPaths, error;
+        unsigned ret = runExternalCommand(eclccPaths, error, "eclcc -showpaths", nullptr);
+        if (ret != 0)
+           throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to run 'eclcc -showpaths': %s", error.str());
+
+        if (eclccPaths.isEmpty())
+        {
+            IWARNLOG("The 'eclcc -showpaths' returns empty response.");
+            return true;
+        }
+
+        StringArray pluginFolders;
+        readPluginFolders(eclccPaths, pluginFolders);
+
+        IArrayOf<IConstWUEclPluginsInFolder> plugins;
+        ForEachItemIn(i, pluginFolders)
+        {
+            const char *pluginFolder = pluginFolders.item(i);
+            Owned<IEspWUEclPluginsInFolder> folder = createWUEclPluginsInFolder();
+            folder->setPath(pluginFolder);
+            findPlugins(pluginFolder, false, folder->getPlugins());
+            findPlugins(pluginFolder, true, folder->getPlugins());
+            plugins.append(*folder.getClear());
+        }
+        resp.setPlugins(plugins);
+    }
+    catch(IException *e)
+    {
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+    }
+   return true;
+}
+
+void CWsWorkunitsEx::readPluginFolders(StringBuffer &eclccPaths, StringArray &pluginFolders)
+{
+    int lineLength = 0;
+    int curPos = 0;
+    int eclccPathsLength = eclccPaths.length();
+    const char *eclccPathsPtr = eclccPaths.str();
+    while (true)
+    {
+        __int64 nextPos = Utils::getLine(eclccPathsLength, curPos, eclccPathsPtr, lineLength);
+        if (strnicmp(eclccPathsPtr + curPos,  eclccPluginPath, eclccPluginPathLength) != 0)
+        {
+            curPos = nextPos;
+            continue;
+        }
+
+        //ex: ECLCC_PLUGIN_PATH=/opt/HPCCSystems/plugins:/opt/HPCCSystems/versioned/python2
+        if (lineLength > eclccPluginPathLength)
+        {
+            StringBuffer eclccPluginPathBuf;
+            eclccPluginPathBuf.append(lineLength - eclccPluginPathLength, eclccPathsPtr + curPos + eclccPluginPathLength);
+            pluginFolders.appendList(eclccPluginPathBuf, ":");
+        }
+        break;
+    }
+}
+
+void CWsWorkunitsEx::findPlugins(const char *pluginFolder, bool dotSoFile, StringArray &plugins)
+{
+    Owned<IFile> pluginDir = createIFile(pluginFolder);
+    Owned<IDirectoryIterator> pluginFiles = pluginDir->directoryFiles(dotSoFile ? "*.so" : "*.ecllib", false, false);
+    ForEach(*pluginFiles)
+    {
+        const char *pluginFile = pluginFiles->query().queryFilename();
+        StringBuffer fileName;
+        splitFilename(pluginFile, nullptr, nullptr, &fileName, &fileName);
+        //The ecllib files should be reported as plugins.
+        //.so files are reported as plugins if getSharedProcedure("getECLPluginDefinition")->ECL is non null
+        if (!dotSoFile || checkPluginECLAttr(pluginFile))
+            plugins.append(fileName);
+    }
+}
+
+bool CWsWorkunitsEx::checkPluginECLAttr(const char *fileNameWithPath)
+{
+    HINSTANCE h = LoadSharedObject(fileNameWithPath, true, false);
+    if (!h)
+        throw makeStringExceptionV(ECLWATCH_INTERNAL_ERROR, "can't load library %s", fileNameWithPath);
+
+    EclPluginDefinition p = (EclPluginDefinition) GetSharedProcedure(h, "getECLPluginDefinition");
+    if (p)
+    {
+        ECLPluginDefinitionBlock pb;
+        pb.size = sizeof(pb);
+        if (p(&pb) && pb.ECL)
+            return true;
+    }
+    return false;
 }

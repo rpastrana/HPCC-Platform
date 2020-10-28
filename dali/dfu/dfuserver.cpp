@@ -28,7 +28,7 @@
 #include "daclient.hpp"
 #include "dadfs.hpp"
 #include "dasds.hpp"
-#include "dalienv.hpp"
+#include "environment.hpp"
 #include "jio.hpp"
 #include "daft.hpp"
 #include "daftcfg.hpp"
@@ -168,9 +168,8 @@ int main(int argc, const char *argv[])
     CSDSServerStatus *serverstatus=NULL;
     Owned<IReplicateServer> replserver;
     try {
-        Owned<IGroup> serverGroup = createIGroup(daliServer.str(),DALI_SERVER_PORT);
+        Owned<IGroup> serverGroup = createIGroupRetry(daliServer.str(),DALI_SERVER_PORT);
         initClientProcess(serverGroup, DCR_DfuServer, 0, NULL, NULL, stop?(1000*30):MP_WAIT_FOREVER);
-        setPasswordsFromSDS();
 
         if(!stop)
         {

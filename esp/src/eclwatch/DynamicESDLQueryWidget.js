@@ -1,13 +1,9 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
-    "dojo/on",
     "dojo/dom",
-    "dojo/dom-class",
-    "dojo/dom-construct",
 
     "dijit/registry",
     "dijit/form/Button",
@@ -19,18 +15,18 @@ define([
     "dgrid/selector",
 
     "hpcc/GridDetailsWidget",
-    "src/WsTopology",
     "src/WsESDLConfig",
     "src/Utility",
     "hpcc/DelayLoadWidget",
     "src/ESPUtil",
     "hpcc/DynamicESDLDefinitionQueryWidget",
-    "hpcc/TargetSelectWidget",
-    "hpcc/DelayLoadWidget",
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, on, dom, domClass, domConstruct,
+    "hpcc/TargetSelectWidget"
+], function (declare, lang, nlsHPCCMod, arrayUtil, dom,
     registry, Button, ToolbarSeparator, Dialog, TextBox,
     tree, selector,
-    GridDetailsWidget, WsTopology, WsESDLConfig, Utility, DelayLoadWidget, ESPUtil, DynamicESDLDefinitionQueryWidget, TargetSelectWidget, DelayLoadWidget) {
+    GridDetailsWidget, WsESDLConfig, Utility, DelayLoadWidget, ESPUtil, DynamicESDLDefinitionQueryWidget, TargetSelectWidget) {
+
+    var nlsHPCC = nlsHPCCMod.default;
     return declare("DynamicESDLQueryWidget", [GridDetailsWidget, ESPUtil.FormHelper], {
         i18n: nlsHPCC,
 
@@ -192,7 +188,6 @@ define([
                     context.deleteButton.set("disabled", true);
                 }
             });
-
             return retVal;
         },
 
@@ -389,8 +384,8 @@ define([
                                     Name: Binding.Id,
                                     PublishBy: Binding.History.PublishBy,
                                     CreatedTime: Binding.History.CreatedTime,
-                                    LastEditBy:Binding.History.LastEditBy,
-                                    LastEditTime:Binding.History.LastEditTime,
+                                    LastEditBy: Binding.History.LastEditBy,
+                                    LastEditTime: Binding.History.LastEditTime,
                                     children: false,
                                     type: "binding"
                                 });

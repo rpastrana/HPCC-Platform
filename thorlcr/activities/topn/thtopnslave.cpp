@@ -157,7 +157,7 @@ public:
                             break; // never reading from node 0 (0 == terminator)
                         StringBuffer s;
                         s.appendN(indent, ' ').append("Merging from node: ").append(node);
-                        ActPrintLog("%s", s.str());
+                        ::ActPrintLog(this, thorDetailedLogLevel, "%s", s.str());
                         streams.append(*createRowStreamFromNode(*this, node+1, queryJobChannel().queryJobComm(), mpTag, abortSoon));
                     }
                     Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
@@ -184,7 +184,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         // NB: topNLimit shouldn't be stupid size, resourcing will guarantee this
         __int64 _topNLimit = helper->getLimit();
@@ -211,7 +211,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon || eos)
             return NULL;
         if (NULL == out)

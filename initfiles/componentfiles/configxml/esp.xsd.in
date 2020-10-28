@@ -924,6 +924,13 @@
                     </xs:appinfo>
                 </xs:annotation>
             </xs:attribute>
+            <xs:attribute name="maxLogFileSize" type="xs:nonNegativeInteger" use="optional" default="0">
+                <xs:annotation>
+                    <xs:appinfo>
+                        <tooltip>The maximum log file size (0 for no size limit)</tooltip>
+                    </xs:appinfo>
+                </xs:annotation>
+            </xs:attribute>
             <xs:attribute name="maxRequestEntityLength" type="xs:nonNegativeInteger" use="optional" default="8000000">
                 <xs:annotation>
                     <xs:appinfo>
@@ -1058,6 +1065,13 @@
                 <xs:annotation>
                     <xs:appinfo>
                         <tooltip>Maximum number of query requests per persistent http connection. (-1 for unlimited, 0 to disable).</tooltip>
+                    </xs:appinfo>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="minCompressLength" type="xs:integer" use="optional" default="1000">
+                <xs:annotation>
+                    <xs:appinfo>
+                        <tooltip>Minumum content length in bytes for the content to be compressed.</tooltip>
                     </xs:appinfo>
                 </xs:annotation>
             </xs:attribute>

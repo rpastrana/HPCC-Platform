@@ -1,20 +1,12 @@
 define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
-    "dojo/on",
-    "dojo/dom",
     "dojo/dom-class",
-    "dojo/dom-construct",
     "dojo/topic",
 
     "dijit/registry",
-    "dijit/form/Button",
-    "dijit/ToolbarSeparator",
     "dijit/Dialog",
-    "dijit/form/TextBox",
 
     "dgrid/tree",
     "dgrid/selector",
@@ -27,13 +19,14 @@ define([
     "src/ESPUtil",
     "hpcc/DelayLoadWidget",
     "hpcc/PreflightDetailsWidget",
-    "hpcc/RequestInformationWidget",
     "hpcc/MachineInformationWidget",
     "hpcc/IFrameWidget"
-], function (declare, lang, i18n, nlsHPCC, arrayUtil, on, dom, domClass, domConstruct, topic,
-    registry, Button, ToolbarSeparator, Dialog, TextBox,
+], function (declare, nlsHPCCMod, arrayUtil, domClass, topic,
+    registry, Dialog,
     tree, selector,
-    GridDetailsWidget, ESPPreflight, ESPRequest, WsTopology, Utility, ESPUtil, DelayLoadWidget, PreflightDetailsWidget, RequestInformationWidget, MachineInformationWidget, IFrameWidget) {
+    GridDetailsWidget, ESPPreflight, ESPRequest, WsTopology, Utility, ESPUtil, DelayLoadWidget, PreflightDetailsWidget, MachineInformationWidget, IFrameWidget) {
+
+    var nlsHPCC = nlsHPCCMod.default;
     return declare("SystemServersQueryWidget", [GridDetailsWidget, ESPUtil.FormHelper], {
         i18n: nlsHPCC,
 
@@ -105,7 +98,7 @@ define([
             var headings = [this.i18n.ServiceName, this.i18n.ServiceType, this.i18n.Protocol, this.i18n.Port];
             var rows = [];
 
-            arrayUtil.forEach(arr, function(row){
+            arrayUtil.forEach(arr, function (row) {
                 rows.push({
                     "ServiceName": row.Name,
                     "ServiceType": row.ServiceType,
@@ -136,22 +129,8 @@ define([
             this.inherited(arguments);
             this.openButton = registry.byId(this.id + "Open");
             this.refreshButton = registry.byId(this.id + "Refresh");
-            this.configurationButton = registry.byId(this.id + "Configuration");
-
             this.machineFilter = new MachineInformationWidget({});
-
-            this.configurationButton = new Button({
-                label: "Open Configuration",
-                onClick: function(event) {
-                    context._onOpenConfiguration();
-                }
-            });
-
             this.machineFilter.placeAt(this.openButton.domNode, "after");
-            this.configurationButton.placeAt(this.openButton.domNode, "after");
-
-            new ToolbarSeparator().placeAt(this.machineFilter.domNode, "before");
-
             this.machineFilter.machineForm.set("style", "width:500px;");
             dojo.destroy(this.id + "Open");
 
@@ -172,7 +151,11 @@ define([
                         width: 20,
                         selectorType: 'checkbox',
                         disabled: function (item) {
-                            return !item.Configuration;
+                            if (!item.Configuration || item.Type === "LDAPServerProcess") {
+                                return true;
+                            } else {
+                                return false;
+                            }
                         },
                     }),
                     Configuration: {
@@ -184,9 +167,9 @@ define([
                         width: 10,
                         sortable: false,
                         renderCell: function (object, value, node, options) {
-                            if (object.Directory) {
+                            if (object.Directory && object.Type && object.Type !== "FTSlaveProcess") {
                                 domClass.add(node, "centerInCell");
-                                node.innerHTML = "<a href='#' />" + Utility.getImageHTML("configuration.png", context.i18n.Configuration) + "</a>";
+                                node.innerHTML = "<a href='#' class='gridClick'/>" + Utility.getImageHTML("configuration.png", context.i18n.Configuration) + "</a>";
                             }
                         },
                     },
@@ -202,7 +185,7 @@ define([
                     },
                     Logs: {
                         label: this.i18n.Logs,
-                        width:90,
+                        width: 90,
                         children: [
                             {
                                 label: this.i18n.AuditLogs,
@@ -271,7 +254,7 @@ define([
                 for (var i = selection.length - 1; i >= 0; --i) {
                     if (selection[i].Component) {
                         context.machineFilter.disable(true);
-                    }  else {
+                    } else {
                         context.machineFilter.disable(false);
                     }
                 }
@@ -294,10 +277,7 @@ define([
             });
 
             retVal.on(".dgrid-row:dblclick", function (evt) {
-                if (context._onRowDblClick) {
-                    var item = retVal.row(evt).data;
-                    context._onRowDblClick(item);
-                }
+                event.preventDefault();
             });
 
             retVal.on(".dgrid-cell .gridClick:click", function (evt) {
@@ -309,12 +289,12 @@ define([
                 }
             });
 
-            retVal.on(".dgrid-cell .additionalSystemServersDialog:click", function (evt){
+            retVal.on(".dgrid-cell .additionalSystemServersDialog:click", function (evt) {
                 var item = retVal.row(evt).data;
                 context._onAdditionalInformation(item.Parent.TpBindings.TpBinding);
             });
 
-            retVal.on(".dgrid-cell:click", function(evt){
+            retVal.on(".dgrid-cell:click", function (evt) {
                 var cell = retVal.cell(evt)
             });
 
@@ -358,8 +338,8 @@ define([
                     Directory: data.Directory,
                     OsType: data.OS
                 }
-            }).then(function(response) {
-                var tab = context.ensureConfigurationPane(data.Type + data.Name + "Configuration" , {
+            }).then(function (response) {
+                var tab = context.ensureConfigurationPane(data.Type + data.Name + "Configuration", {
                     Component: data.Type,
                     Name: data.Name,
                     Usergenerated: response
@@ -403,16 +383,13 @@ define([
 
             for (var i = 0; i < selection.length; ++i) {
                 if (selection[i] && selection[i].type === "clusterProcess") {
-                    isCluster = true;
                     isNode = false;
                 } else {
-                    isCluster = false;
                     isNode = true;
                 }
             }
 
             this.openButton.set("disabled", !isNode);
-            this.configurationButton.set("disabled", !isCluster);
         },
 
         ensureConfigurationPane: function (id, params) {

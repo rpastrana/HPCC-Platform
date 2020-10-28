@@ -1,10 +1,10 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/dom",
     "dojo/dom-form",
+    "dojo/_base/array",
 
     "dijit/registry",
 
@@ -24,80 +24,91 @@ define([
 
     "dojox/form/PasswordValidator"
 
-], function (declare, lang, i18n, nlsHPCC, dom, domForm,
+],
+    function (declare, lang, nlsHPCCMod, dom, domForm, arrayUtil,
     registry,
     _Widget, WsAccount,
     template) {
-        return declare("CurrentUserDetailsWidget", [_Widget], {
-            templateString: template,
-            baseClass: "CurrentUserDetailsWidget",
-            i18n: nlsHPCC,
 
-            user: null,
+    var nlsHPCC = nlsHPCCMod.default;
+    return declare("CurrentUserDetailsWidget", [_Widget], {
+        templateString: template,
+        baseClass: "CurrentUserDetailsWidget",
+        i18n: nlsHPCC,
 
-            getTitle: function () {
-                return this.i18n.UserDetails;
-            },
+        user: null,
 
-            postCreate: function (args) {
-                this.inherited(arguments);
-                this.userForm = registry.byId(this.id + "UserForm");
-            },
+        getTitle: function () {
+            return this.i18n.UserDetails;
+        },
 
-            resize: function (args) {
-                this.inherited(arguments);
-                this.widget.BorderContainer.resize();
-            },
+        postCreate: function (args) {
+            this.inherited(arguments);
+            this.userForm = registry.byId(this.id + "UserForm");
+        },
 
-            //  Hitched actions  ---
-            _onSave: function (event) {
-                var dialog = dijit.byId("stubUserDialog");
-                if (this.userForm.validate()) {
-                    var formInfo = domForm.toObject(this.id + "UserForm");
-                    WsAccount.UpdateUser({
-                        showOkMsg: true,
-                        request: {
-                            username: this.user,
-                            oldpass: formInfo.oldPassword,
-                            newpass1: formInfo.newPassword,
-                            newpass2: formInfo.newPassword
-                        }
-                    });
-                    dialog.hide();
-                }
-            },
+        resize: function (args) {
+            this.inherited(arguments);
+            this.widget.BorderContainer.resize();
+        },
 
-            //  Implementation  ---
-            init: function (params) {
-                if (this.inherited(arguments))
-                    return;
+        //  Hitched actions  ---
+        _onSave: function (event) {
+            var context = this;
+            var dialog = this.params.Widget;
 
-                this.user = params.Username;
-                this.refresh();
-            },
-
-            refresh: function () {
-                if (this.user) {
-                    this.updateInput("User", null, this.user);
-                    this.updateInput("Username", null, this.user);
-
-                    var context = this;
-                    WsAccount.MyAccount({
-                    }).then(function (response) {
-                        if (lang.exists("MyAccountResponse.firstName", response)) {
-                            context.updateInput("FirstName", null, response.MyAccountResponse.firstName);
-                        }
-                        if (lang.exists("MyAccountResponse.employeeID", response)) {
-                            context.updateInput("EmployeeID", null, response.MyAccountResponse.employeeID);
-                        }
-                        if (lang.exists("MyAccountResponse.lastName", response)) {
-                            context.updateInput("LastName", null, response.MyAccountResponse.lastName);
-                        }
-                        if (lang.exists("MyAccountResponse.passwordExpiration", response)) {
-                            context.updateInput("PasswordExpiration", null, response.MyAccountResponse.passwordExpiration);
-                        }
-                    });
-                }
+            if (this.userForm.validate()) {
+                var formInfo = domForm.toObject(this.id + "UserForm");
+                WsAccount.UpdateUser({
+                    showOkMsg: true,
+                    request: {
+                        username: this.user,
+                        oldpass: formInfo.oldPassword,
+                        newpass1: formInfo.newPassword,
+                        newpass2: formInfo.newPassword
+                    }
+                }).then(function (response) {
+                    if (lang.exists("UpdateUserResponse", response)) {
+                        arrayUtil.forEach(context.userForm.getDescendants(), function (item, idx) {
+                            item.set('value', "");
+                        });
+                    }
+                });
+                dialog.hide();
             }
-        });
+        },
+
+        //  Implementation  ---
+        init: function (params) {
+            if (this.inherited(arguments))
+                return;
+
+            this.user = params.Username;
+            this.refresh();
+        },
+
+        refresh: function () {
+            if (this.user) {
+                this.updateInput("User", null, this.user);
+                this.updateInput("Username", null, this.user);
+
+                var context = this;
+                WsAccount.MyAccount({
+                }).then(function (response) {
+                    if (lang.exists("MyAccountResponse.firstName", response)) {
+                        context.updateInput("FirstName", null, response.MyAccountResponse.firstName);
+                    }
+                    if (lang.exists("MyAccountResponse.employeeID", response)) {
+                        context.updateInput("EmployeeID", null, response.MyAccountResponse.employeeID);
+                    }
+                    if (lang.exists("MyAccountResponse.lastName", response)) {
+                        context.updateInput("LastName", null, response.MyAccountResponse.lastName);
+                    }
+                    if (lang.exists("MyAccountResponse.passwordExpiration", response)) {
+                        context.updateInput("PasswordExpiration", null, response.MyAccountResponse.passwordExpiration);
+                    }
+                });
+            }
+        }
     });
+});

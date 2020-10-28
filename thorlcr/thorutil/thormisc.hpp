@@ -51,7 +51,7 @@
 #define THOROPT_HDIST_PULLBUFFER_SIZE "hdPullBufferSize"        // Distribute pull buffer size (receiver side limit, before spilling)
 #define THOROPT_HDIST_CANDIDATELIMIT  "hdCandidateLimit"        // Limits # of buckets to push to the writers when send buffer is full           (default = is 50% largest)
 #define THOROPT_HDIST_TARGETWRITELIMIT "hdTargetLimit"          // Limit # of writer threads working on a single target                          (default = unbound, but picks round-robin)
-#define THOROPT_HDIST_COMP            "hdCompressorType"        // Distribute compressor to use                                                  (default = "FLZ")
+#define THOROPT_HDIST_COMP            "hdCompressorType"        // Distribute compressor to use                                                  (default = "LZ4")
 #define THOROPT_HDIST_COMPOPTIONS     "hdCompressorOptions"     // Distribute compressor options, e.g. AES key                                   (default = "")
 #define THOROPT_SPLITTER_SPILL        "splitterSpill"           // Force splitters to spill or not, default is to adhere to helper setting       (default = -1)
 #define THOROPT_LOOP_MAX_EMPTY        "loopMaxEmpty"            // Max # of iterations that LOOP can cycle through with 0 results before errors  (default = 1000)
@@ -68,6 +68,7 @@
 #define THOROPT_COMP_FORCELZW         "forceLZW"                // Forces file compression to use LZW                                            (default = false)
 #define THOROPT_COMP_FORCEFLZ         "forceFLZ"                // Forces file compression to use FLZ                                            (default = false)
 #define THOROPT_COMP_FORCELZ4         "forceLZ4"                // Forces file compression to use LZ4                                            (default = false)
+#define THOROPT_COMP_FORCELZ4HC       "forceLZ4HC"              // Forces file compression to use LZ4HC                                          (default = false)
 #define THOROPT_TRACE_ENABLED         "traceEnabled"            // Output from TRACE activity enabled                                            (default = false)
 #define THOROPT_TRACE_LIMIT           "traceLimit"              // Number of rows from TRACE activity                                            (default = 10)
 #define THOROPT_READ_CRC              "crcReadEnabled"          // Enabled CRC validation on disk reads if file CRC are available                (default = true)
@@ -106,7 +107,9 @@
 #define INITIAL_SELFJOIN_MATCH_WARNING_LEVEL 20000  // max of row matches before selfjoin emits warning
 
 #define THOR_SEM_RETRY_TIMEOUT 2
-#define THOR_TRACE_LEVEL 5
+
+// Logging
+extern graph_decl const LogMsgJobInfo thorJob;
 
 enum ThorExceptionAction { tea_null, tea_warning, tea_abort, tea_shutdown };
 
@@ -115,6 +118,25 @@ enum RegistryCode:unsigned { rc_register, rc_deregister };
 #define createThorRow(size)         malloc(size)
 #define destroyThorRow(ptr)         free(ptr)
 #define reallocThorRow(ptr, size)   realloc(ptr, size)
+
+
+//statistics gathered by the different activities
+extern graph_decl const StatisticsMapping spillStatistics;
+extern graph_decl const StatisticsMapping basicActivityStatistics;
+extern graph_decl const StatisticsMapping groupActivityStatistics;
+extern graph_decl const StatisticsMapping hashJoinActivityStatistics;
+extern graph_decl const StatisticsMapping indexReadActivityStatistics;
+extern graph_decl const StatisticsMapping indexWriteActivityStatistics;
+extern graph_decl const StatisticsMapping joinActivityStatistics;
+extern graph_decl const StatisticsMapping keyedJoinActivityStatistics;
+extern graph_decl const StatisticsMapping lookupJoinActivityStatistics;
+extern graph_decl const StatisticsMapping loopActivityStatistics;
+extern graph_decl const StatisticsMapping diskReadActivityStatistics;
+extern graph_decl const StatisticsMapping diskWriteActivityStatistics;
+extern graph_decl const StatisticsMapping sortActivityStatistics;
+
+extern graph_decl const StatisticsMapping graphStatistics;
+
 
 class BooleanOnOff
 {
@@ -241,7 +263,7 @@ public:
     void stop() { running = false; todo.signal(); }
     void inform(IException *e)
     {
-        LOG(MCdebugProgress, unknownJob, "INFORM [%s]", description.get());
+        LOG(MCdebugProgress, thorJob, "INFORM [%s]", description.get());
         CriticalBlock block(crit);
         if (exception.get())
             e->Release();
@@ -256,7 +278,7 @@ public:
         CriticalBlock block(crit);
         IException *e = exception.getClear();
         if (e)
-            LOG(MCdebugProgress, unknownJob, "CLEARING TIMEOUT [%s]", description.get());
+            LOG(MCdebugProgress, thorJob, "CLEARING TIMEOUT [%s]", description.get());
         todo.signal();
         return e;
     }
@@ -295,11 +317,11 @@ public:
     }
 // IExtRowStream
     virtual const void *nextRow() override { return stream->nextRow(); }
-    virtual void stop() override { stream->stop(); }
+    virtual void stop() override { stream->stop(NULL); }
     virtual offset_t getOffset() const override { return stream->getOffset(); }
     virtual offset_t getLastRowOffset() const override { return stream->getLastRowOffset(); }
     virtual unsigned __int64 queryProgress() const override { return stream->queryProgress(); }
-    virtual void stop(CRC32 *crcout=NULL) override { stream->stop(); }
+    virtual void stop(CRC32 *crcout) override { stream->stop(crcout); }
     virtual const byte *prefetchRow() override { return stream->prefetchRow(); }
     virtual void prefetchDone() override { stream->prefetchDone(); }
     virtual void reinit(offset_t offset, offset_t len, unsigned __int64 maxRows) override
@@ -321,6 +343,7 @@ public:
 #define DEFAULT_THORSLAVEPORT 20100
 #define DEFAULT_SLAVEPORTINC 20
 #define DEFAULT_QUERYSO_LIMIT 10
+#define DEFAULT_LINGER_SECS 10
 
 class graph_decl CFifoFileCache : public CSimpleInterface
 {
@@ -377,6 +400,7 @@ extern graph_decl void ActPrintLogEx(const CGraphElementBase *container, const A
 extern graph_decl void ActPrintLogArgs(const CGraphElementBase *container, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, va_list args) __attribute__((format(printf,4,0)));
 extern graph_decl void ActPrintLogArgs(const CGraphElementBase *container, IException *e, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, va_list args) __attribute__((format(printf,5,0)));
 extern graph_decl void ActPrintLog(const CActivityBase *activity, const char *format, ...) __attribute__((format(printf, 2, 3)));
+extern graph_decl void ActPrintLog(const CActivityBase *activity, unsigned traceLevel, const char *format, ...) __attribute__((format(printf, 3, 4)));
 extern graph_decl void ActPrintLog(const CActivityBase *activity, IException *e, const char *format, ...) __attribute__((format(printf, 3, 4)));
 extern graph_decl void ActPrintLog(const CActivityBase *activity, IException *e);
 
@@ -386,6 +410,14 @@ inline void ActPrintLog(const CGraphElementBase *container, const char *format, 
     va_list args;
     va_start(args, format);
     ActPrintLogArgs(container, thorlog_ecl, MCdebugProgress, format, args);
+    va_end(args);
+}
+inline void ActPrintLog(const CGraphElementBase *container, unsigned traceLevel, const char *format, ...) __attribute__((format(printf, 3, 4)));
+inline void ActPrintLog(const CGraphElementBase *container, unsigned traceLevel, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    ActPrintLogArgs(container, thorlog_ecl, MCdebugProgress(traceLevel), format, args);
     va_end(args);
 }
 inline void ActPrintLogEx(const CGraphElementBase *container, IException *e, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, ...) __attribute__((format(printf, 5, 6)));
@@ -437,6 +469,16 @@ inline void GraphPrintLog(CGraphBase *graph, const char *format, ...)
     GraphPrintLogArgs(graph, thorlog_null, MCdebugProgress, format, args);
     va_end(args);
 }
+
+inline void GraphPrintLog(CGraphBase *graph, unsigned traceLevel, const char *format, ...) __attribute__((format(printf, 3, 4)));
+inline void GraphPrintLog(CGraphBase *graph, unsigned traceLevel, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    GraphPrintLogArgs(graph, thorlog_null, MCdebugInfo(traceLevel), format, args);
+    va_end(args);
+}
+
 extern graph_decl IThorException *MakeActivityException(CActivityBase *activity, int code, const char *_format, ...) __attribute__((format(printf, 3, 4)));
 extern graph_decl IThorException *MakeActivityException(CActivityBase *activity, IException *e, const char *xtra, ...) __attribute__((format(printf, 3, 4)));
 extern graph_decl IThorException *MakeActivityException(CActivityBase *activity, IException *e);
@@ -458,7 +500,7 @@ extern graph_decl IThorException *ThorWrapException(IException *e, const char *m
 extern graph_decl void setExceptionActivityInfo(CGraphElementBase &container, IThorException *e);
 
 extern graph_decl void GetTempName(StringBuffer &name, const char *prefix=NULL,bool altdisk=false);
-extern graph_decl void SetTempDir(const char *name, const char *tempPrefix, bool clear);
+extern graph_decl void SetTempDir(unsigned slaveNum, const char *name, const char *tempPrefix, bool clear);
 extern graph_decl void ClearDir(const char *dir);
 extern graph_decl void ClearTempDirs();
 extern graph_decl const char *queryTempDir(bool altdisk=false);  
@@ -469,20 +511,19 @@ extern graph_decl void reportExceptionToWorkunit(IConstWorkUnit &workunit,IExcep
 extern graph_decl void reportExceptionToWorkunitCheckIgnore(IConstWorkUnit &workunit, IException *e, ErrorSeverity severity=SeverityWarning);
 
 
-extern graph_decl IPropertyTree *globals;
+extern graph_decl Owned<IPropertyTree> globals;
 extern graph_decl mptag_t masterSlaveMpTag;
 extern graph_decl mptag_t kjServiceMpTag;
 enum SlaveMsgTypes:unsigned { smt_errorMsg=1, smt_initGraphReq, smt_initActDataReq, smt_dataReq, smt_getPhysicalName, smt_getFileOffset, smt_actMsg, smt_getresult };
-// Logging
-extern graph_decl const LogMsgJobInfo thorJob;
 
 extern graph_decl StringBuffer &getCompoundQueryName(StringBuffer &compoundName, const char *queryName, unsigned version);
 
+extern graph_decl void setupCluster(INode *masterNode, IGroup *processGroup, unsigned channelsPerSlave, unsigned portBase, unsigned portInc);
 extern graph_decl void setClusterGroup(INode *masterNode, IGroup *group, unsigned slavesPerNode, unsigned channelsPerSlave, unsigned portBase, unsigned portInc);
 extern graph_decl bool clusterInitialized();
 extern graph_decl INode &queryMasterNode();
-extern graph_decl IGroup &queryRawGroup();
 extern graph_decl IGroup &queryNodeGroup();
+extern graph_decl IGroup &queryProcessGroup();
 extern graph_decl ICommunicator &queryNodeComm();
 extern graph_decl IGroup &queryClusterGroup();
 extern graph_decl IGroup &querySlaveGroup();
@@ -523,9 +564,6 @@ extern graph_decl void logDiskSpace();
 class CJobBase;
 extern graph_decl IPerfMonHook *createThorMemStatsPerfMonHook(CJobBase &job, int minLevel, IPerfMonHook *chain=NULL); // for passing to jdebug startPerformanceMonitor
 
-//statistics gathered by the different activities
-extern const graph_decl StatisticsMapping spillStatistics;
-
 extern graph_decl bool isOOMException(IException *e);
 extern graph_decl IThorException *checkAndCreateOOMContextException(CActivityBase *activity, IException *e, const char *msg, rowcount_t numRows, IOutputMetaData *meta, const void *row);
 
@@ -543,6 +581,10 @@ inline void readUnderlyingType(MemoryBuffer &mb, T &v)
 {
     mb.read(reinterpret_cast<typename std::underlying_type<T>::type &> (v));
 }
+
+constexpr unsigned thorDetailedLogLevel = 200;
+constexpr LogMsgCategory MCthorDetailedDebugInfo(MCdebugInfo(thorDetailedLogLevel));
+
 
 #endif
 

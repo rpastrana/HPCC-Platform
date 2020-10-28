@@ -202,7 +202,6 @@ public:
 class CLCLockBlock : public CInterface
 {
     ReadWriteLock &lock;
-    bool readLocked; // false == writeLocked
     unsigned got, lnum;
 public:
     CLCLockBlock(ReadWriteLock &_lock, bool readLock, unsigned timeout, const char *fname, unsigned _lnum) : lock(_lock), lnum(_lnum)
@@ -221,27 +220,26 @@ public:
                     break;
             }
             PROGLOG("CLCLockBlock(write=%d) timeout %s(%d), took %d ms",!readLock,fname,lnum,got-msTick());
-            PrintStackReport();
+            if (readWriteStackTracing)
+                PrintStackReport();
         }
         got = msTick();
-        readLocked = readLock; // false == writeLocked
     };
     ~CLCLockBlock()
     {
-        if (readLocked)
-            lock.unlockRead();
-        else
-            lock.unlockWrite();
+        bool writeLocked = lock.queryWriteLocked();
+        lock.unlock();
         unsigned e=msTick()-got;
         if (e>readWriteSlowTracing)
         {
             StringBuffer s("TIME: CLCLockBlock(write=");
-            s.append(!readLocked).append(",lnum=").append(lnum).append(") took ").append(e).append(" ms");
+            s.append(writeLocked).append(",lnum=").append(lnum).append(") took ").append(e).append(" ms");
             DBGLOG("%s", s.str());
             if (readWriteStackTracing)
                 PrintStackReport();
         }
     }
+    void changeToWrite(const char *msg);
 };
 #else
 class LinkingCriticalBlock : public CriticalBlock, public CInterface, implements IInterface
@@ -253,7 +251,6 @@ public:
 class CLCLockBlock : public CInterface
 {
     ReadWriteLock &lock;
-    bool readLocked; // false == writeLocked
 public:
     CLCLockBlock(ReadWriteLock &_lock, bool readLock, unsigned timeout, const char *fname, unsigned lnum) : lock(_lock)
     {
@@ -261,30 +258,41 @@ public:
             lock.lockRead();
         else
             lock.lockWrite();
-        readLocked = readLock; // false == writeLocked
     };
     ~CLCLockBlock()
     {
-        if (readLocked)
-            lock.unlockRead();
-        else
-            lock.unlockWrite();
+        lock.unlock();
     }
+    void changeToWrite(const char *msg);
 };
 #endif
-class CLCReadLockBlock : public CLCLockBlock
+
+void CLCLockBlock::changeToWrite(const char *msg)
 {
-public:
-    CLCReadLockBlock(ReadWriteLock &lock, unsigned timeout, const char *fname, unsigned lnum) : CLCLockBlock(lock, true, timeout, fname, lnum) { }
-};
-class CLCWriteLockBlock : public CLCLockBlock
-{
-public:
-    CLCWriteLockBlock(ReadWriteLock &lock, unsigned timeout, const char *fname, unsigned lnum) : CLCLockBlock(lock, false, timeout, fname, lnum) { }
-};
+    /* NB: this intentionally clears the lock, before re-establishing a write lock
+     * because we do not want to keep this read lock whilst waiting for a write,
+     * as other write transactions would pile up and/or cause deadlock.
+     */
+
+    // Must be read locked when called.
+    dbgassertex(lock.queryReadLockCount() > 0);
+
+    lock.unlock();
+
+    CCycleTimer timer;
+    while (true)
+    {
+        if (lock.lockWrite(readWriteTimeout))
+            break;
+        PROGLOG("changeToWrite timeout [%s], time taken so far %u ms", msg, timer.elapsedMs());
+        if (readWriteStackTracing)
+            PrintStackReport();
+    }
+}
+
 #ifdef USECHECKEDCRITICALSECTIONS
-#define CHECKEDDALIREADLOCKBLOCK(l,timeout)  Owned<CLCReadLockBlock> glue(block,__LINE__) = new CLCReadLockBlock(l,timeout,__FILE__,__LINE__)
-#define CHECKEDDALIWRITELOCKBLOCK(l,timeout)  Owned<CLCWriteLockBlock> glue(block,__LINE__) = new CLCWriteLockBlock(l,timeout,__FILE__,__LINE__)
+#define CHECKEDDALIREADLOCKBLOCK(l, timeout)  Owned<CLCLockBlock> glue(block,__LINE__) = new CLCLockBlock(l, true, timeout, __FILE__, __LINE__)
+#define CHECKEDDALIWRITELOCKBLOCK(l, timeout)  Owned<CLCLockBlock> glue(block,__LINE__) = new CLCLockBlock(l, false, timeout, __FILE__, __LINE__)
 #else
 #define CHECKEDDALIREADLOCKBLOCK(l,timeout)   ReadLockBlock glue(block,__LINE__)(l)
 #define CHECKEDDALIWRITELOCKBLOCK(l,timeout)  WriteLockBlock glue(block,__LINE__)(l)
@@ -790,12 +798,7 @@ public:
                     if (numeric)
                     {
                         unsigned qnum = atoi(qualifier);
-                        if (!item.queryParent())
-                        {
-                            if (qnum != 1)
-                                return false;
-                        }
-                        else if (((PTree *)item.queryParent())->findChild(&item) != qnum-1)
+                        if (qnum != (item.querySiblingPosition()+1))
                             return false;
                     }
                     else if (!item.checkPattern(qualifier))
@@ -1749,14 +1752,15 @@ void buildNotifyData(MemoryBuffer &notifyData, PDState state, CPTStack *stack, M
                 PTree &child = stack->item(s);
                 const char *str = child.queryName();
                 notifyData.append(strlen(str), str);
-                if (child.queryParent())
+                unsigned pos = child.querySiblingPosition();
+                if (0 == pos) // common case
+                    notifyData.append(3, "[1]");
+                else
                 {
                     char temp[12];
-                    unsigned written = numtostr(temp, parent->findChild(&child)+1);
+                    unsigned written = numtostr(temp, pos+1);
                     notifyData.append('[').append(written, temp).append(']');
                 }
-                else
-                    notifyData.append(3, "[1]");
                 parent = &child;
                 s++;
                 if (s<n)
@@ -1930,7 +1934,7 @@ class CCovenSDSManager : public CSDSManagerBase, implements ISDSManagerServer, i
 public:
     IMPLEMENT_IINTERFACE;
 
-    CCovenSDSManager(ICoven &_coven, IPropertyTree &config, const char *dataPath);
+    CCovenSDSManager(ICoven &_coven, IPropertyTree &config, const char *dataPath, const char *daliName);
     ~CCovenSDSManager();
 
     void start();
@@ -1968,7 +1972,7 @@ public:
     unsigned __int64 getNextExternal() { return nextExternal++; }
     CServerConnection *createConnectionInstance(CRemoteTreeBase *root, SessionId sessionId, unsigned mode, unsigned timeout, const char *xpath, CRemoteTreeBase *&tree, ConnectionId connectionId, StringAttr *deltaPath, Owned<IPropertyTree> &deltaChange, Owned<CBranchChange> &branchChange, unsigned &additions);
     void createConnection(SessionId sessionId, unsigned mode, unsigned timeout, const char *xpath, CServerRemoteTree *&tree, ConnectionId &connectionId, bool primary, Owned<LinkingCriticalBlock> &connectCritBlock);
-    void disconnect(ConnectionId connectionId, bool deleteRoot=false, Owned<CLCLockBlock> *lockBlock=NULL);
+    void disconnect(ConnectionId connectionId, bool deleteRoot=false, CLCLockBlock *lockBlock=nullptr);
     void registerTree(__int64 serverId, CServerRemoteTree &tree);
     void unregisterTree(__int64 uniqId);
     CServerRemoteTree *queryRegisteredTree(__int64 uniqId);
@@ -2055,6 +2059,7 @@ public: // data
     unsigned writeTransactions;
     bool ignoreExternals;
     StringAttr dataPath;
+    StringAttr daliName;
     Owned<IPropertyTree> properties;
 private:
     void validateBackup();
@@ -2257,13 +2262,13 @@ CServerConnection::~CServerConnection()
 
 void CServerConnection::aborted(SessionId id)
 {
-    LOG(MCdebugInfo(100), unknownJob, "CServerConnection: connection aborted (%" I64F "x) sessId=%" I64F "x",connectionId, id);
+    LOG(MCdebugInfo, unknownJob, "CServerConnection: connection aborted (%" I64F "x) sessId=%" I64F "x",connectionId, id);
 #if 0 // JCSMORE - think this is ok, but concerned about deadlock, change later.
-    Owned<CLCLockBlock> lockBlock = new CLCWriteLockBlock(((CCovenSDSManager &)manager).dataRWLock, readWriteTimeout, __FILE__, __LINE__);
+    Owned<CLCLockBlock> lockBlock = new CLCLockBlock(((CCovenSDSManager &)manager).dataRWLock, false, readWriteTimeout, __FILE__, __LINE__);
     SDSManager->disconnect(connectionId, false);
 #else
-    Owned<CLCLockBlock> lockBlock = new CLCReadLockBlock(((CCovenSDSManager &)manager).dataRWLock, readWriteTimeout, __FILE__, __LINE__);
-    SDSManager->disconnect(connectionId, false, &lockBlock);
+    Owned<CLCLockBlock> lockBlock = new CLCLockBlock(((CCovenSDSManager &)manager).dataRWLock, true, readWriteTimeout, __FILE__, __LINE__);
+    SDSManager->disconnect(connectionId, false, lockBlock);
 #endif
 }
 
@@ -4103,9 +4108,9 @@ void CSDSTransactionServer::processMessage(CMessageBuffer &mb)
                     transactionLog.log("xpath='%s' mode=%d", xpath.get(), (unsigned)mode);
                 Owned<LinkingCriticalBlock> connectCritBlock = new LinkingCriticalBlock(manager.connectCrit, __FILE__, __LINE__);
                 if (RTM_CREATE == (mode & RTM_CREATE_MASK) || RTM_CREATE_QUERY == (mode & RTM_CREATE_MASK))
-                    lockBlock.setown(new CLCWriteLockBlock(manager.dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+                    lockBlock.setown(new CLCLockBlock(manager.dataRWLock, false, readWriteTimeout, __FILE__, __LINE__));
                 else
-                    lockBlock.setown(new CLCReadLockBlock(manager.dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+                    lockBlock.setown(new CLCLockBlock(manager.dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
                 if (queryTransactionLogging())
                     transactionLog.markExtra();
                 connectionId = 0;
@@ -4149,7 +4154,7 @@ void CSDSTransactionServer::processMessage(CMessageBuffer &mb)
                 Owned<IMultipleConnector> mConnect = deserializeIMultipleConnector(mb);
                 mb.clear();
 
-                lockBlock.setown(new CLCReadLockBlock(manager.dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+                lockBlock.setown(new CLCLockBlock(manager.dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
 
                 try
                 {
@@ -4370,9 +4375,9 @@ void CSDSTransactionServer::processMessage(CMessageBuffer &mb)
                 { 
                     CheckTime block1("DAMP_SDSCMD_DATA.1");
                     if (data || deleteRoot)
-                        lockBlock.setown(new CLCWriteLockBlock(manager.dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+                        lockBlock.setown(new CLCLockBlock(manager.dataRWLock, false, readWriteTimeout, __FILE__, __LINE__));
                     else
-                        lockBlock.setown(new CLCReadLockBlock(manager.dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+                        lockBlock.setown(new CLCLockBlock(manager.dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
                 }
                 unsigned dataStart = mb.getPos();
                 commitTimingBlock.recordSize(mb.length() - dataStart);
@@ -4418,11 +4423,11 @@ void CSDSTransactionServer::processMessage(CMessageBuffer &mb)
                 catch (IException *)
                 {
                     if (disconnect)
-                        manager.disconnect(connectionId, deleteRoot, (data || deleteRoot)?NULL:&lockBlock);
+                        manager.disconnect(connectionId, deleteRoot, (data || deleteRoot)?nullptr:lockBlock);
                     throw;
                 }
                 if (disconnect)
-                    manager.disconnect(connectionId, deleteRoot, (data || deleteRoot)?NULL:&lockBlock);
+                    manager.disconnect(connectionId, deleteRoot, (data || deleteRoot)?nullptr:lockBlock);
 
                 break;
             }
@@ -4621,7 +4626,7 @@ void CSDSTransactionServer::processMessage(CMessageBuffer &mb)
         try
         {
             coven.reply(mb);
-            LOG(MCdebugInfo(100), unknownJob, "Failed to reply, but succeeded sending initial reply error to client");
+            LOG(MCdebugInfo, unknownJob, "Failed to reply, but succeeded sending initial reply error to client");
         }
         catch (IException *e)
         {
@@ -4841,9 +4846,11 @@ IPropertyTree *loadStore(const char *storeFilename, IPTreeMaker *iMaker, unsigne
 // Not really coalescing, blocking transations and saving store (which will delete pending transactions).
 class CLightCoalesceThread : implements ICoalesce, public CInterface
 {
-    bool stopped, within24;
+    bool stopped = false;
+    bool within24 = false;
     Semaphore sem;
-    unsigned writeTransactionsNow, lastSaveWriteTransactions, lastWarning;
+    unsigned lastSaveWriteTransactions = 0;
+    unsigned lastWarning = 0;
     unsigned idlePeriod, minimumTimeBetweenSaves, idleRate;
     Linked<IPropertyTree> config;
     Owned<IJlibDateTime> quietStartTime, quietEndTime;
@@ -4862,7 +4869,6 @@ public:
     IMPLEMENT_IINTERFACE;
     CLightCoalesceThread(IPropertyTree &_config, IStoreHelper *_iStoreHelper) : config(&_config), iStoreHelper(_iStoreHelper)
     {
-        stopped = false;
         idlePeriod = config->getPropInt("@lCIdlePeriod", DEFAULT_LCIDLE_PERIOD)*1000;
         minimumTimeBetweenSaves = config->getPropInt("@lCMinTime", DEFAULT_LCMIN_TIME)*1000;
         idleRate = config->getPropInt("@lCIdleRate", DEFAULT_LCIDLE_RATE);
@@ -5489,7 +5495,7 @@ public:
     }
     virtual void saveStore(IPropertyTree *root, unsigned *_newEdition, bool currentEdition=false)
     {
-        LOG(MCdebugInfo(100), unknownJob, "Saving store");
+        LOG(MCdebugProgress, unknownJob, "Saving store");
 
         refreshStoreInfo();
 
@@ -5607,7 +5613,7 @@ public:
                 *_newEdition = newEdition;
             done = true;
 
-            LOG(MCdebugInfo(100), unknownJob, "Store saved");
+            LOG(MCdebugProgress, unknownJob, "Store saved");
         }
         catch (IException *e)
         {
@@ -5724,8 +5730,8 @@ IStoreHelper *createStoreHelper(const char *storeName, const char *location, con
 #pragma warning (disable : 4355)  // 'this' : used in base member initializer list
 #endif
 
-CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const char *_dataPath) 
-    : coven(_coven), config(_config), server(*this), dataPath(_dataPath), backupHandler(_config)
+CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const char *_dataPath, const char *_daliName)
+    : coven(_coven), config(_config), server(*this), dataPath(_dataPath), daliName(_daliName), backupHandler(_config)
 {
     config.Link();
     restartOnError = config.getPropBool("@restartOnUnhandled");
@@ -6013,12 +6019,12 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
         StringBuffer storeFilename(dataPath);
         iStoreHelper->getCurrentStoreFilename(storeFilename, &crc);
 
-        LOG(MCdebugInfo(100), unknownJob, "loading store %d, storedCrc=%x", iStoreHelper->queryCurrentEdition(), crc);
+        LOG(MCdebugInfo, unknownJob, "loading store %d, storedCrc=%x", iStoreHelper->queryCurrentEdition(), crc);
         root = (CServerRemoteTree *)::loadStore(storeFilename.str(), &treeMaker, crc, false, abort);
         if (!root)
         {
             StringBuffer s(storeName);
-            LOG(MCdebugInfo(100), unknownJob, "Store %d does not exist, creating new store", iStoreHelper->queryCurrentEdition());
+            LOG(MCdebugInfo, unknownJob, "Store %d does not exist, creating new store", iStoreHelper->queryCurrentEdition());
             root = new CServerRemoteTree("SDS");
         }
         bool errors;
@@ -6031,12 +6037,12 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
             if (deltaE.get())
                 throw LINK(deltaE);
         }
-        LOG(MCdebugInfo(100), unknownJob, "store loaded");
+        LOG(MCdebugInfo, unknownJob, "store loaded");
         const char *environment = config.queryProp("@environment");
 
         if (environment && *environment)
         {
-            LOG(MCdebugInfo(100), unknownJob, "loading external Environment from: %s", environment);
+            LOG(MCdebugInfo, unknownJob, "loading external Environment from: %s", environment);
             Owned<IFile> envFile = createIFile(environment);
             if (!envFile->exists())
                 throw MakeStringException(0, "'%s' does not exist", environment);
@@ -6049,13 +6055,10 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
 
             Owned <IMPServer> thisDali = getMPServer();
             assertex(thisDali);
-            IPropertyTree *thisDaliInfo = findDaliProcess(envTree, thisDali->queryMyNode()->endpoint());
-            assertex(thisDaliInfo);
 
-            const char *daliName = thisDaliInfo->queryProp("@name");
             if (daliName)
             {
-                VStringBuffer xpath("Software/DaliServerPlugin[@daliServers='%s']", daliName);
+                VStringBuffer xpath("Software/DaliServerPlugin[@daliServers='%s']", daliName.str());
                 Owned<IPropertyTreeIterator> plugins = envTree->getElements(xpath);
                 ForEach(*plugins)
                 {
@@ -6333,14 +6336,14 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
         unsigned items = treeMaker.convertQueue.ordinality();
         if (items)
         {
-            LOG(MCdebugInfo(100), unknownJob, "Converting %d items larger than threshold size %d, to external definitions", items, externalSizeThreshold);
+            LOG(MCdebugInfo, unknownJob, "Converting %d items larger than threshold size %d, to external definitions", items, externalSizeThreshold);
             ForEachItemIn(i, treeMaker.convertQueue)
                 SDSManager->writeExternal(treeMaker.convertQueue.item(i), true);
             saveNeeded = true;
         }
         if (saveNeeded)
         {
-            LOG(MCdebugInfo(100), unknownJob, "Saving converted store");
+            LOG(MCdebugInfo, unknownJob, "Saving converted store");
             SDSManager->saveStore();
         }
     }
@@ -6386,10 +6389,7 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
     initializeInternals(conn->queryRoot());
     conn.clear();
     bool forceGroupUpdate = config.getPropBool("DFS/@forceGroupUpdate");
-    StringBuffer response;
-    initClusterGroups(forceGroupUpdate, response, oldEnvironment);
-    if (response.length())
-        PROGLOG("DFS group initialization : %s", response.str()); // should this be a syslog?
+    initClusterAndStoragePlaneGroups(forceGroupUpdate, oldEnvironment);
 }
 
 void CCovenSDSManager::saveStore(const char *storeName, bool currentEdition)
@@ -6481,9 +6481,9 @@ void CCovenSDSManager::saveDelta(const char *path, IPropertyTree &changeTree)
         if (startsWith(path, "/Environment") || (streq(path, "/") && changeTree.hasProp("*[@name=\"Environment\"]")))
         {
             Owned<IMPServer> mpServer = getMPServer();
-            IWhiteListHandler *whiteListHandler = mpServer->queryWhiteListCallback();
-            if (whiteListHandler)
-                whiteListHandler->refresh();
+            IAllowListHandler *allowListHandler = mpServer->queryAllowListCallback();
+            if (allowListHandler)
+                allowListHandler->refresh();
             PROGLOG("Dali Environment updated, path = %s", path);
             return;
         }
@@ -6683,7 +6683,7 @@ StringBuffer &getMConnectString(IMultipleConnector *mConnect, StringBuffer &s)
 IRemoteConnections *CCovenSDSManager::connect(IMultipleConnector *mConnect, SessionId id, unsigned timeout)
 {
     Owned<CLCLockBlock> lockBlock;
-    lockBlock.setown(new CLCReadLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+    lockBlock.setown(new CLCLockBlock(dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
 
     Owned<CRemoteConnections> remoteConnections = new CRemoteConnections;
     unsigned c;
@@ -6707,9 +6707,9 @@ IRemoteConnection *CCovenSDSManager::connect(const char *xpath, SessionId id, un
     {
         connectCritBlock.setown(new LinkingCriticalBlock(connectCrit, __FILE__, __LINE__));
         if (RTM_CREATE == (mode & RTM_CREATE_MASK) || RTM_CREATE_QUERY == (mode & RTM_CREATE_MASK))
-            lockBlock.setown(new CLCWriteLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+            lockBlock.setown(new CLCLockBlock(dataRWLock, false, readWriteTimeout, __FILE__, __LINE__));
         else
-            lockBlock.setown(new CLCReadLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+            lockBlock.setown(new CLCLockBlock(dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
     }
 
     CServerRemoteTree *_tree;
@@ -6867,9 +6867,9 @@ void CCovenSDSManager::installNotifyHandler(const char *handlerKey, ISDSNotifyHa
 // ISDSConnectionManager impl.
 void CCovenSDSManager::commit(CRemoteConnection &connection, bool *disconnectDeleteRoot)
 {
-    Owned<CLCWriteLockBlock> lockBlock;
+    Owned<CLCLockBlock> lockBlock;
     if (!RTM_MODE(connection.queryMode(), RTM_INTERNAL))
-        lockBlock.setown(new CLCWriteLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+        lockBlock.setown(new CLCLockBlock(dataRWLock, false, readWriteTimeout, __FILE__, __LINE__));
 
     CClientRemoteTree *tree = (CClientRemoteTree *) connection.queryRoot();
 
@@ -6916,9 +6916,9 @@ void CCovenSDSManager::commit(CRemoteConnection &connection, bool *disconnectDel
 
 CRemoteTreeBase *CCovenSDSManager::get(CRemoteConnection &connection, __int64 serverId)
 {
-    Owned<CLCReadLockBlock> lockBlock;
+    Owned<CLCLockBlock> lockBlock;
     if (!RTM_MODE(connection.queryMode(), RTM_INTERNAL))
-        lockBlock.setown(new CLCReadLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+        lockBlock.setown(new CLCLockBlock(dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
     CDisableFetchChangeBlock block(connection);
     CRemoteTreeBase *connectionRoot = (CRemoteTreeBase *) connection.queryRoot();
     Owned<CServerRemoteTree> tree = getRegisteredTree(connectionRoot->queryServerId());
@@ -6931,9 +6931,9 @@ CRemoteTreeBase *CCovenSDSManager::get(CRemoteConnection &connection, __int64 se
 
 void CCovenSDSManager::getChildren(CRemoteTreeBase &parent, CRemoteConnection &connection, unsigned levels)
 {
-    Owned<CLCReadLockBlock> lockBlock;
+    Owned<CLCLockBlock> lockBlock;
     if (!RTM_MODE(connection.queryMode(), RTM_INTERNAL))
-        lockBlock.setown(new CLCReadLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+        lockBlock.setown(new CLCLockBlock(dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
     CDisableFetchChangeBlock block(connection);
     Owned<CServerRemoteTree> serverParent = (CServerRemoteTree *)getRegisteredTree(parent.queryServerId());
     if (serverParent)
@@ -6942,9 +6942,9 @@ void CCovenSDSManager::getChildren(CRemoteTreeBase &parent, CRemoteConnection &c
 
 void CCovenSDSManager::getChildrenFor(CRTArray &childLessList, CRemoteConnection &connection, unsigned levels)
 {
-    Owned<CLCReadLockBlock> lockBlock;
+    Owned<CLCLockBlock> lockBlock;
     if (!RTM_MODE(connection.queryMode(), RTM_INTERNAL))
-        lockBlock.setown(new CLCReadLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
+        lockBlock.setown(new CLCLockBlock(dataRWLock, true, readWriteTimeout, __FILE__, __LINE__));
     CDisableFetchChangeBlock block(connection);
 
     ForEachItemIn(f, childLessList)
@@ -7034,7 +7034,7 @@ void CCovenSDSManager::_getChildren(CRemoteTreeBase &parent, CServerRemoteTree &
 
 IPropertyTreeIterator *CCovenSDSManager::getElements(CRemoteConnection &connection, const char *xpath)
 {
-    Owned<CLCReadLockBlock> lockBlock = new CLCReadLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__);
+    Owned<CLCLockBlock> lockBlock = new CLCLockBlock(dataRWLock, true, readWriteTimeout, __FILE__, __LINE__);
     CDisableFetchChangeBlock block(connection);
     Owned<CServerRemoteTree> serverConnRoot = (CServerRemoteTree *)getRegisteredTree(((CClientRemoteTree *)connection.queryRoot())->queryServerId());
     Owned<DaliPTArrayIterator> elements = new DaliPTArrayIterator();
@@ -7429,7 +7429,7 @@ bool CCovenSDSManager::unlock(__int64 connectionId, bool close, StringBuffer &co
     if (close)
     {
         PROGLOG("forcing unlock & disconnection of connection : %s", connectionInfo.str());
-        Owned<CLCLockBlock> lockBlock = new CLCWriteLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__);
+        Owned<CLCLockBlock> lockBlock = new CLCLockBlock(dataRWLock, false, readWriteTimeout, __FILE__, __LINE__);
         SDSManager->disconnect(connectionId, false);
     }
     else // leave connection open, just unlock
@@ -7820,7 +7820,7 @@ CServerConnection *CCovenSDSManager::getConnection(ConnectionId id)
     return conn;
 }
 
-void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, Owned<CLCLockBlock> *lockBlock)
+void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, CLCLockBlock *lockBlock)
 {
     Linked<CServerConnection> connection;
     { CHECKEDCRITICALBLOCK(cTableCrit, fakeCritTimeout);
@@ -7860,46 +7860,66 @@ void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, Owned<CLCLoc
     else
         DBGLOG("Disconnecting orphaned connection: %s, deleteRoot=%s", connection->queryXPath(), deleteRoot?"true":"false");
     // Still want disconnection to be performed & recorded, if orphaned
-    if (!deleteRoot && unlock(tree->queryServerId(), id, true)) // unlock returns true if last unlock and there was a setDROLR on it
+    bool last = !deleteRoot && unlock(tree->queryServerId(), id, true); // unlock returns true if last unlock and there was a setDROLR on it
+    if (last)
         deleteRoot = true;
     if (deleteRoot)
     {
-        if (lockBlock)
+        if (lockBlock) // NB: only passed if might need read->write
         {
-            lockBlock->clear();
-            lockBlock->setown(new CLCWriteLockBlock(dataRWLock, readWriteTimeout, __FILE__, __LINE__));
-        }
-        connection->queryParent()->removeTree(tree);
-        writeTransactions++;
-        if (!orphaned)
-        {
-            Owned<IPropertyTree> changeTree = createPTree(RESERVED_CHANGE_NODE);
-            IPropertyTree *d = changeTree->setPropTree(DELETE_TAG, createPTree());
-            d->setProp("@name", tree->queryName());
-            d->setPropInt("@pos", index+1);
+            lockBlock->changeToWrite(connection->queryXPath());
 
-            Owned<CBranchChange> branchChange = new CBranchChange(*tree);
-            branchChange->noteChange(PDS_Deleted, PDS_Deleted);
-            CPTStack stack = connection->queryPTreePath();
-            stack.pop();
-            if (connection->queryRootUnvalidated() == SDSManager->queryRoot())
-                stack.pop();
-
-            if (!RTM_MODE(connection->queryMode(), RTM_INTERNAL))
+            /* If it was last and deleteRoot was triggered, check again (now that have exclusive read write lock),
+             * that I am last, i.e. that no-one else has established a lock in the changeToWrite window.
+             * If they have, do not deleteRoot, as others are using it.
+             * 
+             * NB: that will mean the write lock was not actually needed.
+             * The lock will be released by the caller (of disconnect()), when 'lockBlock' goes out of scope.
+             */
+            if (last)
             {
-                connection->notify();
-                SDSManager->startNotification(*changeTree, stack, *branchChange);
+                /* check if lock has been re-established, in window within changeToWrite
+                 * If it has, then I am no longer the last link, do not delete root
+                 */
+                CLock *lock = queryLock(tree->queryServerId());
+                if (lock && lock->lockCount())
+                    deleteRoot = false;
             }
+        }
+        if (deleteRoot)
+        {
+            connection->queryParent()->removeTree(tree);
+            writeTransactions++;
+            if (!orphaned)
+            {
+                Owned<IPropertyTree> changeTree = createPTree(RESERVED_CHANGE_NODE);
+                IPropertyTree *d = changeTree->setPropTree(DELETE_TAG, createPTree());
+                d->setProp("@name", tree->queryName());
+                d->setPropInt("@pos", index+1);
 
-            StringBuffer head;
-            const char *tail = splitXPath(path.str(), head);
-            CHECKEDCRITICALBLOCK(blockedSaveCrit, fakeCritTimeout);
-            if (NotFound != index)
-                saveDelta(head.str(), *changeTree);
-            else
-            { // NB: don't believe this can happen, but last thing want to do is save duff delete delta.
-                IERRLOG("** CCovenSDSManager::disconnect - index position lost **");
-                PrintStackReport();
+                Owned<CBranchChange> branchChange = new CBranchChange(*tree);
+                branchChange->noteChange(PDS_Deleted, PDS_Deleted);
+                CPTStack stack = connection->queryPTreePath();
+                stack.pop();
+                if (connection->queryRootUnvalidated() == SDSManager->queryRoot())
+                    stack.pop();
+
+                if (!RTM_MODE(connection->queryMode(), RTM_INTERNAL))
+                {
+                    connection->notify();
+                    SDSManager->startNotification(*changeTree, stack, *branchChange);
+                }
+
+                StringBuffer head;
+                const char *tail = splitXPath(path.str(), head);
+                CHECKEDCRITICALBLOCK(blockedSaveCrit, fakeCritTimeout);
+                if (NotFound != index)
+                    saveDelta(head.str(), *changeTree);
+                else
+                { // NB: don't believe this can happen, but last thing want to do is save duff delete delta.
+                    IERRLOG("** CCovenSDSManager::disconnect - index position lost **");
+                    PrintStackReport();
+                }
             }
         }
     }
@@ -8641,6 +8661,8 @@ bool CCovenSDSManager::fireException(IException *e)
     // so ignore unhandled exceptions for the moment! 
     IERRLOG(e, "Caught unhandled exception!");
     return true;
+
+#if 0
     { CHECKEDCRITICALBLOCK(unhandledCrit, fakeCritTimeout);
         if (processingUnhandled)
         {
@@ -8697,6 +8719,7 @@ bool CCovenSDSManager::fireException(IException *e)
     };
     unhandledThread.setown(new CHandleException(*this, e, restartOnError));
     return true;
+#endif
 }
 
 void CCovenSDSManager::addNodeSubscriber(ISubscription *sub, SubscriptionId id)
@@ -8768,15 +8791,18 @@ public:
             sdsConfig.setown(config->getPropTree("SDS"));
         if (!sdsConfig)
             sdsConfig.setown(createPTree());
-        manager = new CCovenSDSManager(coven, *sdsConfig, config?config->queryProp("@dataPath"):NULL);
+        manager = new CCovenSDSManager(coven, *sdsConfig, config?config->queryProp("@dataPath"):NULL, config?config->queryProp("@name"):NULL);
         SDSManager = manager;
         addThreadExceptionHandler(manager);
         try { manager->loadStore(NULL, &cancelLoad); }
         catch (IException *)
         {
-            LOG(MCdebugInfo(100), unknownJob, "Failed to load main store");
+            LOG(MCdebugInfo, unknownJob, "Failed to load main store");
             throw;
         }
+        // In nas/non-local storage mode, create a published named group for 1-way files to use
+        if (isContainerized())
+            queryNamedGroupStore().ensureNasGroup(1);
         storeLoaded = true;
         manager->start();
     }
@@ -9039,7 +9065,7 @@ bool applyXmlDeltas(IPropertyTree &root, IIOStream &stream, bool stopOnError)
         }
 
         // IPTreeNotifyEvent
-        virtual void beginNode(const char *tag, offset_t startOffset) { maker->beginNode(tag, startOffset); }
+        virtual void beginNode(const char *tag, bool arrayitem, offset_t startOffset) { maker->beginNode(tag, arrayitem, startOffset); }
         virtual void newAttribute(const char *name, const char *value) { maker->newAttribute(name, value); }
         virtual void beginNodeContent(const char *tag) { level++; }
         virtual void endNode(const char *tag, unsigned length, const void *value, bool binary, offset_t endOffset)

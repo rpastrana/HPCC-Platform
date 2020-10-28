@@ -598,6 +598,7 @@ public:
 
 protected:
     void expandParameter(IHqlExpression * expr, unsigned & nextParameter);
+    bool isSupportedParameterType(IHqlExpression & param) const;
     IHqlExpression * mapRealToLogical(const HqlExprArray & inputExprs, IHqlExpression * expr, IHqlExpression * libraryId);
     void mapLogicalToReal(HqlExprArray & mapped, IHqlExpression * expr, IHqlExpression * value);
 
@@ -790,6 +791,9 @@ extern HQL_API bool userPreventsSort(IHqlExpression * noSortAttr, node_operator 
 extern HQL_API IHqlExpression * queryTransformAssign(IHqlExpression * transform, IHqlExpression * searchField);
 extern HQL_API IHqlExpression * queryTransformAssignValue(IHqlExpression * transform, IHqlExpression * searchField);
 extern HQL_API IHqlExpression * convertSetToExpression(bool isAll, size32_t len, const void * ptr, ITypeInfo * setType);
+extern HQL_API unsigned queryNumAnnotations(IHqlExpression * expr);
+extern HQL_API void dumpSymbols(IHqlExpression * expr);
+extern HQL_API bool hasSymbol(IHqlExpression * expr, IAtom * search);
 
 struct FieldTypeInfoStruct;
 interface IRtlFieldTypeDeserializer;
@@ -875,9 +879,9 @@ public:
     bool conditionAllEqualities;
 protected:
     //The expression is assumed to outlast this class instance => doesn't used linked
-    IHqlExpression * cond;
     IHqlExpression * lhs;
     IHqlExpression * rhs;
+    IHqlExpression * cond;
     IHqlExpression * seq;
     IHqlExpression * atmostAttr;
     LinkedHqlExpr left;

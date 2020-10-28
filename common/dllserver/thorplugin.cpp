@@ -125,7 +125,6 @@ static bool getResourceFromMappedFile(const char * filename, const byte * start_
         }
     }
 
-    DBGLOG("Failed to extract resource %s: Does not include a matching entry", filename);
     return false;
 #else
     // The first bytes are the ELF header
@@ -166,7 +165,6 @@ static bool getResourceFromMappedFile(const char * filename, const byte * start_
         }
     }
 
-    DBGLOG("Failed to extract resource %s: Does not include a matching entry", filename);
     return false;
 #endif
 }
@@ -666,7 +664,8 @@ extern DLLSERVER_API bool decompressResource(size32_t len, const void *data, Mem
 extern DLLSERVER_API bool decompressResource(size32_t len, const void *data, StringBuffer &result)
 {
     MemoryBuffer tgt;
-    decompressResource(len, data, tgt);
+    if (len)
+        decompressResource(len, data, tgt);
     tgt.append((char)0);
     unsigned expandedLen = tgt.length();
     result.setBuffer(expandedLen, reinterpret_cast<char *>(tgt.detach()), expandedLen-1);
@@ -729,6 +728,11 @@ extern DLLSERVER_API bool getResourceXMLFromFile(const char *filename, const cha
 extern DLLSERVER_API bool getWorkunitXMLFromFile(const char *filename, StringBuffer &xml)
 {
     return getResourceXMLFromFile(filename, "WORKUNIT", 1000, xml);
+}
+
+extern DLLSERVER_API bool getArchiveXMLFromFile(const char *filename, StringBuffer &xml)
+{
+    return getResourceXMLFromFile(filename, "ARCHIVE", 1000, xml);
 }
 
 extern DLLSERVER_API bool getManifestXMLFromFile(const char *filename, StringBuffer &xml)
@@ -831,7 +835,7 @@ void SafePluginMap::loadFromList(const char * pluginsList)
             continue;
 
         Owned<IFile> file = createIFile(thisPlugin.str());
-        if (file->isDirectory() == foundYes)
+        if (file->isDirectory() == fileBool::foundYes)
             loadFromDirectory(thisPlugin);
         else
         {

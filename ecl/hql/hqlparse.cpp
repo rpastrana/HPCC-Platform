@@ -80,64 +80,6 @@ public:
     }
 };
 
-// =========================== CTemplateContext =========================================
-
-class CTemplateContext : implements ITemplateContext, public CInterface
-{
-    HqlLex * lexer;
-    IXmlScope* m_xmlScope;
-    int m_startLine,m_startCol;
-    HqlLookupContext & m_lookupContext;
-
-public:
-    IMPLEMENT_IINTERFACE;
-
-    CTemplateContext(HqlLex * _lexer, HqlLookupContext & lookupContext, IXmlScope* xmlScope, int startLine,int startCol)
-     : lexer(_lexer), m_xmlScope(xmlScope), m_lookupContext(lookupContext),
-       m_startLine(startLine), m_startCol(startCol) {}
-
-    virtual IXmlScope* queryXmlScope()  { return m_xmlScope; }
-    virtual IEclRepository* queryDataServer()  { return m_lookupContext.queryRepository(); }
-
-    // convenient functions
-    virtual bool isInModule(const char* moduleName, const char* attrName) { return ::isInModule(m_lookupContext, moduleName,attrName); }
-    virtual StringBuffer& getDataType(const char* field, StringBuffer& tgt) { return lexer->doGetDataType(tgt, field, m_startLine, m_startCol); }
-
-    virtual StringBuffer& mangle(const char* src, StringBuffer& mangled) { return ::mangle(m_lookupContext.errs,src,mangled,false); }
-    virtual StringBuffer& demangle(const char* mangled, StringBuffer& demangled) { return ::mangle(m_lookupContext.errs,mangled,demangled,true); }
-
-    virtual void reportError(int errNo,const char* format,...)  __attribute__((format(printf,3,4)));
-    virtual void reportWarning(int warnNo,const char* format,...) __attribute__((format(printf,3,4)));;
-};
-
-void CTemplateContext::reportError(int errNo,const char* format,...)
-{
-    if (m_lookupContext.errs)
-    {
-        va_list args;
-        va_start(args, format);
-        StringBuffer msg;
-        msg.valist_appendf(format,args);
-        m_lookupContext.errs->reportError(errNo,msg.str(),NULL,m_startLine,m_startCol,0);
-        va_end(args);
-    }
-}
-
-void CTemplateContext::reportWarning(int warnNo,const char* format,...)
-{
-    if (m_lookupContext.errs)
-    {
-        va_list args;
-        va_start(args, format);
-        StringBuffer msg;
-        msg.valist_appendf(format,args);
-        WarnErrorCategory category = CategoryUnusual; // a reasonable default
-        m_lookupContext.errs->reportWarning(category, warnNo,msg.str(),NULL,m_startLine,m_startCol,0);
-        va_end(args);
-    }
-}
-
-
 // ===================================== HqlLex ============================================
 
 class CHqlParserPseduoScope : public CHqlScope
@@ -163,7 +105,7 @@ public:
 // ===================================== HqlLex ============================================
 
 HqlLex::HqlLex(HqlGram *parser, IFileContents * contents, IXmlScope *_xmlScope, IHqlExpression *_macroExpr)
- : yyParser(parser), xmlScope(LINK(_xmlScope)), macroExpr(_macroExpr), sourcePath(contents->querySourcePath())
+ : yyParser(parser), sourcePath(contents->querySourcePath()), xmlScope(LINK(_xmlScope)), macroExpr(_macroExpr)
 {
     assertex(parser);
     init(contents);
@@ -696,7 +638,7 @@ bool HqlLex::getParameter(StringBuffer &curParam, const char* for_what, int* sta
         case ')':
             if (parenDepth==1)
                 return false;
-            // fall into
+            // fallthrough
         case ']':
             parenDepth--;
             curParam.append((char) tok);
@@ -968,7 +910,6 @@ void HqlLex::doLine(attribute & returnToken)
     int line = returnToken.pos.lineno, col = returnToken.pos.column;
     forwhat.appendf("LINE(%d,%d)",returnToken.pos.lineno,returnToken.pos.column);
 
-    IIdAtom * name = NULL;
     if (yyLex(returnToken, LEXnone, 0) != '(')
     {
         reportError(returnToken, ERR_EXPECTED_LEFTCURLY, "( expected");
@@ -1080,7 +1021,6 @@ void HqlLex::doError(attribute & returnToken, bool isError)
     StringBuffer forwhat;
     forwhat.appendf("%s(%d,%d)",isError?"#ERROR":"#WARNING",returnToken.pos.lineno,returnToken.pos.column);
 
-    IIdAtom * name = NULL;
     if (yyLex(returnToken, LEXnone, 0) != '(')
     {
         reportError(returnToken, ERR_EXPECTED_LEFTCURLY, "( expected");
@@ -1186,7 +1126,6 @@ void HqlLex::doTrace(attribute & returnToken)
     StringBuffer forwhat;
     forwhat.appendf("#TRACE(%d,%d)",returnToken.pos.lineno,returnToken.pos.column);
 
-    IIdAtom * name = NULL;
     if (yyLex(returnToken, LEXnone, 0) != '(')
     {
         reportError(returnToken, ERR_EXPECTED_LEFTCURLY, "( expected");
@@ -1675,7 +1614,7 @@ void HqlLex::doPreprocessorLookup(const attribute & errpos, bool stringify, int 
             case '\\':
             case '\'':
                 *s++='\\';
-                // fall into
+                // fallthrough
             default:
                 *s++=c;
             }
@@ -1868,8 +1807,7 @@ IValue *HqlLex::foldConstExpression(const attribute & errpos, IHqlExpression * e
     {
         try
         {
-            CTemplateContext context(this, yyParser->lookupCtx, xmlScope, startLine, startCol);
-            OwnedHqlExpr folded = foldHqlExpression(*yyParser, expr, &context, HFOthrowerror|HFOfoldimpure|HFOforcefold);
+            OwnedHqlExpr folded = foldHqlExpression(*yyParser, expr, HFOthrowerror|HFOfoldimpure|HFOforcefold);
             if (folded)
             {
                 if (folded->queryValue())
@@ -1946,8 +1884,7 @@ void HqlLex::doApply(attribute & returnToken)
     OwnedHqlExpr actions = parseECL(curParam, queryTopXmlScope(), line, col);
     if (actions)
     {
-        CTemplateContext context(this, yyParser->lookupCtx, xmlScope,line,col);
-        OwnedHqlExpr folded = foldHqlExpression(*yyParser, actions, &context, HFOthrowerror|HFOfoldimpure|HFOforcefold);
+        OwnedHqlExpr folded = foldHqlExpression(*yyParser, actions, HFOthrowerror|HFOfoldimpure|HFOforcefold);
     }
     else
         reportError(returnToken, ERR_EXPECTED_CONST, "Constant expression expected");
@@ -2165,7 +2102,6 @@ int HqlLex::processStringLiteral(attribute & returnToken, char *CUR_TOKEN_TEXT, 
         }
         else if (next >= 128)
         {
-            const byte * temp = (byte *)finger;
             unsigned lenLeft = CUR_TOKEN_LENGTH - (size32_t)(finger - CUR_TOKEN_TEXT);
             int extraCharsRead = rtlSingleUtf8ToCodepage(bf, lenLeft, finger, ASCII_LIKE_CODEPAGE);
             if (extraCharsRead == -1)

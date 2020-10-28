@@ -15,6 +15,10 @@
     limitations under the License.
 ############################################################################## */
 
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
+
 #include "platform.h"
 #include "jarray.hpp"
 #include "jdebug.hpp"
@@ -24,8 +28,11 @@
 #include "jlzw.hpp"
 #include "jregexp.hpp"
 #include "jstring.hpp"
+#include "jutil.hpp"
+#include "jmisc.hpp"
+#include "yaml.h"
 
-#include <algorithm>
+#include <initializer_list>
 
 #define MAKE_LSTRING(name,src,length) \
     const char *name = (const char *) alloca((length)+1); \
@@ -48,10 +55,12 @@
 #define PTREE_COMPRESS_BOTHER_PECENTAGE (80) // i.e. if it doesn't compress to <80 % of original size don't bother
 
 
-class NullPTreeIterator : implements IPropertyTreeIterator, public CInterface
+class NullPTreeIterator final : implements IPropertyTreeIterator
 {
 public:
-    IMPLEMENT_IINTERFACE;
+    virtual ~NullPTreeIterator() {}
+    virtual void Link() const override {}
+    virtual bool Release() const override { return true; }
 // IPropertyTreeIterator
     virtual bool first() override { return false; }
     virtual bool next() override { return false; }
@@ -59,7 +68,7 @@ public:
     virtual IPropertyTree & query() override { throwUnexpected(); }
 } *nullPTreeIterator;
 
-IPropertyTreeIterator *createNullPTreeIterator() { return LINK(nullPTreeIterator); } // initialize in init mod below.
+IPropertyTreeIterator *createNullPTreeIterator() { return LINK(nullPTreeIterator); } // initialized in init mod below.
 
 
 //===================================================================
@@ -179,7 +188,7 @@ MODULE_INIT(INIT_PRIORITY_JPTREE)
 
 MODULE_EXIT()
 {
-    nullPTreeIterator->Release();
+    delete nullPTreeIterator;
     delete attrHT;
     keyTable->Release();
     keyTableNC->Release();
@@ -382,21 +391,27 @@ inline const char * readIndex(const char *xpath, StringAttr &index)
 
 
 
-inline static void readWildIdIndex(const char *&xpath, bool &wild)
+inline static void readWildIdIndex(const char *&xpath, bool &wild, bool &numeric)
 {
     const char *_xpath = xpath;
     readWildId(xpath, wild);
     if ('[' == *xpath) // check for local index not iterative qualifier.
     {
         const char *end = xpath+1;
-        if (isdigit(*end)) {
+        if (isdigit(*end))
+        {
             StringAttr index;
             end = readIndex(end, index);
             if (']' != *end)
                 throw MakeXPathException(_xpath, PTreeExcpt_XPath_ParseError, xpath-_xpath, "Qualifier brace unclosed");
             xpath = end+1;
+            numeric = true;
         }
+        else
+            numeric = false;
     }
+    else
+        numeric = false;
 }
 
 inline static unsigned getTailIdLength(const char *xxpath, unsigned xxpathlength)
@@ -524,6 +539,375 @@ const char *queryHead(const char *xpath, StringBuffer &head)
     }
     head.append(xpath-start, start);
     return xpath+1;
+}
+
+///////////////////
+
+static constexpr unsigned defaultSiblingMapThreshold = 100;
+static unsigned siblingMapThreshold = (unsigned)-1; // off until configuration default it on.
+
+void setPTreeMappingThreshold(unsigned threshold)
+{
+    /*
+    * NB: setPTreeMappingThreshold() will automatically be called via loadConfiguration
+    * Redefining this limit, will not effect existing maps, and should generally only be called once during startup.
+    */
+    if (0 == threshold)
+        threshold = (unsigned)-1;
+    siblingMapThreshold = threshold;
+}
+
+class CValueMap : public std::unordered_multimap<std::string, const IPropertyTree *>
+{
+public:
+    CValueMap(const char *_lhs, IPTArrayValue &array)
+    {
+        IPropertyTree **elements = array.getRawArray();
+        IPropertyTree **last = elements+array.elements();
+        dbgassertex(elements != last);
+        while (true)
+        {
+            const char *v = (*elements)->queryProp(_lhs);
+            if (v)
+                emplace(std::make_pair(std::string(v), *elements));
+            elements++;
+            if (last == elements)
+                break;
+        }
+    }
+    std::pair<CValueMap::iterator, CValueMap::iterator> find(const char *rhs)
+    {
+        return equal_range(std::string(rhs));
+    }
+    void insertEntry(const char *v, const IPropertyTree *tree)
+    {
+        emplace(std::make_pair(std::string(v), tree));
+    }
+    bool removeEntry(const char *v, const IPropertyTree *tree)
+    {
+        auto range = equal_range(std::string(v));
+        if (range.first == range.second)
+            return false;
+
+        auto it = range.first;
+        while (true)
+        {
+            if (it->second == tree)
+            {
+                it = erase(it);
+                return true;
+            }
+            ++it;
+            if (it == range.second)
+                break;
+        }
+        throwUnexpected();
+    }
+    void replaceEntry(const char *oldV, const char *newV, const IPropertyTree *tree)
+    {
+        verifyex(removeEntry(oldV, tree));
+        if (newV)
+            insertEntry(newV, tree);
+    }
+};
+
+class CQualifierMap
+{
+    std::unordered_map<std::string, CValueMap *> attrValueMaps;
+    CriticalSection crit;
+
+public:
+    CQualifierMap()
+    {
+    }
+    ~CQualifierMap()
+    {
+        for (auto &e: attrValueMaps)
+            delete e.second;
+    }
+    CValueMap *addMapping(const char *lhs, IPTArrayValue &array)
+    {
+        CValueMap *valueMap = new CValueMap(lhs, array);
+        attrValueMaps.emplace(std::make_pair(std::string(lhs), valueMap));
+        return valueMap;
+    }
+    CValueMap *addMappingIfNew(const char *lhs, IPTArrayValue &array)
+    {
+        CriticalBlock b(crit);
+        auto it = attrValueMaps.find(lhs);
+        if (it == attrValueMaps.end())
+            return addMapping(lhs, array);
+        else
+            return it->second;
+    }
+    void addMatchingValues(const IPropertyTree *tree)
+    {
+        for (auto &e: attrValueMaps)
+        {
+            const char *v = tree->queryProp(e.first.c_str());
+            if (v)
+                e.second->insertEntry(v, tree);
+        }
+    }
+    void removeMatchingValues(const IPropertyTree *tree)
+    {
+        for (auto &e: attrValueMaps)
+        {
+            const char *lhsp = e.first.c_str();
+            const char *oldV = tree->queryProp(lhsp);
+            if (oldV)
+                verifyex(e.second->removeEntry(oldV, tree));
+        }
+    }
+    void replaceMatchingValues(const IPropertyTree *oldTree, const IPropertyTree *newTree)
+    {
+        for (auto &e: attrValueMaps)
+        {
+            const char *lhsp = e.first.c_str();
+            const char *oldV = oldTree->queryProp(lhsp);
+            if (oldV)
+            {
+                verifyex(e.second->removeEntry(oldV, oldTree));
+                const char *newV = newTree->queryProp(lhsp);
+                if (newV)
+                    e.second->insertEntry(newV, newTree);
+            }
+        }
+    }
+    CValueMap *find(const char *lhs)
+    {
+        auto it = attrValueMaps.find(lhs);
+        if (it == attrValueMaps.end())
+            return nullptr;
+        return it->second;
+    }
+    void removeEntryIfMapped(const char *lhs, const char *v, const IPropertyTree *tree)
+    {
+        auto it = attrValueMaps.find(lhs);
+        if (it != attrValueMaps.end())
+            it->second->removeEntry(v, tree);
+    }
+    void insertEntryIfMapped(const char *lhs, const char *v, const IPropertyTree *tree)
+    {
+        auto it = attrValueMaps.find(lhs);
+        if (it != attrValueMaps.end())
+            it->second->insertEntry(v, tree);
+    }
+    void replaceEntryIfMapped(const char *lhs, const char *oldv, const char *newv, const IPropertyTree *tree)
+    {
+        auto it = attrValueMaps.find(lhs);
+        if (it != attrValueMaps.end())
+            it->second->replaceEntry(oldv, newv, tree);
+    }
+};
+
+// parse qualifier, returns true if simple equality expression found
+static bool parseEqualityQualifier(const char *&xxpath, unsigned &lhsLen, const char *&rhsBegin, unsigned &rhsLen)
+{
+    const char *xpath = xxpath;
+    while (*xpath == ' ' || *xpath == '\t') xpath++;
+    if ('@' != *xpath) // only attributes supported
+        return false;
+    const char *start = xpath;
+    char quote = 0;
+    const char *lhsEnd, *quoteBegin, *quoteEnd, *rhsEnd;
+    lhsEnd = quoteBegin = quoteEnd = rhsBegin = rhsEnd = NULL;
+    bool equalSignFound = false;
+    for (;;)
+    {
+        switch (*xpath)
+        {
+        case '"':
+        case '\'':
+            if (quote)
+            {
+                if (*xpath == quote)
+                {
+                    quote = 0;
+                    quoteEnd = xpath;
+                }
+            }
+            else
+            {
+                if (quoteBegin)
+                    throw MakeXPathException(start, PTreeExcpt_XPath_ParseError, xpath-start, "Quoted left hand side already seen");
+                quote = *xpath;
+                quoteBegin = xpath+1;
+            }
+            break;
+        case '[':
+            if (!quote)
+                throw MakeXPathException(start, PTreeExcpt_XPath_ParseError, xpath-start, "Unclosed qualifier detected");
+            break;
+        case ']':
+            if (!quote)
+            {
+                if (!lhsEnd)
+                    lhsEnd = xpath;
+                rhsEnd = xpath;
+            }
+            break;
+        case ' ':
+        case '\t':
+            if (!lhsEnd)
+                lhsEnd = xpath;
+            break;
+        case '!':
+        case '>':
+        case '<':
+        case '~':
+        case '/':
+            if (!quote)
+                return false;
+            break;
+        case '=':
+            if (!quote)
+            {
+                if (equalSignFound)
+                    throw MakeXPathException(start, PTreeExcpt_XPath_ParseError, xpath-start, "Unexpected expression operator xpath");
+                equalSignFound = true;
+                if (!lhsEnd)
+                    lhsEnd = xpath;
+            }
+            break;
+        case '?':
+        case '*':
+            return false;
+        case '\0':
+            rhsEnd = xpath;
+            break;
+        }
+        if (rhsEnd)
+            break;
+        xpath++;
+        if (!rhsBegin && equalSignFound && !isspace(*xpath))
+            rhsBegin = xpath;
+    }
+    if (quote)
+        throw MakeXPathException(start, PTreeExcpt_XPath_ParseError, xpath-start, "Parse error, unclosed quoted content");
+    if (!equalSignFound)
+        return false;
+
+    lhsLen = lhsEnd-start;
+    if (quoteBegin && !quoteEnd)
+        throw MakeXPathException(start, PTreeExcpt_XPath_ParseError, xpath-start, "Parse error, RHS missing closing quote");
+    if (rhsBegin && !rhsEnd)
+        throw MakeXPathException(start, PTreeExcpt_XPath_ParseError, xpath-start, "Parse error, RHS missing closing quote");
+    if (!quoteBegin && rhsEnd) // only if numeric
+        return false;
+    else // quoted
+    {
+        rhsBegin = quoteBegin;
+        rhsLen = quoteEnd - rhsBegin;
+    }
+    if (rhsEnd && *xpath == ']')
+        xpath++;
+    xxpath = xpath;
+    return true;
+}
+
+class CMapQualifierIterator : public CInterfaceOf<IPropertyTreeIterator>
+{
+    CValueMap::iterator startRange, endRange;
+    CValueMap::iterator currentIter;
+public:
+    CMapQualifierIterator(CQualifierMap &_map, CValueMap::iterator _startRange, CValueMap::iterator _endRange)
+        : startRange(_startRange), endRange(_endRange)
+    {        
+    }
+
+// IPropertyTreeIterator
+    virtual bool first() override
+    {
+        currentIter = startRange;
+        return currentIter != endRange;
+    }
+    virtual bool next() override
+    {
+        currentIter++;
+        return currentIter != endRange;
+    }
+    virtual bool isValid() override
+    {
+        return currentIter != endRange;
+    }
+    virtual IPropertyTree & query() override { return const_cast<IPropertyTree &>(*currentIter->second); }
+};
+
+IPropertyTreeIterator *checkMapIterator(const char *&xxpath, IPropertyTree &child)
+{
+    /*
+    * NB: IPT's are not thread safe. It is up to the caller to ensure multiple writers do not contend.
+    * ( Dali for example ensures writer threads are exclusive )
+    * 
+    * That means multiple reader threads could be here concurrently.
+    * >1 could be constructing the qualifier map for the 1st time.
+    * For new attr updates (where map already exists), it will block on map::crit,
+    * so that there is at most 1 thread updating the map. The underlying unordered_multiset
+    * is thread safe if 1 writer, and multiple readers.
+    * 
+    * On initial map creation, allow concurrency, but only 1 will succeed to swap in the new active map.
+    * That could mean a new attr/prop. mapping is lost, until next used.
+    * NB: once the map is live, updates are write ops. and so, just as with the IPT 
+    * itself, it is expected that something will keep it thread safe (as Dali does)
+    * 
+    */
+
+    // NB: only support simple @<attrname>=<value> qualifiers
+
+    if (((unsigned)-1) == siblingMapThreshold) // disabled
+        return nullptr;
+
+    PTree &_child = (PTree &)child;
+    if (child.isCaseInsensitive()) // NB: could support but not worth it.
+        return nullptr;
+
+    IPTArrayValue *value = _child.queryValue();
+    if (!value)
+        return nullptr;
+    CQualifierMap *map = value->queryMap();
+    if (!map)
+    {
+        if (!value->isArray() || (value->elements() < siblingMapThreshold))
+            return nullptr;
+    }
+
+    unsigned lhsLen, rhsLen;
+    const char *rhsStart;
+    const char *xpath = xxpath;
+    if (!parseEqualityQualifier(xpath, lhsLen, rhsStart, rhsLen))
+        return nullptr;
+    MAKE_LSTRING(lhs, xxpath, lhsLen);
+    MAKE_LSTRING(rhs, rhsStart, rhsLen);
+
+    // NB: there can be a race here where >1 reader is constructing new map
+    CValueMap *valueMap = nullptr;
+    if (map)
+        valueMap = map->addMappingIfNew(lhs, *value);
+    else
+    {
+        OwnedPtr<CQualifierMap> newMap = new CQualifierMap();
+        valueMap = newMap->addMapping(lhs, *value);
+
+        /*
+        * NB: it's possible another read thread got here 1st, and swapped in a map.
+        * setMap returns the existing map, and the code below checks to see if it already
+        * handles the 'lhs' we're adding, if it doesn't it re-adds the qualifier mappings.
+        */
+        map = value->setMap(newMap);
+        if (!map) // successfully swapped newMap in.
+            map = newMap.getClear(); // NB: setMap owns
+        else // another thread has swapped in a map whilst I was creating new one
+            valueMap = map->addMappingIfNew(lhs, *value);
+    }
+
+    xxpath = xpath; // update parsed position
+
+    auto range = valueMap->find(rhs);
+    if (range.first != range.second)
+        return new CMapQualifierIterator(*map, range.first, range.second);
+    else
+        return LINK(nullPTreeIterator);
 }
 
 ///////////////////
@@ -763,6 +1147,80 @@ size32_t CPTValue::queryValueSize() const
 
 ///////////////////
 
+
+CPTArray::~CPTArray()
+{
+    if (map.load())
+        delete map.load();
+}
+
+CQualifierMap *CPTArray::setMap(CQualifierMap *_map)
+{
+    CQualifierMap *expected = nullptr;
+    if (map.compare_exchange_strong(expected, _map))
+        return nullptr;
+    else
+        return expected;
+}
+
+void CPTArray::addElement(IPropertyTree *tree)
+{
+    append(*tree);
+    CQualifierMap *map = queryMap();
+    if (map)
+    {
+        if (tree->getAttributeCount())
+            map->addMatchingValues(tree);
+    }
+}
+
+void CPTArray::setElement(unsigned idx, IPropertyTree *tree)
+{
+    CQualifierMap *map = queryMap();
+    if (map)
+    {
+        // remove any mappings for existing element.
+        if (isItem(idx))
+        {
+            IPropertyTree *existing = &((IPropertyTree &)item(idx));
+            map->replaceMatchingValues(existing, tree);
+        }
+        else
+            map->addMatchingValues(tree);
+    }
+    add(*tree, idx);
+}
+
+void CPTArray::removeElement(unsigned idx)
+{
+    CQualifierMap *map = queryMap();
+    if (map)
+    {
+        IPropertyTree *existing = &((IPropertyTree &)item(idx));
+        map->removeMatchingValues(existing);
+    }
+    remove(idx);
+}
+
+unsigned CPTArray::find(const IPropertyTree *search) const
+{
+    IInterface **start = getArray();
+    IInterface **last = start + ordinality();
+    IInterface **members = start;
+    while (true)
+    {
+        if (*members == search)
+            return members-start;
+        members++;
+        if (members == last)
+            break;
+    }
+    return NotFound;
+}
+
+//////////////////
+
+
 PTree::PTree(byte _flags, IPTArrayValue *_value, ChildMap *_children)
 {
     flags = _flags;
@@ -789,22 +1247,12 @@ aindex_t PTree::findChild(IPropertyTree *child, bool remove)
 {
     if (value && value->isArray())
     {
-        unsigned i;
-        for (i=0; i<value->elements(); i++)
-        {
-            IPropertyTree *_child = value->queryElement(i);
-            if (_child == child)
-            {
-                if (remove)
-                {
-                    assertex(value);
-                    value->removeElement(i);
-                }
-                return i;
-            }
-        }
+        unsigned pos = value->find(child);
+        if (remove && NotFound != pos)
+            value->removeElement(pos);
+        return pos;
     }
-    else if (children)
+    else if (checkChildren())
     {
         IPropertyTree *_child = children->query(child->queryName());
         if (_child == child)
@@ -1047,66 +1495,70 @@ void PTree::resolveParentChild(const char *xpath, IPropertyTree *&parent, IPrope
         if (!pathIter->first())
             throw MakeIPTException(-1, "resolveParentChild: path not found %s", xpath);
 
-        IPropertyTree *currentPath = NULL;
-        bool multiplePaths = false;
-        bool multipleChildMatches = false;
-        for (;;)
+        /* If 'path' resolves to iterator of this, then treat as if no leading path
+         * i.e. "./x", or "././.x" is equivalent to "x"
+         */
+        if (this != &pathIter->query())
         {
-            // JCSMORE - a bit annoying has to be done again once path has been established
-            currentPath = &pathIter->query();
-            Owned<IPropertyTreeIterator> childIter = currentPath->getElements(prop);
-            if (childIter->first())
+            IPropertyTree *currentPath = NULL;
+            bool multiplePaths = false;
+            bool multipleChildMatches = false;
+            for (;;)
             {
-                child = &childIter->query();
-                if (parent)
-                    AMBIGUOUS_PATH("resolveParentChild", xpath);
-                if (!multipleChildMatches && childIter->next())
-                    multipleChildMatches = true;
+                // JCSMORE - a bit annoying has to be done again once path has been established
+                currentPath = &pathIter->query();
+                Owned<IPropertyTreeIterator> childIter = currentPath->getElements(prop);
+                if (childIter->first())
+                {
+                    child = &childIter->query();
+                    if (parent)
+                        AMBIGUOUS_PATH("resolveParentChild", xpath);
+                    if (!multipleChildMatches && childIter->next())
+                        multipleChildMatches = true;
 
+                    parent = currentPath;
+                }
+                if (pathIter->next())
+                    multiplePaths = true;
+                else break;
+            }
+            if (!parent)
+            {
+                if (multiplePaths) // i.e. no unique path to child found and multiple parent paths
+                    AMBIGUOUS_PATH("resolveParentChild", xpath);
                 parent = currentPath;
             }
-            if (pathIter->next())
-                multiplePaths = true;
-            else break;
-        }
-        if (!parent)
-        {
-            if (multiplePaths) // i.e. no unique path to child found and multiple parent paths
-                AMBIGUOUS_PATH("resolveParentChild", xpath);
-            parent = currentPath;
-        }
-        if (multipleChildMatches)
-            child = NULL; // single parent, but no single child.
-        path.set(prop);
-        const char *pstart = prop;
-        bool wild;
-        readWildId(prop, wild);
-        size32_t s = prop-pstart;
-        if (wild)
-            throw MakeXPathException(pstart, PTreeExcpt_XPath_ParseError, s-1, "Wildcards not permitted on add");
-        assertex(s);
-        path.set(pstart, s);
-        qualifier.set(prop);
-    }
-    else
-    {
-        assertex(prop && *prop);
-        parent = this;
-        const char *pstart = prop;
-        bool wild;
-        readWildId(prop, wild);
-        assertex(!wild);
-        size32_t s = prop-pstart;
-        if (*prop && *prop != '[')
-            throw MakeXPathException(pstart, PTreeExcpt_XPath_ParseError, s, "Qualifier expected e.g. [..]");
-        path.set(pstart, s);
-        if (checkChildren())
-            child = children->query(path);
-        if (child)
+            if (multipleChildMatches)
+                child = NULL; // single parent, but no single child.
+            path.set(prop);
+            const char *pstart = prop;
+            bool wild;
+            readWildId(prop, wild);
+            size32_t s = prop-pstart;
+            if (wild)
+                throw MakeXPathException(pstart, PTreeExcpt_XPath_ParseError, s-1, "Wildcards not permitted on add");
+            assertex(s);
+            path.set(pstart, s);
             qualifier.set(prop);
-        else
-            qualifier.clear();
-    }               
+            return;
+        }
+    }
+    assertex(prop && *prop);
+    parent = this;
+    const char *pstart = prop;
+    bool wild;
+    readWildId(prop, wild);
+    assertex(!wild);
+    size32_t s = prop-pstart;
+    if (*prop && *prop != '[')
+        throw MakeXPathException(pstart, PTreeExcpt_XPath_ParseError, s, "Qualifier expected e.g. [..]");
+    path.set(pstart, s);
+    if (checkChildren())
+        child = children->query(path);
+    if (child)
+        qualifier.set(prop);
+    else
+        qualifier.clear();
 }
 
 void PTree::addProp(const char *xpath, const char *val)
@@ -1294,6 +1746,12 @@ void PTree::setPropInt(const char *xpath, int val)
 void PTree::addPropInt(const char *xpath, int val)
 {
     addPropInt64(xpath, val); // underlying type always __int64 (now)
+}
+
+double PTree::getPropReal(const char *xpath, double dft) const
+{
+    const char *val = queryProp(xpath);
+    return val?atof(val):dft;
 }
 
 bool PTree::isCompressed(const char *xpath) const
@@ -1564,7 +2022,84 @@ IPropertyTree *PTree::setPropTree(const char *xpath, IPropertyTree *val)
     }
 }
 
-IPropertyTree *PTree::addPropTree(const char *xpath, IPropertyTree *val)
+bool PTree::isArray(const char *xpath) const
+{
+    if (!xpath || !*xpath) //item in an array child of parent? I don't think callers ever access array container directly
+        return arrayOwner && arrayOwner->isArray();
+    else if (isAttribute(xpath))
+        return false;
+    else
+    {
+        StringBuffer path;
+        const char *prop = splitXPath(xpath, path);
+        assertex(prop);
+        if (!isAttribute(prop))
+        {
+            if (path.length())
+            {
+                Owned<IPropertyTreeIterator> iter = getElements(path.str());
+                if (!iter->first())
+                    return false;
+                IPropertyTree &branch = iter->query();
+                if (iter->next())
+                    AMBIGUOUS_PATH("isArray", xpath);
+                return branch.isArray(prop);
+            }
+            else
+            {
+                IPropertyTree *child = children->query(xpath);
+                if (child)
+                {
+                    PTree *tree = static_cast<PTree *>(child);
+                    return (tree && tree->value && tree->value->isArray());
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void PTree::addPTreeArrayItem(IPropertyTree *existing, const char *xpath, PTree *val, aindex_t pos)
+{
+    IPropertyTree *iptval = static_cast<IPropertyTree *>(val);
+    PTree *tree = nullptr;
+    if (existing)
+    {
+        dbgassertex(QUERYINTERFACE(existing, PTree));
+        tree = static_cast<PTree *>(existing);
+        if (tree->value && tree->value->isArray())
+        {
+            val->setOwner(tree->value);
+            if ((aindex_t) -1 == pos)
+                tree->value->addElement(iptval);
+            else
+                tree->value->setElement(pos, iptval);
+            return;
+        }
+    }
+
+    IPTArrayValue *array = new CPTArray();
+    IPropertyTree *container = create(xpath, array);
+    val->setOwner(array);
+    if (existing)
+    {
+        array->addElement(LINK(existing));
+        assertex((aindex_t) -1 == pos || 0 == pos);
+        if ((aindex_t) -1 == pos)
+            array->addElement(iptval);
+        else
+            array->setElement(0, iptval);
+        tree->setOwner(array);
+        children->replace(xpath, container);
+    }
+    else
+    {
+        array->addElement(iptval);
+        children->set(xpath, container);
+    }
+}
+
+IPropertyTree *PTree::addPropTree(const char *xpath, IPropertyTree *val, bool alwaysUseArray)
 {
     if (!xpath || '\0' == *xpath)
         throw MakeIPTException(PTreeExcpt_InvalidTagName, "Invalid xpath for property tree insertion specified");
@@ -1592,26 +2127,16 @@ IPropertyTree *PTree::addPropTree(const char *xpath, IPropertyTree *val)
                     IPropertyTree *child = children->query(xpath);
                     if (child)
                     {
-                        __val->setParent(this);
-                        dbgassertex(QUERYINTERFACE(child, PTree));
-                        PTree *tree = static_cast<PTree *>(child);
-                        if (tree->value && tree->value->isArray())
-                            tree->value->addElement(_val);
-                        else
-                        {
-                            IPTArrayValue *array = new CPTArray();
-                            array->addElement(LINK(child));
-                            array->addElement(_val);
-                            IPropertyTree *container = create(xpath, array);
-                            tree->setParent(this);
-                            children->replace(xpath, container);
-                        }
+                        addPTreeArrayItem(child, xpath, __val);
                         return _val;
                     }
                 }
                 else
                     createChildMap();
-                children->set(xpath, _val);
+                if (alwaysUseArray)
+                    addPTreeArrayItem(nullptr, xpath, __val);
+                else
+                    children->set(xpath, _val);
                 return _val;
             }
             if ('/' == *x || '[' == *x)
@@ -1638,33 +2163,15 @@ IPropertyTree *PTree::addPropTree(const char *xpath, IPropertyTree *val)
             addingNewElement(*_val, pos);
             if (child)
             {
-                __val->setParent(this);
-                dbgassertex(QUERYINTERFACE(child, PTree));
-                PTree *tree = static_cast<PTree *>(child);
-                if (tree->value && tree->value->isArray())
-                {
-                    if ((aindex_t) -1 == pos)
-                        tree->value->addElement(_val);
-                    else
-                        tree->value->setElement(pos, _val);
-                }
-                else
-                {
-                    IPTArrayValue *array = new CPTArray();
-                    array->addElement(LINK(child));
-                    assertex((aindex_t) -1 == pos || 0 == pos);
-                    if ((aindex_t) -1 == pos)
-                        array->addElement(_val);
-                    else
-                        array->setElement(0, _val);
-                    IPropertyTree *container = create(path, array);
-                    tree->setParent(this);
-                    children->replace(path, container);         
-                }
+                addPTreeArrayItem(child, path, __val, pos);
             }
             else
             {
                 if (!checkChildren()) createChildMap();
+                if (alwaysUseArray)
+                    addPTreeArrayItem(nullptr, path, __val);
+                else
+                    children->set(path, _val);
                 children->set(path, _val);
             }
             return _val;
@@ -1672,35 +2179,44 @@ IPropertyTree *PTree::addPropTree(const char *xpath, IPropertyTree *val)
     }
 }
 
+IPropertyTree *PTree::addPropTree(const char *xpath, IPropertyTree *val)
+{
+    return addPropTree(xpath, val, false);
+}
+
+IPropertyTree *PTree::addPropTreeArrayItem(const char *xpath, IPropertyTree *val)
+{
+    return addPropTree(xpath, val, true);
+}
+
 bool PTree::removeTree(IPropertyTree *child)
 {
     if (child == this)
         throw MakeIPTException(-1, "Cannot remove self");
-    if (children)
-    {
-        Owned<IPropertyTreeIterator> iter = children->getIterator(false);
-        if (iter->first())
-        {
-            do
-            {
-                PTree *element = (PTree *) &iter->query();
-                if (element == child)
-                    return children->removeExact(element);
 
-                if (element->value && element->value->isArray())
+    if (checkChildren())
+    {
+        IPropertyTree *_child = children->query(child->queryName());
+        if (_child)
+        {
+            if (child == _child)
+                return children->removeExact(child);
+            else
+            {
+                IPTArrayValue *value = ((PTree *)_child)->queryValue();
+                if (value && value->isArray())
                 {
-                    Linked<PTree> tmp = (PTree*) child;
-                    aindex_t i = element->findChild(child, true);
-                    if (NotFound != i)
+                    unsigned pos = value->find(child);
+                    if (NotFound != pos)
                     {
-                        removingElement(child, i);
-                        if (0 == element->value->elements())
-                            children->removeExact(element);
+                        removingElement(child, pos);
+                        value->removeElement(pos);
+                        if (0 == value->elements())
+                            children->removeExact(_child);
                         return true;
                     }
                 }
             }
-            while (iter->next());
         }
     }
     return false;
@@ -2091,10 +2607,6 @@ restart:
                         }
                         else
                         {
-                            if (wild)
-                                iter.setown(new PTIdMatchIterator(this, id, isnocase(), flags & iptiter_sort));
-                            else
-                                iter.setown(child->getElements(NULL));
                             const char *start = xxpath-1;
                             for (;;)
                             {
@@ -2124,8 +2636,17 @@ restart:
                                     ++xxpath;
                                     if (isdigit(*xxpath))
                                     {
-                                        StringAttr qualifier(start, (xxpath-1)-start);
-                                        Owned<PTStackIterator> siter = new PTStackIterator(iter.getClear(), qualifier.get());
+                                        const char *lhsStart = start+1;
+                                        Owned<IPropertyTreeIterator> siter = checkMapIterator(lhsStart, *child);
+                                        if (!siter)
+                                        {
+                                            if (wild)
+                                                iter.setown(new PTIdMatchIterator(this, id, isnocase(), flags & iptiter_sort));
+                                            else
+                                                iter.setown(child->getElements(NULL));
+                                            StringAttr qualifier(start, (xxpath-1)-start);
+                                            siter.setown(new PTStackIterator(iter.getClear(), qualifier.get()));
+                                        }
                                         StringAttr index;
                                         xxpath = readIndex(xxpath, index);
                                         unsigned i = atoi(index.get());
@@ -2136,6 +2657,21 @@ restart:
                                 }
                                 else
                                 {
+                                    if (!wild)
+                                    {
+                                        const char *lhsStart = start+1;
+                                        Owned<IPropertyTreeIterator> mapIter = checkMapIterator(lhsStart, *child);
+                                        if (mapIter)
+                                        {
+                                            xxpath = lhsStart;
+                                            iter.swap(mapIter);
+                                            break;
+                                        }
+                                    }
+                                    if (wild)
+                                        iter.setown(new PTIdMatchIterator(this, id, isnocase(), flags & iptiter_sort));
+                                    else
+                                        iter.setown(child->getElements(NULL));
                                     StringAttr qualifier(start, xxpath-start);
                                     iter.setown(new PTStackIterator(iter.getClear(), qualifier.get()));
                                     break;
@@ -2571,7 +3107,7 @@ void PTree::addLocal(size32_t l, const void *data, bool _binary, int pos)
     if (!l) return; // right thing to do on addProp("x", NULL) ?
     IPTArrayValue *newValue = new CPTValue(l, data, _binary);
     Owned<IPropertyTree> tree = create(queryName(), newValue);
-    PTree *_tree = QUERYINTERFACE(tree.get(), PTree); assertex(_tree); _tree->setParent(this);
+    PTree *_tree = QUERYINTERFACE(tree.get(), PTree); assertex(_tree);
 
     if (_binary)
         IptFlagSet(_tree->flags, ipt_binary);
@@ -2599,6 +3135,7 @@ void PTree::addLocal(size32_t l, const void *data, bool _binary, int pos)
         array->addElement(element1);
         value = array;
     }
+    _tree->setOwner(array);
     tree->Link();
     if (-1 == pos)
         array->addElement(tree);
@@ -3021,6 +3558,12 @@ bool LocalPTree::removeAttribute(const char *key)
     AttrValue *del = findAttribute(key);
     if (!del)
         return false;
+    if (arrayOwner)
+    {
+        CQualifierMap *map = arrayOwner->queryMap();
+        if (map)
+            map->removeEntryIfMapped(key, del->value.get(), this);
+    }
     numAttrs--;
     unsigned pos = del-attrs;
     del->key.destroy();
@@ -3052,6 +3595,18 @@ void LocalPTree::setAttribute(const char *key, const char *val)
         if (!v->key.set(key))
             v->key.setPtr(isnocase() ? AttrStr::createNC(key) : AttrStr::create(key));
     }
+    if (arrayOwner)
+    {
+        CQualifierMap *map = arrayOwner->queryMap();
+        if (map)
+        {
+            if (goer)
+                map->replaceEntryIfMapped(key, v->value.get(), val, this);
+            else
+                map->insertEntryIfMapped(key, val, this);
+        }
+    }
+
     if (!v->value.set(val))
         v->value.setPtr(AttrStr::create(val));
     if (goer)
@@ -3223,6 +3778,13 @@ void CAtomPTree::setAttribute(const char *key, const char *val)
     {
         if (streq(v->value.get(), val))
             return;
+        if (arrayOwner)
+        {
+            CQualifierMap *map = arrayOwner->queryMap();
+            if (map)
+                map->replaceEntryIfMapped(key, v->value.get(), val, this);
+        }
+
         AttrStr * goer = v->value.getPtr();
         if (!v->value.set(val))
         {
@@ -3246,6 +3808,12 @@ void CAtomPTree::setAttribute(const char *key, const char *val)
             memcpy(newattrs, attrs, numAttrs*sizeof(AttrValue));
             freeAttrArray(attrs, numAttrs);
         }
+        if (arrayOwner)
+        {
+            CQualifierMap *map = arrayOwner->queryMap();
+            if (map)
+                map->insertEntryIfMapped(key, val, this);
+        }
         v = &newattrs[numAttrs];
         if (!v->key.set(key))
             v->key.setPtr(attrHT->addkey(key, isnocase()));
@@ -3262,6 +3830,12 @@ bool CAtomPTree::removeAttribute(const char *key)
     if (!del)
         return false;
     numAttrs--;
+    if (arrayOwner)
+    {
+        CQualifierMap *map = arrayOwner->queryMap();
+        if (map)
+            map->removeEntryIfMapped(key, del->value.get(), this);
+    }
     CriticalBlock block(hashcrit);
     if (del->key.isPtr())
         attrHT->removekey(del->key.getPtr(), isnocase());
@@ -3578,14 +4152,41 @@ bool PTStackIterator::next()
                     if (iter->isValid()) 
                         pushToStack(iter, xxpath);
 
-                    bool wild;
+                    bool wild, numeric;
                     const char *start = xxpath;
-                    readWildIdIndex(xxpath, wild);
+                    readWildIdIndex(xxpath, wild, numeric);
                     size32_t s = xxpath-start;
+
                     if (s)
                     {
+                         // NB: actually an id not qualifier, just sharing var.
                         qualifierText.clear().append(s, start);
-                        setIterator(element->getElements(qualifierText));
+
+                        bool mapped = false;
+                        if (!wild && !numeric)
+                        {
+                            ChildMap *children = ((PTree *)element)->checkChildren();
+                            if (children)
+                            {
+                                IPropertyTree *child = children->query(qualifierText);
+                                if (child)
+                                {
+                                    if ('[' == *xxpath)
+                                    {
+                                        const char *newXXPath = xxpath+1;
+                                        Owned<IPropertyTreeIterator> mapIter = checkMapIterator(newXXPath, *child);
+                                        if (mapIter)
+                                        {
+                                            setIterator(mapIter.getClear());
+                                            mapped = true;
+                                            xxpath = newXXPath;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (!mapped)
+                            setIterator(element->getElements(qualifierText));
                     }
                     else // must be qualifier.
                     {
@@ -4648,7 +5249,7 @@ restart:
             if ((colon = strchr(tagName.str(), ':')) != NULL)
                 tagName.remove(0, (size32_t)(colon - tagName.str() + 1));
         }
-        iEvent->beginNode(tagName.str(), startOffset);
+        iEvent->beginNode(tagName.str(), false, startOffset);
         skipWS();
         bool endTag = false;
         bool base64 = false;
@@ -4963,7 +5564,7 @@ public:
                 endOfRoot = false;
                 try
                 {
-                    iEvent->beginNode(stateInfo->wnsTag, startOffset);
+                    iEvent->beginNode(stateInfo->wnsTag, false, startOffset);
                 }
                 catch (IPTreeException *pe)
                 {
@@ -5357,6 +5958,21 @@ IPropertyTree *createPTreeFromXMLString(unsigned len, const char *xml, byte flag
 //////////////////////////
 /////////////////////////
 
+inline bool isHiddenWhenSanitized(const char *val)
+{
+    if (!val || !*val)
+        return false;
+    return !(streq(val, "0") || streq(val, "1") || strieq(val, "true") || strieq(val, "false") || strieq(val, "yes") || strieq(val, "no"));
+}
+
+inline bool isSanitizedAndHidden(const char *val, byte flags, bool attribute)
+{
+    bool sanitize = (attribute) ? ((flags & YAML_SanitizeAttributeValues)!=0) : ((flags & YAML_Sanitize)!=0);
+    if (sanitize)
+        return isHiddenWhenSanitized(val);
+    return false;
+}
+
 static void _toXML(const IPropertyTree *tree, IIOStream &out, unsigned indent, unsigned flags)
 {
     const char *name = tree->queryName();
@@ -5400,15 +6016,8 @@ static void _toXML(const IPropertyTree *tree, IIOStream &out, unsigned indent, u
                 const char *val = it->queryValue();
                 if (val)
                 {
-                    if (flags & XML_SanitizeAttributeValues)
-                    {
-                        if (strcmp(val, "0")==0 || strcmp(val, "1")==0 || stricmp(val, "true")==0 || stricmp(val, "false")==0 || stricmp(val, "yes")==0 || stricmp(val, "no")==0)
-                            encodeXML(val, out, ENCODE_NEWLINES, (unsigned)-1, true);
-                        else
-                        {
-                            writeCharsNToStream(out, '*', strlen(val));
-                        }
-                    }
+                    if (isSanitizedAndHidden(val, flags, true))
+                        writeCharsNToStream(out, '*', strlen(val));
                     else
                         encodeXML(val, out, ENCODE_NEWLINES, (unsigned)-1, true);
                 }
@@ -5470,10 +6079,10 @@ static void _toXML(const IPropertyTree *tree, IIOStream &out, unsigned indent, u
             // NOTE - we don't output anything for binary.... is that ok?
             if (thislevel)
             {
-                if (strcmp(thislevel, "0")==0 || strcmp(thislevel, "1")==0 || stricmp(thislevel, "true")==0 || stricmp(thislevel, "false")==0 || stricmp(thislevel, "yes")==0 || stricmp(thislevel, "no")==0)
-                    writeStringToStream(out, thislevel);
-                else
+                if (isHiddenWhenSanitized(thislevel))
                     writeCharsNToStream(out, '*', strlen(thislevel));
+                else
+                    writeStringToStream(out, thislevel);
             }
         }
         else if (isBinary)
@@ -5542,18 +6151,19 @@ static void _toXML(const IPropertyTree *tree, IIOStream &out, unsigned indent, u
         writeCharToStream(out, '>');
 }
 
+class CStringBufferMarkupIOAdapter : public CInterfaceOf<IIOStream>
+{
+    StringBuffer &out;
+public:
+    CStringBufferMarkupIOAdapter(StringBuffer &_out) : out(_out) { }
+    virtual void flush() override { }
+    virtual size32_t read(size32_t len, void * data) override { UNIMPLEMENTED; return 0; }
+    virtual size32_t write(size32_t len, const void * data) override { out.append(len, (const char *)data); return len; }
+};
+
 jlib_decl StringBuffer &toXML(const IPropertyTree *tree, StringBuffer &ret, unsigned indent, unsigned flags)
 {
-    class CAdapter : implements IIOStream, public CInterface
-    {
-        StringBuffer &out;
-    public:
-        IMPLEMENT_IINTERFACE;
-        CAdapter(StringBuffer &_out) : out(_out) { }
-        virtual void flush() override { }
-        virtual size32_t read(size32_t len, void * data) override { UNIMPLEMENTED; return 0; }
-        virtual size32_t write(size32_t len, const void * data) override { out.append(len, (const char *)data); return len; }
-    } adapter(ret);
+    CStringBufferMarkupIOAdapter adapter(ret);
     _toXML(tree->queryBranch(NULL), adapter, indent, flags);
     return ret;
 }
@@ -5651,7 +6261,7 @@ static void writeJSONValueToStream(IIOStream &out, const char *val, bool &delimi
     writeCharToStream(out, '"');
 }
 
-static void writeJSONBase64ValueToStream(IIOStream &out, const char *val, size32_t len, bool &delimit)
+static void writeJSONBase64ValueToStream(IIOStream &out, const char *val, size32_t len, bool &delimit, bool hidden)
 {
     checkWriteJSONDelimiter(out, delimit);
     delimit = true;
@@ -5661,10 +6271,16 @@ static void writeJSONBase64ValueToStream(IIOStream &out, const char *val, size32
         return;
     }
     writeCharToStream(out, '"');
-    JBASE64_Encode(val, len, out, false);
+    if (hidden)
+        JBASE64_Encode("****", strlen("****"), out, false);
+    else
+        JBASE64_Encode(val, len, out, false);
     writeCharToStream(out, '"');
 }
-
+bool isRootArrayObjectHidden(bool root, const char *name, byte flags)
+{
+    return ((flags & JSON_HideRootArrayObject) && root && name && streq(name,"__array__"));
+}
 static void _toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent, byte flags, bool &delimit, bool root=false, bool isArrayItem=false)
 {
     Owned<IAttributeIterator> it = tree->getAttributes(true);
@@ -5688,33 +6304,34 @@ static void _toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent, 
         writeCharsNToStream(out, ' ', indent);
     }
 
-    if (root || complex)
+    bool hiddenRootArrayObject = isRootArrayObjectHidden(root, name, flags);
+    if (!hiddenRootArrayObject)
     {
-        writeCharToStream(out, '{');
-        delimit = false;
-    }
-
-    if (hasAttributes)
-    {
-        ForEach(*it)
+        if (root || complex)
         {
-            const char *key = it->queryName();
-            if (!isBinary || stricmp(key, "@xsi:type")!=0)
+            writeCharToStream(out, '{');
+            delimit = false;
+        }
+
+        if (hasAttributes)
+        {
+            ForEach(*it)
             {
-                const char *val = it->queryValue();
-                if (val)
+                const char *key = it->queryName();
+                if (!isBinary || stricmp(key, "@xsi:type")!=0)
                 {
-                    writeJSONNameToStream(out, key, (flags & JSON_Format) ? indent+1 : 0, delimit);
-                    if (flags & JSON_SanitizeAttributeValues)
+                    const char *val = it->queryValue();
+                    if (val)
                     {
-                        bool hide = !(streq(val, "0") || streq(val, "1") || strieq(val, "true") || strieq(val, "false") || strieq(val, "yes") || strieq(val, "no"));
-                        writeJSONValueToStream(out, val, delimit, hide);
-                    }
-                    else
-                    {
-                        StringBuffer encoded;
-                        encodeJSON(encoded, val);
-                        writeJSONValueToStream(out, encoded.str(), delimit);
+                        writeJSONNameToStream(out, key, (flags & JSON_Format) ? indent+1 : 0, delimit);
+                        if (flags & JSON_SanitizeAttributeValues)
+                            writeJSONValueToStream(out, val, delimit, isHiddenWhenSanitized(val));
+                        else
+                        {
+                            StringBuffer encoded;
+                            encodeJSON(encoded, val);
+                            writeJSONValueToStream(out, encoded.str(), delimit);
+                        }
                     }
                 }
             }
@@ -5723,30 +6340,33 @@ static void _toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent, 
     MemoryBuffer thislevelbin;
     StringBuffer _thislevel;
     const char *thislevel = NULL; // to avoid uninitialized warning
-    bool isNull;
-    if (isBinary)
+    bool isNull = true;
+    if (!hiddenRootArrayObject)
     {
-        isNull = (!tree->getPropBin(NULL, thislevelbin))||(thislevelbin.length()==0);
-    }
-    else
-    {
-        if (tree->isCompressed(NULL))
+        if (isBinary)
         {
-            isNull = false; // can't be empty if compressed;
-            verifyex(tree->getProp(NULL, _thislevel));
-            thislevel = _thislevel.str();
+            isNull = (!tree->getPropBin(NULL, thislevelbin))||(thislevelbin.length()==0);
         }
         else
-            isNull = (NULL == (thislevel = tree->queryProp(NULL)));
+        {
+            if (tree->isCompressed(NULL))
+            {
+                isNull = false; // can't be empty if compressed;
+                verifyex(tree->getProp(NULL, _thislevel));
+                thislevel = _thislevel.str();
+            }
+            else
+                isNull = (NULL == (thislevel = tree->queryProp(NULL)));
+        }
+
+        if (isNull && !root && !complex)
+        {
+            writeJSONValueToStream(out, NULL, delimit);
+            return;
+        }
     }
 
-    if (isNull && !root && !complex)
-    {
-        writeJSONValueToStream(out, NULL, delimit);
-        return;
-    }
-
-    Owned<IPropertyTreeIterator> sub = tree->getElements("*", 0 != (flags & JSON_SortTags) ? iptiter_sort : iptiter_null);
+    Owned<IPropertyTreeIterator> sub = tree->getElements(hiddenRootArrayObject ? "__item__" : "*", 0 != (flags & JSON_SortTags) ? iptiter_sort : iptiter_null);
     //note that detection of repeating elements relies on the fact that ptree elements
     //of the same name will be grouped together
     bool repeatingElement = false;
@@ -5755,14 +6375,24 @@ static void _toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent, 
     {
         Linked<IPropertyTree> element = &sub->query();
         const char *name = element->queryName();
-        if (sub->next() && !repeatingElement && streq(name, sub->query().queryName()))
+        sub->next();
+        if (!repeatingElement)
         {
-            if (flags & JSON_Format)
-                indent++;
-            writeJSONNameToStream(out, name, (flags & JSON_Format) ? indent : 0, delimit);
-            writeCharToStream(out, '[');
-            repeatingElement = true;
-            delimit = false;
+            if (hiddenRootArrayObject)
+            {
+                writeCharToStream(out, '[');
+                repeatingElement = true;
+                delimit = false;
+            }
+            else if (sub->isValid() && streq(name, sub->query().queryName()))
+            {
+                if (flags & JSON_Format)
+                    indent++;
+                writeJSONNameToStream(out, name, (flags & JSON_Format) ? indent : 0, delimit);
+                writeCharToStream(out, '[');
+                repeatingElement = true;
+                delimit = false;
+            }
         }
 
         _toJSON(element, out, indent+1, flags, delimit, false, repeatingElement);
@@ -5782,44 +6412,36 @@ static void _toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent, 
     }
 
 
-    if (!isNull)
+    if (!hiddenRootArrayObject && !isNull)
     {
         if (complex)
             writeJSONNameToStream(out, isBinary ? "#valuebin" : "#value", (flags & JSON_Format) ? indent+1 : 0, delimit);
         if (isBinary)
-            writeJSONBase64ValueToStream(out, thislevelbin.toByteArray(), thislevelbin.length(), delimit);
+            writeJSONBase64ValueToStream(out, thislevelbin.toByteArray(), thislevelbin.length(), delimit, flags & XML_Sanitize);
         else
         {
-            // NOTE - JSON_Sanitize won't output anything for binary.... is that ok?
-            bool hide = (flags & JSON_Sanitize) && thislevel && !(streq(thislevel, "0") || streq(thislevel, "1") || strieq(thislevel, "true") || strieq(thislevel, "false") || strieq(thislevel, "yes") || strieq(thislevel, "no"));
-            writeJSONValueToStream(out, thislevel, delimit, hide);
+            writeJSONValueToStream(out, thislevel, delimit, isSanitizedAndHidden(thislevel, flags, false));
         }
     }
 
-    if (root || complex)
+    if (!hiddenRootArrayObject)
     {
-        if (flags & JSON_Format)
+        if (root || complex)
         {
-            writeCharToStream(out, '\n');
-            writeCharsNToStream(out, ' ', indent);
+            if (flags & JSON_Format)
+            {
+                writeCharToStream(out, '\n');
+                writeCharsNToStream(out, ' ', indent);
+            }
+            writeCharToStream(out, '}');
+            delimit = true;
         }
-        writeCharToStream(out, '}');
-        delimit = true;
     }
 }
 
 jlib_decl StringBuffer &toJSON(const IPropertyTree *tree, StringBuffer &ret, unsigned indent, byte flags)
 {
-    class CAdapter : implements IIOStream, public CInterface
-    {
-        StringBuffer &out;
-    public:
-        IMPLEMENT_IINTERFACE;
-        CAdapter(StringBuffer &_out) : out(_out) { }
-        virtual void flush() override { }
-        virtual size32_t read(size32_t len, void * data) override { UNIMPLEMENTED; return 0; }
-        virtual size32_t write(size32_t len, const void * data) override { out.append(len, (const char *)data); return len; }
-    } adapter(ret);
+    CStringBufferMarkupIOAdapter adapter(ret);
     bool delimit = false;
     _toJSON(tree->queryBranch(NULL), adapter, indent, flags, delimit, true);
     return ret;
@@ -5829,6 +6451,20 @@ void toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent, byte fla
 {
     bool delimit = false;
     _toJSON(tree, out, indent, flags, delimit, true);
+}
+
+void printJSON(const IPropertyTree *tree, unsigned indent, byte flags)
+{
+    StringBuffer json;
+    toJSON(tree, json, indent, flags);
+    printf("%s", json.str());
+}
+
+void dbglogJSON(const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    StringBuffer json;
+    toJSON(tree, json, indent, flags);
+    DBGLOG("%s", json.str());
 }
 
 
@@ -6676,7 +7312,7 @@ public:
             }
         }
 
-        iEvent->beginNode(name, startOffset);
+        iEvent->beginNode(name, false, startOffset);
         iEvent->beginNodeContent(name);
         iEvent->endNode(name, value.length(), value.str(), false, curOffset);
     }
@@ -6691,7 +7327,7 @@ public:
             switch (nextChar)
             {
             case '[':
-                iEvent->beginNode(name, curOffset);
+                iEvent->beginNode(name, false, curOffset);
                 iEvent->beginNodeContent(name);
                 readArray(name);
                 iEvent->endNode(name, 0, "", false, curOffset);
@@ -6739,7 +7375,7 @@ public:
     {
         if ('@'==*name)
             name++;
-        iEvent->beginNode(name, curOffset);
+        iEvent->beginNode(name, false, curOffset);
         readNext();
         skipWS();
         bool attributesFinalized=false;
@@ -6788,7 +7424,7 @@ public:
                     readObject("__object__");
                     break;
                 case '[':  //treat unnamed arrays like we're in a noroot array
-                    iEvent->beginNode("__array__", curOffset);
+                    iEvent->beginNode("__array__", false, curOffset);
                     readArray("__item__");
                     iEvent->endNode("__array__", 0, "", false, curOffset);
                     break;
@@ -6818,7 +7454,7 @@ public:
                 readObject("__object__");
             else if ('[' == nextChar)
             {
-                iEvent->beginNode("__array__", curOffset);
+                iEvent->beginNode("__array__", false, curOffset);
                 readArray("__item__");
                 iEvent->endNode("__array__", 0, "", false, curOffset);
             }
@@ -6974,7 +7610,7 @@ public:
             return;
         try
         {
-            iEvent->beginNode(stateInfo->wnsTag, offset);
+            iEvent->beginNode(stateInfo->wnsTag, false, offset);
         }
         catch (IPTreeException *pe)
         {
@@ -7525,4 +8161,1029 @@ IPropertyTree *createPTreeFromHttpParameters(const char *nameWithAttrs, IPropert
     }
 
     return createPTreeFromHttpPath(nameWithAttrs, content.getClear(), nestedRoot, flags);
+}
+
+
+IPropertyTree *createPTreeFromJSONFile(const char *filename, byte flags, PTreeReaderOptions readFlags, IPTreeMaker *iMaker)
+{
+    Owned<IFile> in = createIFile(filename);
+    if (!in->exists())
+        return nullptr;
+
+    StringBuffer contents;
+    try
+    {
+        contents.loadFile(in);
+    }
+    catch (IException * e)
+    {
+        EXCLOG(e);
+        e->Release();
+        return nullptr;
+    }
+
+    return createPTreeFromJSONString(contents.length(), contents.str(), flags, readFlags, iMaker);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+
+static constexpr const char * currentVersion = "1.0";
+
+//---------------------------------------------------------------------------------------------------------------------
+/*
+ * Use source to overwrite any changes in target
+ *   Attributes are replaced
+ *   Singleton elements are replaced.
+ *   Entire arrays of scalar elements are replaced.
+ *   Entire arrays of elements with no name attribute are replaced.
+ *   Elements with a name attribute are matched by name.  If there is a match it is merged.  If there is no match it is added.
+*/
+
+static bool checkInSequence(IPropertyTree & child, StringAttr &seqname, bool &first, bool &endprior)
+{
+    first = false;
+    endprior = false;
+    if (seqname.length() && streq(seqname, child.queryName()))
+        return true;
+    endprior = !seqname.isEmpty();
+    if (child.isArray(nullptr))
+    {
+        first=true;
+        seqname.set(child.queryName());
+        return true;
+    }
+    seqname.clear();
+    return false;
+}
+
+inline bool isScalarItem(IPropertyTree &child)
+{
+    if (child.hasChildren())
+        return false;
+    return child.getAttributeCount()==0;
+}
+
+static IPropertyTree *ensureMergeConfigTarget(IPropertyTree &target, const char *tag, const char *nameAttribute, const char *name, bool sequence)
+{
+    StringBuffer tempPath;
+    const char * path = (sequence) ? nullptr : tag;
+    if (name && nameAttribute && *nameAttribute)
+    {
+        tempPath.append(tag).append("[").append(nameAttribute).append("=\'").append(name).append("']");
+        path = tempPath;
+    }
+
+    IPropertyTree * match = (path) ? target.queryPropTree(path) : nullptr;
+    if (!match)
+    {
+        if (sequence)
+            match = target.addPropTreeArrayItem(tag, createPTree(tag));
+        else
+            match = target.addPropTree(tag);
+    }
+    return match;
+}
+
+void mergeConfiguration(IPropertyTree & target, IPropertyTree & source, const char *altNameAttribute)
+{
+    Owned<IAttributeIterator> aiter = source.getAttributes();
+    ForEach(*aiter)
+        target.addProp(aiter->queryName(), aiter->queryValue());
+
+    StringAttr seqname;
+    Owned<IPropertyTreeIterator> iter = source.getElements("*");
+    ForEach(*iter)
+    {
+        IPropertyTree & child = iter->query();
+        const char * tag = child.queryName();
+        const char * name = child.queryProp("@name");
+        bool altname = false;
+
+        //Legacy support for old component configuration files that have repeated elements with no name tag but another unique id
+        if (!name && altNameAttribute && *altNameAttribute)
+        {
+            name = child.queryProp(altNameAttribute);
+            altname = name!=nullptr;
+        }
+
+        bool first = false;
+        bool endprior = false;
+        bool sequence = checkInSequence(child, seqname, first, endprior);
+        if (first && (!name || isScalarItem(child))) //arrays of unamed objects or scalars are replaced
+            target.removeProp(tag);
+
+        IPropertyTree * match = ensureMergeConfigTarget(target, tag, altname ? altNameAttribute : "@name", name, sequence);
+        mergeConfiguration(*match, child, altNameAttribute);
+    }
+
+    const char * sourceValue = source.queryProp("");
+    if (sourceValue)
+        target.setProp("", sourceValue);
+}
+
+/*
+ * Load a json/yaml configuration file.
+ * If there is an extends tag in the root of the file then this file is applied as a delta to the base file
+ * the configuration is the contents of the tag within the file that matches the component tag.
+*/
+static IPropertyTree * loadConfiguration(const char * filename, const char * componentTag, bool required, const char *altNameAttribute)
+{
+    if (!checkFileExists(filename))
+        throw makeStringExceptionV(99, "Configuration file %s not found", filename);
+
+    const char * ext = pathExtension(filename);
+    Owned<IPropertyTree> configTree;
+    if (!ext || strieq(ext, ".yaml"))
+    {
+        try
+        {
+            configTree.setown(createPTreeFromYAMLFile(filename, 0, ptr_ignoreWhiteSpace, nullptr));
+        }
+        catch (IException *E)
+        {
+            StringBuffer msg;
+            E->errorMessage(msg);
+            ::Release(E);
+            throw makeStringExceptionV(99, "Error loading configuration file %s (invalid yaml): %s", filename, msg.str());
+        }
+    }
+    else
+        throw makeStringExceptionV(99, "Unrecognised file extension %s", ext);
+
+    if (!configTree)
+        throw makeStringExceptionV(99, "Error loading configuration file %s", filename);
+
+    IPropertyTree * config = configTree->queryPropTree(componentTag);
+    if (!config)
+    {
+        if (required)
+            throw makeStringExceptionV(99, "Section %s is missing from file %s", componentTag, filename);
+        return nullptr;
+    }
+    const char * base = configTree->queryProp("@extends");
+    if (!base)
+        return LINK(config);
+
+    StringBuffer baseFilename;
+    splitFilename(filename, &baseFilename, &baseFilename, nullptr, nullptr, false);
+    addNonEmptyPathSepChar(baseFilename);
+    baseFilename.append(base);
+
+    Owned<IPropertyTree> baseTree = loadConfiguration(baseFilename, componentTag, required, altNameAttribute);
+    mergeConfiguration(*baseTree, *config, altNameAttribute);
+    return LINK(baseTree);
+}
+
+static constexpr const char * envPrefix = "HPCC_CONFIG_";
+static void applyEnvironmentConfig(IPropertyTree & target, const char * cptPrefix, const char * value)
+{
+    const char * name = value;
+    if (!startsWith(name, envPrefix))
+        return;
+
+    name += strlen(envPrefix);
+    if (cptPrefix)
+    {
+        if (!startsWith(name, cptPrefix))
+            return;
+        name += strlen(cptPrefix);
+        if (*name++ != '_')
+            return;
+    }
+
+    StringBuffer propName;
+    if (startsWith(name, "PROP_"))
+    {
+        propName.append("@");
+        name += 5;
+    }
+    const char * eq = strchr(value, '=');
+    if (eq)
+    {
+        propName.append(eq - name, name);
+        target.setProp(propName, eq + 1);
+    }
+    else
+    {
+        propName.append(name);
+        target.setProp(propName, nullptr);
+    }
+}
+
+IPropertyTree * createPTreeFromYAML(const char * yaml)
+{
+    if (*yaml == '{')
+        return createPTreeFromJSONString(yaml, 0, ptr_ignoreWhiteSpace, nullptr);
+
+    return createPTreeFromYAMLString(yaml, 0, ptr_ignoreWhiteSpace, nullptr);
+}
+
+static const char * extractOption(const char * option, const char * cur)
+{
+    if (startsWith(cur, option))
+    {
+        cur += strlen(option);
+        if (*cur == '=')
+            return cur + 1;
+        if (*cur)
+            return nullptr;
+        return "1";
+    }
+    return nullptr;
+}
+
+static void applyCommandLineOption(IPropertyTree * config, const char * option, const char * value)
+{
+    //Ignore -- with no following option.
+    if (isEmptyString(option))
+        return;
+
+    const char *tail;
+    while ((tail = strchr(option, '.')) != nullptr)
+    {
+        StringAttr elemName(option, tail-option);
+        if (!config->hasProp(elemName))
+            config = config->addPropTree(elemName);
+        else
+        {
+            config = config->queryPropTree(elemName);
+            if (!config)
+                throw makeStringExceptionV(99, "Cannot overriding scalar configuration element %s with structure", elemName.get());
+        }
+        option = tail+1;
+    }
+
+    if (!validateXMLTag(option))
+        throw makeStringExceptionV(99, "Invalid option name '%s'", option);
+
+    StringBuffer path;
+    path.append('@').append(option);
+    config->setProp(path, value);
+}
+
+static void applyCommandLineOption(IPropertyTree * config, const char * option, std::initializer_list<const char *> ignoreOptions)
+{
+    const char * eq = strchr(option, '=');
+    StringBuffer name;
+    const char *val = nullptr;
+    if (eq)
+    {
+        name.append(eq - option, option);
+        option = name;
+        val = eq + 1;
+    }
+    else
+    {
+        //MORE: Support --x- and --x+?
+        val = "1";
+    }
+    if (stdContains(ignoreOptions, option))
+        return;
+    applyCommandLineOption(config, option, val);
+}
+
+static Owned<IPropertyTree> componentConfiguration;
+static Owned<IPropertyTree> globalConfiguration;
+MODULE_INIT(INIT_PRIORITY_STANDARD)
+{
+    return true;
+}
+MODULE_EXIT()
+{
+    componentConfiguration.clear();
+    globalConfiguration.clear();
+}
+
+IPropertyTree & queryComponentConfig()
+{
+    if (!componentConfiguration)
+        throw makeStringException(99, "Configuration file has not yet been processed");
+    return *componentConfiguration;
+}
+
+IPropertyTree & queryGlobalConfig()
+{
+    if (!globalConfiguration)
+        throw makeStringException(99, "Configuration file has not yet been processed");
+    return *globalConfiguration;
+}
+
+jlib_decl IPropertyTree * loadArgsIntoConfiguration(IPropertyTree *config, const char * * argv, std::initializer_list<const char *> ignoreOptions)
+{
+    for (const char * * pArg = argv; *pArg; pArg++)
+    {
+        const char * cur = *pArg;
+        if (startsWith(cur, "--"))
+            applyCommandLineOption(config, cur + 2, ignoreOptions);
+    }
+    return config;
+}
+
+#ifdef _DEBUG
+static void holdLoop()
+{
+    DBGLOG("Component paused for debugging purposes, attach and set held=false to release");
+    bool held = true;
+    while (held)
+        Sleep(5);
+}
+#endif
+
+jlib_decl IPropertyTree * loadConfiguration(IPropertyTree *componentDefault, const char * * argv, const char * componentTag, const char * envPrefix, const char * legacyFilename, IPropertyTree * (mapper)(IPropertyTree *), const char *altNameAttribute)
+{
+    if (componentConfiguration)
+        throw makeStringExceptionV(99, "Configuration for component %s has already been initialised", componentTag);
+
+    Linked<IPropertyTree> config(componentDefault);
+    const char * optConfig = nullptr;
+    bool outputConfig = false;
+#ifdef _DEBUG
+    bool held = false;
+#endif
+    for (const char * * pArg = argv; *pArg; pArg++)
+    {
+        const char * cur = *pArg;
+        const char * matchConfig = extractOption("--config", cur);
+        if (matchConfig)
+            optConfig = matchConfig;
+        else if (strsame(cur, "--help"))
+        {
+#if 0
+            //Better not to include this until it has been implemented, since it breaks eclcc
+            //MORE: displayHelp(config);
+            printf("%s <options>\n", argv[0]);
+            exit(0);
+#endif
+        }
+        else if (strsame(cur, "--init"))
+        {
+            StringBuffer yamlText;
+            toYAML(componentDefault, yamlText, 0, YAML_SortTags);
+            printf("%s\n", yamlText.str());
+            exit(0);
+        }
+        else if (strsame(cur, "--outputconfig"))
+        {
+            outputConfig = true;
+        }
+#ifdef _DEBUG
+        else
+        {
+            const char *matchHold = extractOption("--hold", cur);
+            if (matchHold)
+            {
+                if (strToBool(matchHold))
+                {
+                    held = true;
+                    holdLoop();
+                }
+            }
+        }
+#endif
+    }
+
+    Owned<IPropertyTree> delta;
+    if (optConfig)
+    {
+        if (streq(optConfig, "1"))
+            throw makeStringExceptionV(99, "Name of configuration file omitted (use --config=<filename>)");
+
+        //--config= with no filename can be used to ignore the legacy configuration file
+        if (!isEmptyString(optConfig))
+        {
+            StringBuffer fullpath;
+            if (!isAbsolutePath(optConfig))
+            {
+                appendCurrentDirectory(fullpath, false);
+                addNonEmptyPathSepChar(fullpath);
+            }
+            fullpath.append(optConfig);
+            delta.setown(loadConfiguration(fullpath, componentTag, true, altNameAttribute));
+            globalConfiguration.setown(loadConfiguration(fullpath, "global", false, altNameAttribute));
+        }
+    }
+    else
+    {
+        if (legacyFilename && checkFileExists(legacyFilename))
+            delta.setown(createPTreeFromXMLFile(legacyFilename, ipt_caseInsensitive));
+
+        if (delta && mapper)
+            delta.setown(mapper(delta));
+    }
+
+    if (delta)
+        mergeConfiguration(*config, *delta, altNameAttribute);
+
+    const char * * environment = const_cast<const char * *>(getSystemEnv());
+    for (const char * * cur = environment; *cur; cur++)
+    {
+        applyEnvironmentConfig(*config, envPrefix, *cur);
+    }
+
+    if (outputConfig)
+    {
+        loadArgsIntoConfiguration(config, argv, { "config", "outputconfig" });
+
+        Owned<IPropertyTree> recreated = createPTree();
+        recreated->setProp("@version", currentVersion);
+        recreated->addPropTree(componentTag, LINK(config));
+        if (globalConfiguration)
+            recreated->addPropTree("global", globalConfiguration.getLink());
+        StringBuffer yamlText;
+        toYAML(recreated, yamlText, 0, YAML_SortTags);
+        printf("%s\n", yamlText.str());
+        exit(0);
+    }
+    else
+        loadArgsIntoConfiguration(config, argv);
+
+    //For legacy (and other weird cases) ensure there is a global section
+    if (!globalConfiguration)
+        globalConfiguration.setown(createPTree("global"));
+
+#ifdef _DEBUG
+    // NB: don't re-hold, if CLI --hold already held.
+    if (!held && config->getPropBool("@hold"))
+        holdLoop();
+#endif
+
+    unsigned ptreeMappingThreshold = globalConfiguration->getPropInt("@ptreeMappingThreshold", defaultSiblingMapThreshold);
+    setPTreeMappingThreshold(ptreeMappingThreshold);
+
+    componentConfiguration.set(config);
+    return config.getClear();
+}
+
+jlib_decl IPropertyTree * loadConfiguration(const char * defaultYaml, const char * * argv, const char * componentTag, const char * envPrefix, const char * legacyFilename, IPropertyTree * (mapper)(IPropertyTree *), const char *altNameAttribute)
+{
+    if (componentConfiguration)
+        throw makeStringExceptionV(99, "Configuration for component %s has already been initialised", componentTag);
+
+    Owned<IPropertyTree> componentDefault;
+    if (defaultYaml)
+    {
+        Owned<IPropertyTree> defaultConfig = createPTreeFromYAML(defaultYaml);
+        componentDefault.set(defaultConfig->queryPropTree(componentTag));
+        if (!componentDefault)
+            throw makeStringExceptionV(99, "Default configuration does not contain the tag %s", componentTag);
+    }
+    else
+        componentDefault.setown(createPTree(componentTag));
+
+    return loadConfiguration(componentDefault, argv, componentTag, envPrefix, legacyFilename, mapper, altNameAttribute);
+}
+
+class CYAMLBufferReader : public CInterfaceOf<IPTreeReader>
+{
+protected:
+    Linked<IPTreeNotifyEvent> iEvent;
+    yaml_parser_t parser;
+    PTreeReaderOptions readerOptions = ptr_none;
+    bool noRoot = false;
+
+public:
+    CYAMLBufferReader(const void *buf, size32_t bufLength, IPTreeNotifyEvent &_iEvent, PTreeReaderOptions _readerOptions) :
+        iEvent(&_iEvent), readerOptions(_readerOptions)
+    {
+        if (!yaml_parser_initialize(&parser))
+            throw makeStringException(99, "Filed to initialize libyaml parser");
+        yaml_parser_set_input_string(&parser, (const unsigned char *)buf, bufLength);
+        noRoot = 0 != ((unsigned)readerOptions & (unsigned)ptr_noRoot);
+    }
+    ~CYAMLBufferReader()
+    {
+        yaml_parser_delete(&parser);
+    }
+
+    yaml_event_type_t nextEvent(yaml_event_t &event, yaml_event_type_t final=YAML_NO_EVENT, yaml_event_type_t expected=YAML_NO_EVENT, const char *error="")
+    {
+        if (!yaml_parser_parse(&parser, &event))
+            throw makeStringExceptionV(99, "libyaml parser error %s", parser.problem);
+        if (event.type!=final && expected!=YAML_NO_EVENT && event.type!=expected)
+            throw makeStringExceptionV(99, "libyaml parser %s", error);
+        return event.type;
+    }
+
+    virtual void loadSequence(const char *tagname)
+    {
+        if (!tagname || !*tagname) //if unmapped (unnamed) sequences are possible have to decide how to name them in the ptree, later
+            throw makeStringException(99, "libyaml parser expected sequence name");
+
+        yaml_event_t event;
+        yaml_event_type_t eventType = YAML_NO_EVENT;
+
+        while (eventType!=YAML_SEQUENCE_END_EVENT)
+        {
+            eventType = nextEvent(event);
+
+            switch (eventType)
+            {
+            case YAML_MAPPING_START_EVENT: //child map
+                loadMap(tagname, true);
+                break;
+            case YAML_SEQUENCE_START_EVENT:
+                //todo
+                break;
+            case YAML_SCALAR_EVENT:
+                iEvent->beginNode(tagname, true, parser.offset);
+                iEvent->endNode(tagname, event.data.scalar.length, (const void *)event.data.scalar.value, false, parser.offset);
+                break;
+            case YAML_ALIAS_EVENT: //reference to an anchor, ignore for now
+                iEvent->beginNode(tagname, true, parser.offset);
+                iEvent->endNode(tagname, 0, nullptr, false, parser.offset);
+                break;
+            case YAML_SEQUENCE_END_EVENT: //done
+                break;
+            case YAML_NO_EVENT:
+            case YAML_MAPPING_END_EVENT:
+            case YAML_STREAM_START_EVENT:
+            case YAML_STREAM_END_EVENT:
+            case YAML_DOCUMENT_START_EVENT:
+            case YAML_DOCUMENT_END_EVENT:
+            default:
+                //shouldn't be here
+                break;
+            }
+
+            yaml_event_delete(&event);
+        }
+    }
+    virtual void loadMap(const char *tagname, bool sequence)
+    {
+        bool binaryContent = false;
+        StringBuffer content;
+        if (tagname && *tagname)
+            iEvent->beginNode(tagname, sequence, parser.offset);
+
+        yaml_event_t event;
+        yaml_event_type_t eventType = YAML_NO_EVENT;
+
+        while (eventType!=YAML_MAPPING_END_EVENT)
+        {
+            eventType = nextEvent(event, YAML_MAPPING_END_EVENT, YAML_SCALAR_EVENT, "expected map to start with scalar name");
+            if (eventType==YAML_MAPPING_END_EVENT)
+            {
+                yaml_event_delete(&event);
+                continue;
+            }
+            StringBuffer attname('@');
+            attname.append(event.data.scalar.length, (const char *)event.data.scalar.value);
+            const char *elname = attname.str()+1;
+            yaml_event_delete(&event);
+
+            eventType = nextEvent(event);
+
+            switch (eventType)
+            {
+            case YAML_MAPPING_START_EVENT: //child map
+                loadMap(elname, false);
+                break;
+            case YAML_SEQUENCE_START_EVENT:
+                loadSequence(elname);
+                break;
+            case YAML_SCALAR_EVENT:
+            {
+                //!el or !element will be our local tag (custom schema type) for an element
+                //ptree toYAML should set this for element scalars, and parent text content
+                const char *tag = (const char *)event.data.scalar.tag;
+                if (tag && (streq(tag, "!binary") || streq(tag, "!!binary")))
+                {
+                    if (streq(elname, "^")) //text content of parent node
+                    {
+                        binaryContent = true;
+                        JBASE64_Decode((const char *) event.data.scalar.value, content.clear());
+                    }
+                    else
+                    {
+                        StringBuffer decoded;
+                        JBASE64_Decode((const char *) event.data.scalar.value, decoded);
+                        iEvent->beginNode(elname, false, parser.offset);
+                        iEvent->endNode(elname, decoded.length(), (const void *) decoded.str(), true, parser.offset);
+                    }
+                }
+                else if (streq(elname, "^")) //text content of parent node
+                {
+                    content.set((const char *) event.data.scalar.value);
+                }
+                else if (tag && (streq(tag, "!el") || streq(tag, "!element")))
+                {
+                    iEvent->beginNode(elname, false, parser.offset);
+                    iEvent->endNode(elname, event.data.scalar.length, (const void *) event.data.scalar.value, false, parser.offset);
+                }
+                else //by default all named scalars are ptree attributes
+                {
+                    iEvent->newAttribute(attname, (const char *)event.data.scalar.value);
+                }
+                break;
+            }
+            case YAML_ALIAS_EVENT: //reference to an anchor, ignore for now
+                iEvent->beginNode(elname, false, parser.offset);
+                iEvent->endNode(elname, 0, nullptr, false, parser.offset);
+                break;
+            case YAML_MAPPING_END_EVENT: //done
+                break;
+            case YAML_NO_EVENT:
+            case YAML_SEQUENCE_END_EVENT:
+            case YAML_STREAM_START_EVENT:
+            case YAML_STREAM_END_EVENT:
+            case YAML_DOCUMENT_START_EVENT:
+            case YAML_DOCUMENT_END_EVENT:
+            default:
+                //shouldn't be here
+                break;
+            }
+
+            yaml_event_delete(&event);
+        }
+        if (tagname && *tagname)
+            iEvent->endNode(tagname, content.length(), content, binaryContent, parser.offset);
+    }
+    virtual void load() override
+    {
+        yaml_event_t event;
+        yaml_event_type_t eventType = YAML_NO_EVENT;
+        bool doc = false;
+        bool content = false;
+
+        while (eventType!=YAML_STREAM_END_EVENT)
+        {
+            eventType = nextEvent(event);
+
+            switch (eventType)
+            {
+            case YAML_MAPPING_START_EVENT:
+                //root content, the start of all mappings, should be only one at the root
+                if (content)
+                    throw makeStringException(99, "YAML: Currently only support one content section (map) per stream");
+                loadMap(noRoot ? nullptr : "__object__", false); //root map
+                content=true;
+                break;
+            case YAML_SEQUENCE_START_EVENT:
+                //root content, sequence (array), should be only one at the root and can't mix with mappings
+                if (content)
+                    throw makeStringException(99, "YAML: Currently only support one content section (sequence) per stream");
+                if (!noRoot)
+                    iEvent->beginNode("__array__", false, 0);
+                loadSequence("__item__");
+                if (!noRoot)
+                    iEvent->endNode("__array__", 0, nullptr, false, parser.offset);
+                content=true;
+                break;
+            case YAML_STREAM_START_EVENT:
+            case YAML_STREAM_END_EVENT:
+                //don't think we need to do anything... unless we start saving hints
+                break;
+            case YAML_DOCUMENT_START_EVENT:
+                //should only support one?  multiple documents would imply an extra level of nesting (future flag?)
+                if (doc)
+                    throw makeStringException(99, "YAML: Currently only support one document per stream");
+                doc=true;
+                break;
+            case YAML_DOCUMENT_END_EVENT:
+                break;
+            case YAML_NO_EVENT:
+            case YAML_ALIAS_EVENT: //root alias?
+            case YAML_MAPPING_END_EVENT:
+            case YAML_SCALAR_EVENT: //root unmapped (unnamed) scalars?
+            case YAML_SEQUENCE_END_EVENT:
+                //shouldn't be here
+                break;
+            default:
+                break;
+            }
+
+            yaml_event_delete(&event);
+        }
+    }
+    virtual offset_t queryOffset() override
+    {
+        return parser.offset;
+    }
+
+};
+
+
+IPTreeReader *createYAMLBufferReader(const void *buf, size32_t bufLength, IPTreeNotifyEvent &iEvent, PTreeReaderOptions readerOptions)
+{
+    return new CYAMLBufferReader(buf, bufLength, iEvent, readerOptions);
+}
+
+
+IPropertyTree *createPTreeFromYAMLString(unsigned len, const char *yaml, byte flags, PTreeReaderOptions readFlags, IPTreeMaker *iMaker)
+{
+    Owned<IPTreeMaker> _iMaker;
+    if (!iMaker)
+    {
+        iMaker = createDefaultPTreeMaker(flags, readFlags);
+        _iMaker.setown(iMaker);
+    }
+    Owned<IPTreeReader> reader = createYAMLBufferReader(yaml, len, *iMaker, readFlags);
+    reader->load();
+    return LINK(iMaker->queryRoot());
+}
+
+IPropertyTree *createPTreeFromYAMLString(const char *yaml, byte flags, PTreeReaderOptions readFlags, IPTreeMaker *iMaker)
+{
+    return createPTreeFromYAMLString(strlen(yaml), yaml, flags, readFlags, iMaker);
+}
+
+IPropertyTree *createPTreeFromYAMLFile(const char *filename, byte flags, PTreeReaderOptions readFlags, IPTreeMaker *iMaker)
+{
+    Owned<IFile> in = createIFile(filename);
+    if (!in->exists())
+        return nullptr;
+
+    StringBuffer contents;
+    try
+    {
+        contents.loadFile(in);
+    }
+    catch (IException * e)
+    {
+        EXCLOG(e);
+        e->Release();
+        return nullptr;
+    }
+
+    return createPTreeFromYAMLString(contents.length(), contents, flags, readFlags, iMaker);
+}
+
+static int yaml_write_iiostream(void *data, unsigned char *buffer, size_t size)
+{
+    IIOStream *out = (IIOStream *) data;
+    out->write(size, (void *)buffer);
+    out->flush();
+    return 0;
+}
+
+class YAMLEmitter
+{
+    yaml_emitter_t emitter;
+    yaml_event_t event;
+    IIOStream &out;
+public:
+    YAMLEmitter(IIOStream &ios, int indent) : out(ios)
+    {
+        if (!yaml_emitter_initialize(&emitter))
+            throw MakeStringException(0, "YAMLEmitter: failed to initialize");
+        yaml_emitter_set_output(&emitter, yaml_write_iiostream, &out);
+        yaml_emitter_set_canonical(&emitter, false);
+        yaml_emitter_set_unicode(&emitter, true);
+        yaml_emitter_set_indent(&emitter, indent);
+
+        beginStream();
+        beginDocument();
+    }
+    ~YAMLEmitter()
+    {
+        endDocument();
+        endStream();
+        yaml_emitter_delete(&emitter);
+    }
+    yaml_char_t *getTag(bool binary, bool element)
+    {
+        if (binary)
+            return (yaml_char_t *) "!binary";
+        if (element)
+            return (yaml_char_t *) "!el";
+        return nullptr;
+    }
+    void emit()
+    {
+        yaml_emitter_emit(&emitter, &event);
+    }
+    void checkInit(int success, const char *descr)
+    {
+        if (success==0)
+            throw MakeStringException(0, "YAMLEmitter: %s failed", descr);
+    }
+    void writeValue(const char *value, bool element, bool hidden, bool binary)
+    {
+        yaml_scalar_style_t style = binary ? YAML_LITERAL_SCALAR_STYLE : YAML_ANY_SCALAR_STYLE;
+        const yaml_char_t *tag = getTag(binary, element);
+        bool implicit = tag==nullptr;
+        StringBuffer s;
+        if (!value)
+            value = "null";
+        else if (hidden)
+            value = (binary) ? "KioqKg==" : s.appendN(strlen(value), '*').str(); //KioqKg== is base64 of ****
+        checkInit(yaml_scalar_event_initialize(&event, nullptr, tag, (yaml_char_t *) value, -1, implicit, implicit, style), "yaml_scalar_event_initialize");
+        emit();
+    }
+    void writeName(const char *name)
+    {
+        dbgassertex(name!=nullptr);
+        return writeValue(name, false, false,false);
+    }
+    void writeNamedValue(const char *name, const char *value, bool element, bool hidden)
+    {
+        writeName(name);
+        writeValue(value, element, hidden, false);
+    }
+    void writeAttribute(const char *name, const char *value, bool hidden)
+    {
+        writeNamedValue(name, value, false, hidden);
+    }
+    void beginMap()
+    {
+        checkInit(yaml_mapping_start_event_initialize(&event, nullptr, nullptr, 0, YAML_BLOCK_MAPPING_STYLE), "yaml_mapping_start_event_initialize");
+        emit();
+    }
+    void endMap()
+    {
+        checkInit(yaml_mapping_end_event_initialize(&event), "yaml_mapping_end_event_initialize");
+        emit();
+    }
+    void beginSequence(const char *name)
+    {
+        if (name)
+            writeName(name);
+
+        checkInit(yaml_sequence_start_event_initialize(&event, nullptr, nullptr, 0, YAML_ANY_SEQUENCE_STYLE), "yaml_sequence_start_event_initialize");
+        emit();
+    }
+    void endSequence()
+    {
+        checkInit(yaml_sequence_end_event_initialize(&event), "yaml_sequence_end_event_initialize");
+        emit();
+    }
+    void beginDocument()
+    {
+        checkInit(yaml_document_start_event_initialize(&event, nullptr, nullptr, nullptr, true), "yaml_document_start_event_initialize");
+        emit();
+    }
+    void endDocument()
+    {
+        checkInit(yaml_document_end_event_initialize(&event, true), "yaml_document_end_event_initialize");
+        emit();
+    }
+
+    void beginStream()
+    {
+        checkInit(yaml_stream_start_event_initialize(&event, YAML_UTF8_ENCODING), "yaml_stream_start_event_initialize");
+        emit();
+    }
+    void endStream()
+    {
+        checkInit(yaml_stream_end_event_initialize(&event), "yaml_stream_end_event_initialize");
+        emit();
+    }
+};
+
+static void _toYAML(const IPropertyTree *tree, YAMLEmitter &yaml, byte flags, bool root=false, bool isArrayItem=false)
+{
+    const char *name = tree->queryName();
+    if (!root && !isArrayItem)
+    {
+        if (!name || !*name)
+            name = "__unnamed__";
+        yaml.writeName(name);
+    }
+
+    Owned<IAttributeIterator> it = tree->getAttributes(true);
+    bool hasAttributes = it->first();
+    bool complex = (hasAttributes || tree->hasChildren());
+    bool hiddenRootArrayObject = isRootArrayObjectHidden(root, name, flags);
+
+    if (!hiddenRootArrayObject)
+    {
+        if (complex)
+            yaml.beginMap();
+
+        if (hasAttributes)
+        {
+            ForEach(*it)
+            {
+                const char *key = it->queryName()+1;
+                const char *val = it->queryValue();
+                yaml.writeAttribute(key, val, isSanitizedAndHidden(val, flags, true));
+            }
+        }
+    }
+    StringBuffer _content;
+    const char *content = nullptr; // to avoid uninitialized warning
+    bool isBinary = tree->isBinary(NULL);
+    bool isNull = true;
+
+    if (!hiddenRootArrayObject)
+    {
+        if (isBinary)
+        {
+            MemoryBuffer thislevelbin;
+            isNull = (!tree->getPropBin(NULL, thislevelbin))||(thislevelbin.length()==0);
+            if (!isNull)
+                JBASE64_Encode(thislevelbin.toByteArray(), thislevelbin.length(), _content, true);
+            content = _content.str();
+        }
+        else if (tree->isCompressed(NULL))
+        {
+            isNull = false; // can't be empty if compressed;
+            verifyex(tree->getProp(NULL, _content));
+            content = _content.str();
+        }
+        else
+            isNull = (NULL == (content = tree->queryProp(NULL)));
+
+        if (isNull && !root && !complex)
+        {
+            yaml.writeValue("null", false, false, false);
+            return;
+        }
+    }
+
+    Owned<IPropertyTreeIterator> sub = tree->getElements(hiddenRootArrayObject ? "__item__" : "*", 0 != (flags & YAML_SortTags) ? iptiter_sort : iptiter_null);
+    //note that detection of repeating elements relies on the fact that ptree elements
+    //of the same name will be grouped together
+    StringAttr seqname;
+    bool sequence = false;
+    ForEach(*sub)
+    {
+        IPropertyTree &element = sub->query();
+        bool first = false;
+        bool endprior = false;
+        sequence = checkInSequence(element, seqname, first, endprior);
+        if (endprior)
+            yaml.endSequence();
+        if (first)
+            yaml.beginSequence(hiddenRootArrayObject ? nullptr : element.queryName());
+
+        _toYAML(&element, yaml, flags, false, sequence);
+    }
+    if (sequence)
+        yaml.endSequence();
+
+    if (!isNull)
+    {
+        if (complex)
+            yaml.writeName("^");
+        //repeating/array/sequence items are implicitly elements, no need for tag
+        yaml.writeValue(content, isArrayItem ? false : true, isSanitizedAndHidden(content, flags, false), isBinary);
+    }
+
+    if (!hiddenRootArrayObject && complex)
+        yaml.endMap();
+}
+
+
+static void _toYAML(const IPropertyTree *tree, IIOStream &out, unsigned indent, byte flags, bool root=false, bool isArrayItem=false)
+{
+    YAMLEmitter yaml(out, indent);
+    _toYAML(tree, yaml, flags, true, false);
+}
+
+jlib_decl StringBuffer &toYAML(const IPropertyTree *tree, StringBuffer &ret, unsigned indent, byte flags)
+{
+    CStringBufferMarkupIOAdapter adapter(ret);
+    _toYAML(tree->queryBranch(NULL), adapter, indent, flags, true);
+    return ret;
+}
+
+void toYAML(const IPropertyTree *tree, IIOStream &out, unsigned indent, byte flags)
+{
+    _toYAML(tree, out, indent, flags, true);
+}
+
+void printYAML(const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    StringBuffer yaml;
+    toYAML(tree, yaml, indent, flags);
+    printf("%s", yaml.str());
+}
+
+void dbglogYAML(const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    StringBuffer yaml;
+    toYAML(tree, yaml, indent, flags);
+    DBGLOG("%s", yaml.str());
+}
+
+void saveYAML(const char *filename, const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    OwnedIFile ifile = createIFile(filename);
+    saveYAML(*ifile, tree, indent, flags);
+}
+
+void saveYAML(IFile &ifile, const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    OwnedIFileIO ifileio = ifile.open(IFOcreate);
+    if (!ifileio)
+        throw MakeStringException(0, "saveXML: could not find %s to open", ifile.queryFilename());
+    saveYAML(*ifileio, tree, indent, flags);
+}
+
+void saveYAML(IFileIO &ifileio, const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    Owned<IIOStream> stream = createIOStream(&ifileio);
+    stream.setown(createBufferedIOStream(stream));
+    saveYAML(*stream, tree, indent, flags);
+}
+
+void saveYAML(IIOStream &stream, const IPropertyTree *tree, unsigned indent, unsigned flags)
+{
+    toYAML(tree, stream, indent, flags);
+}
+
+jlib_decl IPropertyTree * queryCostsConfiguration()
+{
+    return queryComponentConfig().queryPropTree("costs");
 }

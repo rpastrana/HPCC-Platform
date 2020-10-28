@@ -1,8 +1,7 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
 
     "hpcc/_TabContainerWidget",
@@ -15,62 +14,64 @@ define([
     "dijit/layout/TabContainer",
     "dijit/layout/ContentPane"
 
-], function (declare, lang, i18n, nlsHPCC, arrayUtil,
+], function (declare, lang, nlsHPCCMod, arrayUtil,
     _TabContainerWidget, DelayLoadWidget, WsTopology,
     template) {
-        return declare("HPCCPlatformServicesPluginWidget", [_TabContainerWidget], {
-            templateString: template,
-            baseClass: "HPCCPlatformServicesPluginWidget",
-            i18n: nlsHPCC,
 
-            postCreate: function (args) {
-                this.inherited(arguments);
-            },
+    var nlsHPCC = nlsHPCCMod.default;
+    return declare("HPCCPlatformServicesPluginWidget", [_TabContainerWidget], {
+        templateString: template,
+        baseClass: "HPCCPlatformServicesPluginWidget",
+        i18n: nlsHPCC,
 
-            startup: function (args) {
-                this.inherited(arguments);
-            },
+        postCreate: function (args) {
+            this.inherited(arguments);
+        },
 
-            getTitle: function () {
-                return this.i18n.title_HPCCPlatformServicesPlugin;
-            },
+        startup: function (args) {
+            this.inherited(arguments);
+        },
 
-            //  Implementation  ---
-            init: function (params) {
-                if (this.inherited(arguments))
-                    return;
+        getTitle: function () {
+            return this.i18n.title_HPCCPlatformServicesPlugin;
+        },
 
-                var context = this;
-                WsTopology.TpGetServicePlugins({
-                    request: {
-                    }
-                }).then(function (response) {
-                    if (lang.exists("TpGetServicePluginsResponse.Plugins.Plugin", response) && response.TpGetServicePluginsResponse.Plugins.Plugin.length) {
-                        arrayUtil.forEach(response.TpGetServicePluginsResponse.Plugins.Plugin, function (item) {
-                            var pluginWidget = new DelayLoadWidget({
-                                id: context.createChildTabID(item.ShortName),
-                                title: item.ShortName,
-                                delayFolder: item.FolderName,
-                                delayWidget: item.WidgetName,
-                                hpcc: {
-                                    params: {
-                                    }
+        //  Implementation  ---
+        init: function (params) {
+            if (this.inherited(arguments))
+                return;
+
+            var context = this;
+            WsTopology.TpGetServicePlugins({
+                request: {
+                }
+            }).then(function (response) {
+                if (lang.exists("TpGetServicePluginsResponse.Plugins.Plugin", response) && response.TpGetServicePluginsResponse.Plugins.Plugin.length) {
+                    arrayUtil.forEach(response.TpGetServicePluginsResponse.Plugins.Plugin, function (item) {
+                        var pluginWidget = new DelayLoadWidget({
+                            id: context.createChildTabID(item.ShortName),
+                            title: item.ShortName,
+                            delayFolder: item.FolderName,
+                            delayWidget: item.WidgetName,
+                            hpcc: {
+                                params: {
                                 }
-                            });
-                            context.addChild(pluginWidget);
-                            context.resize();
+                            }
                         });
-                    }
-                });
-            },
+                        context.addChild(pluginWidget);
+                        context.resize();
+                    });
+                }
+            });
+        },
 
-            initTab: function () {
-                var currSel = this.getSelectedChild();
-                if (currSel && !currSel.initalized) {
-                    if (currSel.init) {
-                        currSel.init({});
-                    }
+        initTab: function () {
+            var currSel = this.getSelectedChild();
+            if (currSel && !currSel.initalized) {
+                if (currSel.init) {
+                    currSel.init({});
                 }
             }
-        });
+        }
     });
+});

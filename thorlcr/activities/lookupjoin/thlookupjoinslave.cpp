@@ -1312,7 +1312,8 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), HELPERBASE((HELPER *)queryHelper()), rhs(*this)
+    CInMemJoinBase(CGraphElementBase *_container, const StatisticsMapping &statsMapping = basicActivityStatistics)
+        : CSlaveActivity(_container, statsMapping), HELPERBASE((HELPER *)queryHelper()), rhs(*this)
     {
         gotRHS = false;
         rhsNext = NULL;
@@ -1699,7 +1700,7 @@ protected:
     using PARENT::broadcaster;
     using PARENT::inputs;
     using PARENT::queryHelper;
-    using PARENT::totalCycles;
+    using PARENT::slaveTimerStats;
     using PARENT::timeActivities;
     using PARENT::fireException;
     using PARENT::lookupNextRow;
@@ -1719,6 +1720,7 @@ protected:
     using PARENT::queryInput;
     using PARENT::rhsRowLock;
     using PARENT::hasStarted;
+    using PARENT::stats;
 
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
@@ -2154,9 +2156,12 @@ protected:
                 }
             }
             InterChannelBarrier();
-            ActPrintLog("Shared memory manager memory report");
-            rightRowManager->reportMemoryUsage(false);
-            ActPrintLog("End of shared manager memory report");
+            if (!REJECTLOG(MCthorDetailedDebugInfo))
+            {
+                ::ActPrintLog(this, thorDetailedLogLevel, "Shared memory manager memory report");
+                rightRowManager->reportMemoryUsage(false);
+                ::ActPrintLog(this, thorDetailedLogLevel, "End of shared manager memory report");
+            }
         }
         else
         {
@@ -2176,9 +2181,12 @@ protected:
                 setFailoverToLocal();
             rhsCollated = lkJoinCh0->isRhsCollated();
         }
-        ActPrintLog("Channel memory manager report");
-        queryRowManager()->reportMemoryUsage(false);
-        ActPrintLog("End of channel memory manager report");
+        if (!REJECTLOG(MCthorDetailedDebugInfo))
+        {
+            ::ActPrintLog(this, thorDetailedLogLevel, "Channel memory manager report");
+            queryRowManager()->reportMemoryUsage(false);
+            ::ActPrintLog(this, thorDetailedLogLevel, "End of channel memory manager report");
+        }
         return !hasFailedOverToLocal();
     }
     /*
@@ -2614,7 +2622,7 @@ public:
         }
         return dedup;
     }
-    CLookupJoinActivityBase(CGraphElementBase *_container) : PARENT(_container)
+    CLookupJoinActivityBase(CGraphElementBase *_container) : PARENT(_container, lookupJoinActivityStatistics)
     {
         rhsCollated = rhsCompacted = false;
         broadcast2MpTag = broadcast3MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
@@ -2734,7 +2742,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!gotRHS)
         {
             getRHS(false);
@@ -2925,13 +2933,13 @@ public:
     }
     virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
         if (isSmart())
         {
             if (isGlobal())
-                mb.append(aggregateFailoversToLocal); // NB: is going to be same for all slaves.
-            mb.append(aggregateFailoversToStandard);
+                stats.setStatistic(StNumSmartJoinDegradedToLocal, aggregateFailoversToLocal); // NB: is going to be same for all slaves.
+            stats.setStatistic(StNumSmartJoinSlavesDegradedToStd, aggregateFailoversToStandard);
         }
+        PARENT::serializeStats(mb);
     }
 };
 
@@ -3320,7 +3328,7 @@ public:
 // IThorSlaveActivity overloaded methods
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!gotRHS)
             getRHS(false);
         OwnedConstThorRow row = lookupNextRow();

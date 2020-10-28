@@ -44,7 +44,7 @@ typedef unsigned short UChar;
 
 //Should be incremented whenever the virtuals in the context or a helper are changed, so
 //that a work unit can't be rerun.  Try as hard as possible to retain compatibility.
-#define ACTIVITY_INTERFACE_VERSION      651
+#define ACTIVITY_INTERFACE_VERSION      652
 #define MIN_ACTIVITY_INTERFACE_VERSION  650             //minimum value that is compatible with current interface
 
 typedef unsigned char byte;
@@ -169,6 +169,7 @@ interface IRecordSize : public IInterface
 interface IXmlWriter : public IInterface
 {
 public:
+    virtual void flushContent(bool close) = 0;
     virtual void outputQuoted(const char *text) = 0;
     virtual void outputString(unsigned len, const char *field, const char *fieldname) = 0;
     virtual void outputBool(bool field, const char *fieldname) = 0;
@@ -1101,7 +1102,7 @@ enum
     TDXtemporary        = 0x0001,
     TDXgrouped          = 0x0002,
     TDXcompress         = 0x0004,
-    TDXvarfilename      = 0x0008,       // filename is dependant on the context.
+    TDXvarfilename      = 0x0008,       // filename is dependent on the context.
     TDXupdateaccessed   = 0x0010,
     TDXdynamicfilename  = 0x0020,
     TDXjobtemp          = 0x0040,       // stay around while a wu is being executed.
@@ -1126,6 +1127,7 @@ enum
     TDRfilenamecallback = 0x01000000,
     TDRtransformvirtual = 0x02000000,       // transform uses a virtual field.
     TDRdynformatoptions = 0x04000000,
+    TDRinvariantfilename= 0x08000000,       // filename is non constant but has the same value for the whole query
 
 //disk write flags
     TDWextend           = 0x0100,
@@ -1155,16 +1157,17 @@ enum
     TIRlimitskips       = 0x00000040,
     TIRstepleadequality = 0x00000080,               // all filters before the first stepping field are equalities
     TIRaggregateexists  = 0x00000100,               // only aggregate is exists()
-    TIRgroupmonitors    = 0x00000200,               // are segement monitors created for all group by conditions.
+    TIRgroupmonitors    = 0x00000200,               // are segment monitors created for all group by conditions.
     TIRlimitcreates     = 0x00000400,
     TIRkeyedlimitcreates= 0x00000800,
-    TIRvarfilename      = 0x00001000,       // filename is dependant on the context.
+    TIRvarfilename      = 0x00001000,               // filename is dependent on the context.
     TIRdynamicfilename  = 0x00002000,
     TIRunfilteredtransform = 0x00004000,
     TIRorderedmerge     = 0x00008000,
     TIRunordered        = 0x00010000,
     TIRnewfilters       = 0x00020000,               // Uses new style field filters
     TIRusesblob         = 0x00040000,               // Uses blob in the transform/projected row
+    TIRinvariantfilename= 0x00080000,               // filename is non constant but has the same value for the whole query
 };
 
 //flags for thor index write
@@ -1703,6 +1706,7 @@ enum {
     FFdatafileoptional           = 0x0001,
     FFvarfilename                = 0x0002,
     FFdynamicfilename            = 0x0004,
+    FFinvariantfilename          = 0x0008,
 };  
 
 // JoinTransformFlags
@@ -2195,18 +2199,23 @@ struct IHThorPipeThroughArg : public IHThorArg
 
 enum
 {
-    SOAPFgroup          = 0x0001,
-    SOAPFonfail         = 0x0002,
-    SOAPFlog            = 0x0004,
-    SOAPFtrim           = 0x0008,
-    SOAPFliteral        = 0x0010,
-    SOAPFnamespace      = 0x0020,
-    SOAPFencoding       = 0x0040,
-    SOAPFpreserveSpace  = 0x0080,
-    SOAPFlogmin         = 0x0100,
-    SOAPFlogusermsg     = 0x0200,
-    SOAPFhttpheaders    = 0x0400,
-    SOAPFusescontents   = 0x0800
+    SOAPFgroup          = 0x000001,
+    SOAPFonfail         = 0x000002,
+    SOAPFlog            = 0x000004,
+    SOAPFtrim           = 0x000008,
+    SOAPFliteral        = 0x000010,
+    SOAPFnamespace      = 0x000020,
+    SOAPFencoding       = 0x000040,
+    SOAPFpreserveSpace  = 0x000080,
+    SOAPFlogmin         = 0x000100,
+    SOAPFlogusermsg     = 0x000200,
+    SOAPFhttpheaders    = 0x000400,
+    SOAPFusescontents   = 0x000800,
+    SOAPFmarkupinfo     = 0x001000,
+    SOAPFxpathhints     = 0x002000,
+    SOAPFnoroot         = 0x004000,
+    SOAPFjson           = 0x008000,
+    SOAPFxml            = 0x010000
 };
 
 struct IHThorWebServiceCallActionArg : public IHThorArg
@@ -2237,6 +2246,9 @@ struct IHThorWebServiceCallActionArg : public IHThorArg
     virtual const char * getInputIteratorPath() = 0;
     virtual size32_t onFailTransform(ARowBuilder & rowBuilder, const void * left, IException * e) = 0;
     virtual void getLogText(size32_t & lenText, char * & text, const void * left) = 0;  // iff SOAPFlogusermsg set
+    virtual const char * getXpathHintsXml() = 0; //iff SOAPFxpathhints
+    virtual const char * getRequestHeader() = 0;
+    virtual const char * getRequestFooter() = 0;
 };
 typedef IHThorWebServiceCallActionArg IHThorSoapActionArg ;
 typedef IHThorWebServiceCallActionArg IHThorHttpActionArg ;
@@ -2620,6 +2632,7 @@ struct IHThorRemoteArg : public IHThorArg
 struct IHThorLibraryCallArg : public IHThorArg
 {
     virtual void createParentExtract(rtlRowBuilder & builder) = 0;
+    using IHThorArg::queryOutputMeta;
     virtual IOutputMetaData * queryOutputMeta(unsigned whichOutput) = 0;
     virtual char * getLibraryName() = 0;
 };

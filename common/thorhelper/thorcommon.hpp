@@ -96,13 +96,14 @@ enum RowReaderWriterFlags
     rw_buffered       = 0x80,
     rw_lzw            = 0x100, // if rw_compress
     rw_lz4            = 0x200, // if rw_compress
-    rw_sparse         = 0x400  // NB: mutually exclusive with rw_grouped
+    rw_sparse         = 0x400, // NB: mutually exclusive with rw_grouped
+    rw_lz4hc          = 0x800  // if rw_compress
 };
 #define DEFAULT_RWFLAGS (rw_buffered|rw_autoflush|rw_compressblkcrc)
 inline bool TestRwFlag(unsigned flags, RowReaderWriterFlags flag) { return 0 != (flags & flag); }
 
-#define COMP_MASK (rw_compress|rw_compressblkcrc|rw_fastlz|rw_lzw|rw_lz4)
-#define COMP_TYPE_MASK (rw_fastlz|rw_lzw|rw_lz4)
+#define COMP_MASK (rw_compress|rw_compressblkcrc|rw_fastlz|rw_lzw|rw_lz4|rw_lz4hc)
+#define COMP_TYPE_MASK (rw_fastlz|rw_lzw|rw_lz4|rw_lz4hc)
 inline void setCompFlag(const char *compStr, unsigned &flags)
 {
     flags &= ~COMP_TYPE_MASK;
@@ -110,10 +111,12 @@ inline void setCompFlag(const char *compStr, unsigned &flags)
     {
         if (0 == stricmp("FLZ", compStr))
             flags |= rw_fastlz;
-        else if (0 == stricmp("LZ4", compStr))
-            flags |= rw_lz4;
-        else // not specifically FLZ or LZ4 so set to LZW (or rowdif)
+        else if (0 == stricmp("LZW", compStr))
             flags |= rw_lzw;
+        else if (0 == stricmp("LZ4HC", compStr))
+            flags |= rw_lz4hc;
+        else // not specifically FLZ, LZW, or FL4HC so set to default LZ4
+            flags |= rw_lz4;
     }
     else // default is LZ4
         flags |= rw_lz4;
@@ -121,28 +124,29 @@ inline void setCompFlag(const char *compStr, unsigned &flags)
 
 inline unsigned getCompMethod(unsigned flags)
 {
-    unsigned compMethod = COMPRESS_METHOD_LZW;
+    unsigned compMethod = COMPRESS_METHOD_LZ4;
     if (TestRwFlag(flags, rw_lzw))
         compMethod = COMPRESS_METHOD_LZW;
     else if (TestRwFlag(flags, rw_fastlz))
         compMethod = COMPRESS_METHOD_FASTLZ;
-    else if (TestRwFlag(flags, rw_lz4))
-        compMethod = COMPRESS_METHOD_LZ4;
+    else if (TestRwFlag(flags, rw_lz4hc))
+        compMethod = COMPRESS_METHOD_LZ4HC;
+
     return compMethod;
 }
 
 inline unsigned getCompMethod(const char *compStr)
 {
-    unsigned compMethod = COMPRESS_METHOD_LZW;
+    unsigned compMethod = COMPRESS_METHOD_LZ4;
     if (!isEmptyString(compStr))
     {
         if (0 == stricmp("FLZ", compStr))
             compMethod = COMPRESS_METHOD_FASTLZ;
-        else if (0 == stricmp("LZ4", compStr))
-            compMethod = COMPRESS_METHOD_LZ4;
+        else if (0 == stricmp("LZW", compStr))
+            compMethod = COMPRESS_METHOD_LZW;
+        else if (0 == stricmp("LZ4HC", compStr))
+            compMethod = COMPRESS_METHOD_LZ4HC;
     }
-    else // default is LZ4
-        compMethod = COMPRESS_METHOD_LZ4;
     return compMethod;
 }
 
@@ -151,7 +155,8 @@ interface IExtRowStream: extends IRowStream
     virtual offset_t getOffset() const = 0;
     virtual offset_t getLastRowOffset() const = 0;
     virtual unsigned __int64 queryProgress() const = 0;
-    virtual void stop(CRC32 *crcout=NULL) = 0;
+    using IRowStream::stop;
+    virtual void stop(CRC32 *crcout) = 0;
     virtual const byte *prefetchRow() = 0;
     virtual void prefetchDone() = 0;
     virtual void reinit(offset_t offset,offset_t len,unsigned __int64 maxrows) = 0;
@@ -162,7 +167,8 @@ interface IExtRowStream: extends IRowStream
 interface IExtRowWriter: extends IRowWriter
 {
     virtual offset_t getPosition() = 0;
-    virtual void flush(CRC32 *crcout=NULL) = 0;
+    using IRowWriter::flush;
+    virtual void flush(CRC32 *crcout) = 0;
 };
 
 enum EmptyRowSemantics { ers_forbidden, ers_allow, ers_eogonly };
@@ -235,6 +241,7 @@ public:
     cycle_t endCycles;   // Wall clock time of last entry to this activity
     unsigned __int64 firstRow; // Timestamp of first row (nanoseconds since epoch)
     cycle_t firstExitCycles;    // Wall clock time of first exit from this activity
+    cycle_t blockedCycles;  // Time spent blocked
 
     // Return the total amount of time (in nanoseconds) spent in this activity (first entry to last exit)
     inline unsigned __int64 elapsed() const { return cycle_to_nanosec(endCycles-startCycles); }
@@ -253,6 +260,7 @@ public:
         endCycles = 0;
         firstRow = 0;
         firstExitCycles = 0;
+        blockedCycles = 0;
     }
 };
 
@@ -323,6 +331,32 @@ public:
         }
     }
 };
+
+class BlockedActivityTimer
+{
+    unsigned __int64 startCycles;
+    ActivityTimeAccumulator &accumulator;
+protected:
+    const bool enabled;
+public:
+    BlockedActivityTimer(ActivityTimeAccumulator &_accumulator, const bool _enabled)
+        : accumulator(_accumulator), enabled(_enabled)
+    {
+        if (enabled)
+            startCycles = get_cycles_now();
+        else
+            startCycles = 0;
+    }
+
+    ~BlockedActivityTimer()
+    {
+        if (enabled)
+        {
+            cycle_t elapsedCycles = get_cycles_now() - startCycles;
+            accumulator.blockedCycles += elapsedCycles;
+        }
+    }
+};
 #else
 struct ActivityTimer
 {
@@ -331,6 +365,10 @@ struct ActivityTimer
 struct SimpleActivityTimer
 {
     inline SimpleActivityTimer(cycle_t &_accumulator, const bool _enabled) { }
+};
+struct BlockedActivityTimer
+{
+    inline BlockedActivityTimer(ActivityTimeAccumulator &_accumulator, const bool _enabled) { }
 };
 #endif
 

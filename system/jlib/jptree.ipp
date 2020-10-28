@@ -138,11 +138,14 @@ jlib_decl const char *splitXPathUQ(const char *xpath, StringBuffer &path);
 jlib_decl const char *queryHead(const char *xpath, StringBuffer &head);
 jlib_decl const char *queryNextUnquoted(const char *str, char c);
 
+class CQualifierMap;
 interface IPTArrayValue
 {
     virtual ~IPTArrayValue() { }
 
     virtual bool isArray() const = 0;
+    virtual CQualifierMap *queryMap() = 0;
+    virtual CQualifierMap *setMap(CQualifierMap *_map) = 0;
     virtual bool isCompressed() const = 0;
     virtual const void *queryValue() const = 0;
     virtual MemoryBuffer &getValue(MemoryBuffer &tgt, bool binary) const = 0;
@@ -155,6 +158,8 @@ interface IPTArrayValue
     virtual unsigned elements() const = 0;
     virtual const void *queryValueRaw() const = 0;
     virtual size32_t queryValueRawSize() const = 0;
+    virtual unsigned find(const IPropertyTree *search) const = 0;
+    virtual IPropertyTree **getRawArray() const = 0;
 
     virtual void serialize(MemoryBuffer &tgt) = 0;
     virtual void deserialize(MemoryBuffer &src) = 0;
@@ -162,21 +167,29 @@ interface IPTArrayValue
 
 class CPTArray : implements IPTArrayValue, private IArray
 {
+    std::atomic<CQualifierMap *> map{nullptr};
 public:
+    ~CPTArray();
     virtual bool isArray() const override { return true; }
+    virtual CQualifierMap *queryMap() override { return map.load(); }
+    virtual CQualifierMap *setMap(CQualifierMap *_map) override;
     virtual bool isCompressed() const override { return false; }
     virtual const void *queryValue() const override { UNIMPLEMENTED; }
     virtual MemoryBuffer &getValue(MemoryBuffer &tgt, bool binary) const override { UNIMPLEMENTED; }
     virtual StringBuffer &getValue(StringBuffer &tgt, bool binary) const override { UNIMPLEMENTED; }
     virtual size32_t queryValueSize() const override { UNIMPLEMENTED; }
     virtual IPropertyTree *queryElement(unsigned idx) const override { return (idx<ordinality()) ? &((IPropertyTree &)item(idx)) : NULL; }
-    virtual void addElement(IPropertyTree *tree) override { append(*tree); }
-    virtual void setElement(unsigned idx, IPropertyTree *tree) override { add(*tree, idx); }
-    virtual void removeElement(unsigned idx) override { remove(idx); }
+    virtual void addElement(IPropertyTree *tree) override;
+    virtual void setElement(unsigned idx, IPropertyTree *tree) override;
+    virtual void removeElement(unsigned idx) override;
     virtual unsigned elements() const override { return ordinality(); }
     virtual const void *queryValueRaw() const override { UNIMPLEMENTED; return NULL; }
     virtual size32_t queryValueRawSize() const override { UNIMPLEMENTED; return 0; }
-
+    virtual unsigned find(const IPropertyTree *search) const override;
+    virtual IPropertyTree **getRawArray() const override
+    {
+        return (IPropertyTree **)getArray();
+    }
 // serializable
     virtual void serialize(MemoryBuffer &tgt) override { UNIMPLEMENTED; }
     virtual void deserialize(MemoryBuffer &src) override { UNIMPLEMENTED; }
@@ -193,6 +206,8 @@ public:
     CPTValue(size32_t size, const void *data, bool binary=false, bool raw=false, bool compressed=false);
 
     virtual bool isArray() const override { return false; }
+    virtual CQualifierMap *queryMap() override { return nullptr; }
+    virtual CQualifierMap *setMap(CQualifierMap *_map) { UNIMPLEMENTED; }
     virtual bool isCompressed() const override { return compressed; }
     virtual const void *queryValue() const override;
     virtual MemoryBuffer &getValue(MemoryBuffer &tgt, bool binary) const override;
@@ -205,6 +220,8 @@ public:
     virtual unsigned elements() const override {  UNIMPLEMENTED; return (unsigned)-1; }
     virtual const void *queryValueRaw() const override { return get(); }
     virtual size32_t queryValueRawSize() const override { return (size32_t)length(); }
+    virtual unsigned find(const IPropertyTree *search) const override { throwUnexpected(); }
+    virtual IPropertyTree **getRawArray() const override { throwUnexpected(); }
 
 // serializable
     virtual void serialize(MemoryBuffer &tgt) override;
@@ -565,6 +582,7 @@ friend class SingleIdIterator;
 friend class PTLocalIteratorBase;
 friend class PTIdMatchIterator;
 friend class ChildMap;
+friend class PTStackIterator;
 
 public:
     PTree(byte _flags=ipt_none, IPTArrayValue *_value=nullptr, ChildMap *_children=nullptr);
@@ -572,7 +590,13 @@ public:
     virtual void beforeDispose() override { }
 
     virtual unsigned queryHash() const = 0;
-    IPropertyTree *queryParent() { return parent; }
+    IPTArrayValue *queryOwner() { return arrayOwner; }
+    unsigned querySiblingPosition()
+    {
+        if (!arrayOwner)
+            return 0;
+        return arrayOwner->find(this);
+    }
     IPropertyTree *queryChild(unsigned index);
     ChildMap *queryChildren() { return children; }
     aindex_t findChild(IPropertyTree *child, bool remove=false);
@@ -584,17 +608,18 @@ public:
     void serializeAttributes(MemoryBuffer &tgt);
     IPropertyTree *clone(IPropertyTree &srcTree, bool self=false, bool sub=true);
     void clone(IPropertyTree &srcTree, IPropertyTree &dstTree, bool sub=true);
-    inline void setParent(IPropertyTree *_parent) { parent = _parent; }
+    inline void setOwner(IPTArrayValue *_arrayOwner) { arrayOwner = _arrayOwner; }
     IPropertyTree *queryCreateBranch(IPropertyTree *branch, const char *prop, bool *existing=NULL);
     IPropertyTree *splitBranchProp(const char *xpath, const char *&_prop, bool error=false);
     IPTArrayValue *queryValue() { return value; }
+    CQualifierMap *queryMap() { return value ? value->queryMap() : nullptr; }
     IPTArrayValue *detachValue() { IPTArrayValue *v = value; value = NULL; return v; }
     void setValue(IPTArrayValue *_value, bool binary) { if (value) delete value; value = _value; if (binary) IptFlagSet(flags, ipt_binary); }
     bool checkPattern(const char *&xxpath) const;
     IPropertyTree *detach()
     {
         IPropertyTree *tree = create(queryName(), value, children, true);
-        PTree *_tree = QUERYINTERFACE(tree, PTree); assertex(_tree); _tree->setParent(this);
+        PTree *_tree = QUERYINTERFACE(tree, PTree); assertex(_tree); _tree->setOwner(nullptr);
 
         std::swap(numAttrs, _tree->numAttrs);
         std::swap(attrs, _tree->attrs);
@@ -626,6 +651,7 @@ public:
     virtual int getPropInt(const char *xpath, int dft=0) const override;
     virtual void setPropInt(const char *xpath, int val) override;
     virtual void addPropInt(const char *xpath, int val) override;
+    virtual double getPropReal(const char *xpath, double dft=0.0) const override;
     virtual bool getPropBin(const char * xpath, MemoryBuffer &ret) const override;
     virtual void setPropBin(const char * xpath, size32_t size, const void *data) override;
     virtual void appendPropBin(const char *xpath, size32_t size, const void *data) override;
@@ -650,6 +676,10 @@ public:
     virtual unsigned numChildren() override;
     virtual bool isCaseInsensitive() const override { return isnocase(); }
     virtual unsigned getCount(const char *xpath) override;
+    virtual IPropertyTree *addPropTreeArrayItem(const char *xpath, IPropertyTree *val) override;
+    virtual bool isArray(const char *xpath=NULL) const override;
+    virtual unsigned getAttributeCount() const override;
+
 // serializable impl.
     virtual void serialize(MemoryBuffer &tgt) override;
     virtual void deserialize(MemoryBuffer &src) override;
@@ -672,13 +702,14 @@ protected:
 
     AttrValue *findAttribute(const char *k) const;
     const char *getAttributeValue(const char *k) const;
-    unsigned getAttributeCount() const;
     AttrValue *getNextAttribute(AttrValue *cur) const;
 
 private:
     void addLocal(size32_t l, const void *data, bool binary=false, int pos=-1);
     void resolveParentChild(const char *xpath, IPropertyTree *&parent, IPropertyTree *&child, StringAttr &path, StringAttr &qualifier);
     void replaceSelf(IPropertyTree *val);
+    void addPTreeArrayItem(IPropertyTree *peer, const char *xpath, PTree *val, aindex_t pos = (aindex_t) -1);
+    IPropertyTree *addPropTree(const char *xpath, IPropertyTree *val, bool array);
 
 protected: // data
     /* NB: the order of the members here is important to reduce the size of the objects, because very large numbers of these are created.
@@ -688,7 +719,7 @@ protected: // data
 
     unsigned short numAttrs = 0;
     byte flags;           // set by constructor
-    IPropertyTree *parent = nullptr; // ! currently only used if tree embedded into array, used to locate position.
+    IPTArrayValue *arrayOwner = nullptr; // ! currently only used if tree embedded into array, used to locate position.
     ChildMap *children;   // set by constructor
     IPTArrayValue *value; // set by constructor
     AttrValue *attrs = nullptr;
@@ -931,7 +962,7 @@ public:
     }
 
 // IPTreeMaker
-    virtual void beginNode(const char *tag, offset_t startOffset) override
+    virtual void beginNode(const char *tag, bool arrayitem, offset_t startOffset) override
     {
         if (rootProvided)
         {
@@ -948,10 +979,15 @@ public:
             }
             else
                 currentNode = nodeCreator->create(NULL);
+            if (!parent && noRoot)
+                parent = root;
             if (parent)
-                parent->addPropTree(tag, currentNode);
-            else if (noRoot)
-                root->addPropTree(tag, currentNode);
+            {
+                if (arrayitem)
+                    parent->addPropTreeArrayItem(tag, currentNode);
+                else
+                    parent->addPropTree(tag, currentNode);
+            }
         }
         ptreeStack.append(*currentNode);
     }

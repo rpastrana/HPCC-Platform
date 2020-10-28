@@ -49,7 +49,6 @@ class MSortSlaveActivity : public CSlaveActivity
     Owned<IBarrier> barrier;
     SocketEndpoint server;
     CriticalSection statsCs;
-    CRuntimeStatisticCollection spillStats;
 
     bool isUnstable()
     {
@@ -57,7 +56,7 @@ class MSortSlaveActivity : public CSlaveActivity
     }
 
 public:
-    MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), spillStats(spillStatistics)
+    MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container, sortActivityStatistics)
     {
         portbase = 0;
         totalrows = RCUNSET;
@@ -66,14 +65,14 @@ public:
     ~MSortSlaveActivity()
     {
         if (portbase) 
-            freePort(portbase,NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase,NUMSLAVEPORTS);
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         mpTagRPC = container.queryJobChannel().deserializeMPTag(data);
         mptag_t barrierTag = container.queryJobChannel().deserializeMPTag(data);
         barrier.setown(container.queryJobChannel().createBarrier(barrierTag));
-        portbase = allocPort(NUMSLAVEPORTS);
+        portbase = queryJobChannel().allocPort(NUMSLAVEPORTS);
         ActPrintLog("MSortSlaveActivity::init portbase = %d, mpTagRPC = %d",portbase,(int)mpTagRPC);
         server.setLocalHost(portbase); 
         helper = (IHThorSortArg *)queryHelper();
@@ -82,7 +81,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         try
         {
             try
@@ -174,32 +173,29 @@ public:
     }
     virtual void kill() override
     {
-        ActPrintLog("MSortSlaveActivity::kill");
-
         {
             CriticalBlock block(statsCs);
-            mergeStats(spillStats, sorter);
+            mergeStats(stats, sorter, spillStatistics);
             sorter.clear();
         }
         if (portbase)
         {
-            freePort(portbase, NUMSLAVEPORTS);
+            queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
             portbase = 0;
         }
         PARENT::kill();
     }
     virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-
-        CriticalBlock block(statsCs);
-        CRuntimeStatisticCollection mergedStats(spillStats);
-        mergeStats(mergedStats, sorter);
-        mergedStats.serialize(mb);
+        {
+            CriticalBlock block(statsCs);
+            mergeStats(stats, sorter, spillStatistics);
+        }
+        PARENT::serializeStats(mb);    
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon) 
             return NULL;
         OwnedConstThorRow row = output->nextRow();
@@ -224,7 +220,6 @@ public:
 
 CActivityBase *createMSortSlave(CGraphElementBase *container)
 {
-    ActPrintLog(container, "MSortSlaveActivity::createMSortSlave");
     return new MSortSlaveActivity(container);
 }
 

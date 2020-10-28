@@ -51,7 +51,7 @@ static IKeyIndex *openKeyFile(IDistributedFilePart & keyFile)
             if (thissize != -1)
             {
                 StringBuffer remotePath;
-                rfn.getRemotePath(remotePath);
+                rfn.getPath(remotePath);
                 unsigned crc = 0;
                 keyFile.getCrc(crc);
                 return createKeyIndex(remotePath.str(), crc, false, false);
@@ -73,16 +73,6 @@ static IKeyIndex *openKeyFile(IDistributedFilePart & keyFile)
     RemoteFilename rfn;
     keyFile.getFilename(rfn).getRemotePath(url);
     throw MakeStringException(1001, "Could not open key file at %s%s", url.str(), (numCopies > 1) ? " or any alternate location." : ".");
-}
-
-void enterSingletonSuperfiles(Shared<IDistributedFile> & file)
-{
-    IDistributedSuperFile * super = file->querySuperFile();
-    while(super && (super->numSubFiles() == 1))
-    {
-        file.setown(super->getSubFile(0));
-        super = file->querySuperFile();
-    }
 }
 
 static void setProgress(IPropertyTree &node, const char *name, const char *value)
@@ -128,12 +118,37 @@ protected:
     IKeyManager * keyManager;
 };
 
+
+//-------------------------------------------------------------------------------------------------------------
+
+ILocalOrDistributedFile *resolveLFNIndex(IAgentContext &agent, const char *logicalName, const char *errorTxt, bool optional, bool noteRead, bool write, bool isPrivilegedUser)
+{
+    Owned<ILocalOrDistributedFile> ldFile = agent.resolveLFN(logicalName, errorTxt, optional, noteRead, write, nullptr, isPrivilegedUser);
+    if (!ldFile)
+        return nullptr;
+    IDistributedFile *dFile = ldFile->queryDistributedFile();
+    if (dFile && !isFileKey(dFile))
+        throw MakeStringException(0, "Attempting to read flat file as an index: %s", logicalName);
+    return ldFile.getClear();
+}
+
+
+void enterSingletonSuperfiles(Shared<IDistributedFile> & file)
+{
+    IDistributedSuperFile * super = file->querySuperFile();
+    while(super && (super->numSubFiles() == 1))
+    {
+        file.setown(super->getSubFile(0));
+        super = file->querySuperFile();
+    }
+}
+
 //-------------------------------------------------------------------------------------------------------------
 
 class CHThorNullAggregateActivity : public CHThorNullActivity
 {
 public:
-    CHThorNullAggregateActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorArg & _arg, IHThorCompoundAggregateExtra &_extra, ThorActivityKind _kind) : CHThorNullActivity(agent, _activityId, _subgraphId, _arg, _kind), helper(_extra) {}
+    CHThorNullAggregateActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorArg & _arg, IHThorCompoundAggregateExtra &_extra, ThorActivityKind _kind, EclGraph & _graph) : CHThorNullActivity(agent, _activityId, _subgraphId, _arg, _kind, _graph), helper(_extra) {}
 
     //interface IHThorInput
     virtual void ready();
@@ -175,8 +190,8 @@ const void *CHThorNullAggregateActivity::nextRow()
 class CHThorNullCountActivity : public CHThorNullActivity
 {
 public:
-    CHThorNullCountActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorArg & _arg, ThorActivityKind _kind)
-        : CHThorNullActivity(agent, _activityId, _subgraphId, _arg, _kind), finished(false) {}
+    CHThorNullCountActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorArg & _arg, ThorActivityKind _kind, EclGraph & _graph)
+        : CHThorNullActivity(agent, _activityId, _subgraphId, _arg, _kind, _graph), finished(false) {}
 
     //interface IHThorInput
     virtual void ready();
@@ -218,7 +233,7 @@ class CHThorIndexReadActivityBase : public CHThorActivityBase
 {
 
 public:
-    CHThorIndexReadActivityBase(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadBaseArg &_arg, ThorActivityKind _kind, IDistributedFile * df, IPropertyTree *_node);
+    CHThorIndexReadActivityBase(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadBaseArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node);
     ~CHThorIndexReadActivityBase();
 
     virtual void ready();
@@ -239,6 +254,7 @@ public:
         progress.addStatistic(StNumPostFiltered, queryPostFiltered());
         progress.addStatistic(StNumIndexSeeks, querySeeks());
         progress.addStatistic(StNumIndexScans, queryScans());
+        progress.addStatistic(StNumIndexWildSeeks, queryWildSeeks());
     }
 
     virtual unsigned querySeeks() const
@@ -248,6 +264,10 @@ public:
     virtual unsigned queryScans() const
     {
         return scans + (klManager ? klManager->queryScans() : 0);
+    }
+    virtual unsigned queryWildSeeks() const
+    {
+        return wildseeks + (klManager ? klManager->queryWildSeeks() : 0);
     }
     virtual unsigned queryPostFiltered() const
     {
@@ -271,11 +291,12 @@ protected:
     bool firstPart();
     virtual bool nextPart();
     virtual void initPart();
+    void resolveIndexFilename();
+    void killPart();
 
 private:
     bool firstMultiPart();
     bool nextMultiPart();
-    void killPart();
     bool setCurrentPart(unsigned whichPart);
     void clearTlk()                                         { tlk.clear(); tlManager.clear(); }
     void openTlk();
@@ -285,15 +306,13 @@ protected:
     IHThorIndexReadBaseArg &helper;
     IHThorSourceLimitTransformExtra * limitTransformExtra;
     CachedOutputMetaData eclKeySize;
-    size32_t keySize;
-    void * activityRecordMetaBuff;
-    size32_t activityRecordMetaSize;
+    size32_t keySize= 0;
 
 // current part
     Owned<IDistributedFilePart> curPart;
     Owned<IKeyManager> klManager;
     Owned<IKeyIndex> keyIndex;
-    unsigned nextPartNumber;
+    unsigned nextPartNumber = 0;
 
 //multi files
     Owned<IDistributedFile> df;
@@ -302,8 +321,8 @@ protected:
 
 //super files:
     Owned<IDistributedFileIterator> superIterator;
-    unsigned superIndex;
-    unsigned superCount;
+    unsigned superIndex = 0;
+    unsigned superCount = 1;
     StringBuffer superName;
 
     TransformCallback callback;
@@ -311,19 +330,20 @@ protected:
 //for preopening (when need counts for keyed skip limit):
     Owned<IKeyIndexSet> keyIndexCache;
     UnsignedArray superIndexCache;
-    unsigned keyIndexCacheIdx;
+    unsigned keyIndexCacheIdx = 0;
 
     unsigned seeks;
     unsigned scans;
     unsigned postFiltered;
-    bool singlePart;                // a single part index, not part of a super file - optimize so never reload the part.
-    bool localSortKey;
+    unsigned wildseeks;
+    bool singlePart = false;                // a single part index, not part of a super file - optimize so never reload the part.
+    bool localSortKey = false;
+    bool initializedFileInfo = false;
 
 //for layout translation
     Owned<const IDynamicTransform> layoutTrans;
     IConstPointerArrayOf<IDynamicTransform> layoutTransArray;
     IPointerArrayOf<IOutputMetaData> actualLayouts;
-    bool gotLayoutTrans;
     RecordTranslationMode recordTranslationModeHint = RecordTranslationMode::Unspecified;
 
     RecordTranslationMode getLayoutTranslationMode()
@@ -336,60 +356,82 @@ protected:
 
 };
 
-CHThorIndexReadActivityBase::CHThorIndexReadActivityBase(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadBaseArg &_arg, ThorActivityKind _kind, IDistributedFile * _df, IPropertyTree *_node)
-    : CHThorActivityBase(_agent, _activityId, _subgraphId, _arg, _kind), helper(_arg), df(LINK(_df)), activityRecordMetaBuff(NULL)
+CHThorIndexReadActivityBase::CHThorIndexReadActivityBase(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadBaseArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+    : CHThorActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph), helper(_arg)
 {
-    singlePart = false;
-    localSortKey = (df->queryAttributes().hasProp("@local"));
-    IDistributedSuperFile *super = df->querySuperFile();
-    superCount = 1;
-    superIndex = 0;
     nextPartNumber = 0;
-    if (super)
-    {
-        superIterator.setown(super->getSubFileIterator(true));
-        superCount = super->numSubFiles(true);
-        if (helper.getFlags() & TIRsorted)
-            throw MakeStringException(1000, "SORTED attribute is not supported when reading from superkey");
-        superName.append(df->queryLogicalName());
-        df.clear();
-    }
-    else if (df->numParts() == 1)
-    {
-        singlePart = true;
-    }
 
     eclKeySize.set(helper.queryDiskRecordSize());
 
     postFiltered = 0;
     seeks = 0;
     scans = 0;
+    wildseeks = 0;
     helper.setCallback(&callback);
     limitTransformExtra = nullptr;
-    gotLayoutTrans = false;
     if (_node)
     {
-        const char *recordTranslationModeHintText = _node->queryProp("hint[@name='layoutTranslation']/@value");
+        const char *recordTranslationModeHintText = _node->queryProp("hint[@name='layouttranslation']/@value");
         if (recordTranslationModeHintText)
-            recordTranslationModeHint = getTranslationMode(recordTranslationModeHintText);
+            recordTranslationModeHint = getTranslationMode(recordTranslationModeHintText, true);
     }
 }
 
 CHThorIndexReadActivityBase::~CHThorIndexReadActivityBase()
 {
 //  ReleaseRoxieRow(recBuffer);
-    rtlFree(activityRecordMetaBuff);
 }
 
 void CHThorIndexReadActivityBase::ready()
 {
     CHThorActivityBase::ready();
-    if(!gotLayoutTrans)
+    if(!initializedFileInfo || (helper.getFlags() & TIRvarfilename))
     {
+        resolveIndexFilename();
+        layoutTransArray.kill();
         getLayoutTranslators();
-        gotLayoutTrans = true;
+        initializedFileInfo = true;
     }
-    firstPart();
+}
+
+void CHThorIndexReadActivityBase::resolveIndexFilename()
+{
+    // A logical filename for the key should refer to a single physical file - either the TLK or a monolithic key
+    OwnedRoxieString lfn(helper.getFileName());
+    Owned<ILocalOrDistributedFile> ldFile = resolveLFNIndex(agent, lfn, "IndexRead", 0 != (helper.getFlags() & TIRoptional),true, false, defaultPrivilegedUser);
+    df.set(ldFile ? ldFile->queryDistributedFile() : NULL);
+    if (!df)
+    {
+        StringBuffer buff;
+        buff.append("Skipping OPT index read of nonexistent file ").append(lfn);
+        agent.addWuExceptionEx(buff.str(), WRN_SkipMissingOptIndex, SeverityInformation, MSGAUD_user, "hthor");
+    }
+    else
+    {
+        agent.logFileAccess(df, "HThor", "READ", graph);
+        enterSingletonSuperfiles(df);
+
+        singlePart = false;
+        localSortKey = (df->queryAttributes().hasProp("@local"));
+        IDistributedSuperFile *super = df->querySuperFile();
+        superCount = 1;
+        superIndex = 0;
+        nextPartNumber = 0;
+        if (super)
+        {
+            superIterator.setown(super->getSubFileIterator(true));
+            superCount = super->numSubFiles(true);
+            if (helper.getFlags() & TIRsorted)
+                throw MakeStringException(1000, "SORTED attribute is not supported when reading from superkey");
+            superName.append(df->queryLogicalName());
+            df.clear();
+        }
+        else if (df->numParts() == 1)
+        {
+            singlePart = true;
+        }
+    }
+    killPart();
 }
 
 void CHThorIndexReadActivityBase::stop()
@@ -400,6 +442,8 @@ void CHThorIndexReadActivityBase::stop()
 
 bool CHThorIndexReadActivityBase::doPreopenLimit(unsigned __int64 limit)
 {
+    keyIndexCache.clear();
+    superIndexCache.kill();
     if(!helper.canMatchAny())
         return false;
     keyIndexCache.setown(createKeyIndexSet());
@@ -505,7 +549,7 @@ const void * CHThorIndexReadActivityBase::createKeyedLimitOnFailRow()
 bool CHThorIndexReadActivityBase::firstPart()
 {
     killPart();
-    if (helper.canMatchAny())
+    if ((df || superIterator) && helper.canMatchAny())
     {
         if(keyIndexCache)
         {
@@ -594,6 +638,7 @@ void CHThorIndexReadActivityBase::killPart()
     {
         seeks += klManager->querySeeks();
         scans += klManager->queryScans();
+        wildseeks += klManager->queryWildSeeks();
         klManager.clear();
     }
 }
@@ -671,10 +716,12 @@ void CHThorIndexReadActivityBase::getLayoutTranslators()
             layoutTransArray.append(layoutTrans.getClear());
         } while(superIterator->next());
     }
-    else
+    else if (df)
     {
         layoutTrans.setown(getLayoutTranslator(df));
     }
+    else
+        layoutTrans.clear();
 }
 
 const IDynamicTransform * CHThorIndexReadActivityBase::getLayoutTranslator(IDistributedFile * f)
@@ -685,6 +732,7 @@ const IDynamicTransform * CHThorIndexReadActivityBase::getLayoutTranslator(IDist
     switch (getLayoutTranslationMode())
     {
     case RecordTranslationMode::AlwaysECL:
+        verifyFormatCrc(helper.getDiskFormatCrc(), f, (superIterator ? superName.str() : NULL) , true, false);
         break;
     case RecordTranslationMode::None:
         verifyFormatCrc(helper.getDiskFormatCrc(), f, (superIterator ? superName.str() : NULL) , true, true);
@@ -703,6 +751,8 @@ const IDynamicTransform * CHThorIndexReadActivityBase::getLayoutTranslator(IDist
             actualTranslator->describe();
             if (actualTranslator->keyedTranslated())
                 throw MakeStringException(0, "Untranslatable key layout mismatch reading index %s - keyed fields do not match", f->queryLogicalName());
+            VStringBuffer msg("Record layout translation required for %s", f->queryLogicalName());
+            agent.addWuExceptionEx(msg.str(), WRN_UseLayoutTranslation, SeverityInformation, MSGAUD_user, "hthor");
 
             actualLayouts.append(actualFormat.getLink());  // ensure adequate lifespan
         }
@@ -749,7 +799,7 @@ class CHThorIndexReadActivity : public CHThorIndexReadActivityBase
 {
 
 public:
-    CHThorIndexReadActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadArg &_arg, ThorActivityKind _kind, IDistributedFile * df, IPropertyTree *_node);
+    CHThorIndexReadActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node);
     ~CHThorIndexReadActivity();
 
     //interface IHThorInput
@@ -782,8 +832,8 @@ protected:
     bool keyedLimitRowCreated;
 };
 
-CHThorIndexReadActivity::CHThorIndexReadActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadArg &_arg, ThorActivityKind _kind, IDistributedFile * _df, IPropertyTree *_node)
-    : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _df, _node), helper(_arg)
+CHThorIndexReadActivity::CHThorIndexReadActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+    : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph, _node), helper(_arg)
 {
     limitTransformExtra = &helper;
     steppedExtra = helper.querySteppingExtra();
@@ -824,6 +874,7 @@ CHThorIndexReadActivity::~CHThorIndexReadActivity()
 
 void CHThorIndexReadActivity::ready()
 {
+    CHThorIndexReadActivityBase::ready();
     keyedLimitReached = false;
     keyedLimitRowCreated = false;
     keyedLimit = helper.getKeyedLimit();
@@ -832,16 +883,13 @@ void CHThorIndexReadActivity::ready()
         rowLimit = (unsigned __int64) -1;
     stopAfter = helper.getChooseNLimit();
     keyedProcessed = 0;
-    if(!gotLayoutTrans)
-    {
-        getLayoutTranslators();
-        gotLayoutTrans = true;
-    }
     if (seekGEOffset || localSortKey || ((keyedLimit != (unsigned __int64) -1) && ((helper.getFlags() & TIRcountkeyedlimit) != 0) && !singlePart))
         keyedLimitReached = doPreopenLimit(keyedLimit);
-    CHThorIndexReadActivityBase::ready();
     if (steppedExtra)
         steppingMeta.setExtra(steppedExtra);
+
+    firstPart();
+
     if(klManager && (keyedLimit != (unsigned __int64) -1) && ((helper.getFlags() & TIRcountkeyedlimit) != 0) && singlePart && !seekGEOffset)
     {
         unsigned __int64 result = klManager->checkCount(keyedLimit);
@@ -854,6 +902,7 @@ bool CHThorIndexReadActivity::nextPart()
 {
     if(keyIndexCache && (seekGEOffset || localSortKey))
     {
+        killPart();
         klManager.setown(createKeyMerger(eclKeySize.queryRecordAccessor(true), keyIndexCache, seekGEOffset, NULL, helper.hasNewSegmentMonitors(), false));
         keyIndexCache.clear();
         initManager(klManager, false);
@@ -1076,34 +1125,9 @@ IInputSteppingMeta * CHThorIndexReadActivity::querySteppingMeta()
 }
 
 
-ILocalOrDistributedFile *resolveLFNIndex(IAgentContext &agent, const char *logicalName, const char *errorTxt, bool optional, bool noteRead, bool write, bool isPrivilegedUser)
+extern HTHOR_API IHThorActivity *createIndexReadActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    Owned<ILocalOrDistributedFile> ldFile = agent.resolveLFN(logicalName, errorTxt, optional, noteRead, write, nullptr, isPrivilegedUser);
-    if (!ldFile)
-        return nullptr;
-    IDistributedFile *dFile = ldFile->queryDistributedFile();
-    if (dFile && !isFileKey(dFile))
-        throw MakeStringException(0, "Attempting to read flat file as an index: %s", logicalName);
-    return ldFile.getClear();
-}
-
-
-extern HTHOR_API IHThorActivity *createIndexReadActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexReadArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
-{
-    // A logical filename for the key should refer to a single physical file - either the TLK or a monolithic key
-    OwnedRoxieString lfn(arg.getFileName());
-    Owned<ILocalOrDistributedFile> ldFile = resolveLFNIndex(_agent, lfn, "IndexRead", 0 != (arg.getFlags() & TIRoptional),true, false, defaultPrivilegedUser);
-    Linked<IDistributedFile> dFile = ldFile ? ldFile->queryDistributedFile() : NULL;
-    if (!dFile)
-    {
-        StringBuffer buff;
-        buff.append("Skipping OPT index read of nonexistent file ").append(lfn);
-        _agent.addWuExceptionEx(buff.str(), WRN_SkipMissingOptIndex, SeverityInformation, MSGAUD_user, "hthor");
-        return new CHThorNullActivity(_agent, _activityId, _subgraphId, arg, _kind);
-    }
-    _agent.logFileAccess(dFile, "HThor", "READ");
-    enterSingletonSuperfiles(dFile);
-    return new CHThorIndexReadActivity(_agent, _activityId, _subgraphId, arg, _kind, dFile, _node);
+    return new CHThorIndexReadActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //-------------------------------------------------------------------------------------------------------------
@@ -1113,7 +1137,7 @@ class CHThorIndexNormalizeActivity : public CHThorIndexReadActivityBase
 {
 
 public:
-    CHThorIndexNormalizeActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexNormalizeArg &_arg, ThorActivityKind _kind, IDistributedFile * df, IPropertyTree *_node);
+    CHThorIndexNormalizeActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexNormalizeArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node);
     ~CHThorIndexNormalizeActivity();
 
     virtual void ready();
@@ -1136,7 +1160,7 @@ protected:
 };
 
 
-CHThorIndexNormalizeActivity::CHThorIndexNormalizeActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexNormalizeArg &_arg, ThorActivityKind _kind, IDistributedFile * _df, IPropertyTree *_node) : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _df, _node), helper(_arg), outBuilder(NULL)
+CHThorIndexNormalizeActivity::CHThorIndexNormalizeActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexNormalizeArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node) : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph, _node), helper(_arg), outBuilder(NULL)
 {
     limitTransformExtra = &helper;
     keyedLimit = (unsigned __int64)-1;
@@ -1153,6 +1177,7 @@ CHThorIndexNormalizeActivity::~CHThorIndexNormalizeActivity()
 
 void CHThorIndexNormalizeActivity::ready()
 {
+    CHThorIndexReadActivityBase::ready();
     keyedLimit = helper.getKeyedLimit();
     skipLimitReached = false;
     keyedProcessed = 0;
@@ -1161,8 +1186,9 @@ void CHThorIndexNormalizeActivity::ready()
         rowLimit = (unsigned __int64) -1;
     stopAfter = helper.getChooseNLimit();
     expanding = false;
-    CHThorIndexReadActivityBase::ready();
     outBuilder.setAllocator(rowAllocator);
+
+    firstPart();
 }
 
 void CHThorIndexNormalizeActivity::stop()
@@ -1273,22 +1299,9 @@ const void * CHThorIndexNormalizeActivity::createNextRow()
 
 }
 
-extern HTHOR_API IHThorActivity *createIndexNormalizeActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexNormalizeArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createIndexNormalizeActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexNormalizeArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    // A logical filename for the key should refer to a single physical file - either the TLK or a monolithic key
-    OwnedRoxieString lfn(arg.getFileName());
-    Owned<ILocalOrDistributedFile> ldFile = resolveLFNIndex(_agent, lfn, "IndexNormalize", 0 != (arg.getFlags() & TIRoptional),true,true,defaultPrivilegedUser);
-    Linked<IDistributedFile> dFile = ldFile ? ldFile->queryDistributedFile() : NULL;
-    if (!dFile)
-    {
-        StringBuffer buff;
-        buff.append("Skipping OPT index normalize of nonexistent file ").append(lfn);
-        _agent.addWuExceptionEx(buff.str(), WRN_SkipMissingOptIndex, SeverityInformation, MSGAUD_user, "hthor");
-        return new CHThorNullActivity(_agent, _activityId, _subgraphId, arg, _kind);
-    }
-    _agent.logFileAccess(dFile, "HThor", "READ");
-    enterSingletonSuperfiles(dFile);
-    return new CHThorIndexNormalizeActivity(_agent, _activityId, _subgraphId, arg, _kind, dFile, _node);
+    return new CHThorIndexNormalizeActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //-------------------------------------------------------------------------------------------------------------
@@ -1298,7 +1311,7 @@ class CHThorIndexAggregateActivity : public CHThorIndexReadActivityBase
 {
 
 public:
-    CHThorIndexAggregateActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexAggregateArg &_arg, ThorActivityKind _kind, IDistributedFile * df, IPropertyTree *_node);
+    CHThorIndexAggregateActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexAggregateArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node);
     ~CHThorIndexAggregateActivity();
 
     //interface IHThorInput
@@ -1318,8 +1331,8 @@ protected:
 };
 
 
-CHThorIndexAggregateActivity::CHThorIndexAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexAggregateArg &_arg, ThorActivityKind _kind, IDistributedFile * _df, IPropertyTree *_node)
-    : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _df, _node), helper(_arg), outBuilder(NULL)
+CHThorIndexAggregateActivity::CHThorIndexAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexAggregateArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+    : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph, _node), helper(_arg), outBuilder(NULL)
 {
 }
 
@@ -1332,6 +1345,8 @@ void CHThorIndexAggregateActivity::ready()
     CHThorIndexReadActivityBase::ready();
     outBuilder.setAllocator(rowAllocator);
     finished = false;
+
+    firstPart();
 }
 
 void CHThorIndexAggregateActivity::stop()
@@ -1390,22 +1405,9 @@ const void *CHThorIndexAggregateActivity::nextRow()
 }
 
 
-extern HTHOR_API IHThorActivity *createIndexAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexAggregateArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createIndexAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexAggregateArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    // A logical filename for the key should refer to a single physical file - either the TLK or a monolithic key
-    OwnedRoxieString lfn(arg.getFileName());
-    Owned<ILocalOrDistributedFile> ldFile = resolveLFNIndex(_agent, lfn, "IndexAggregate", 0 != (arg.getFlags() & TIRoptional), true, false, defaultPrivilegedUser);
-    Linked<IDistributedFile> dFile = ldFile ? ldFile->queryDistributedFile() : NULL;
-    if (!dFile)
-    {
-        StringBuffer buff;
-        buff.append("Skipping OPT index aggregate of nonexistent file ").append(lfn);
-        _agent.addWuExceptionEx(buff.str(), WRN_SkipMissingOptIndex, SeverityInformation, MSGAUD_user, "hthor");
-        return new CHThorNullAggregateActivity(_agent, _activityId, _subgraphId, arg, arg, _kind);
-    }
-    _agent.logFileAccess(dFile, "HThor", "READ");
-    enterSingletonSuperfiles(dFile);
-    return new CHThorIndexAggregateActivity(_agent, _activityId, _subgraphId, arg, _kind, dFile, _node);
+    return new CHThorIndexAggregateActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //-------------------------------------------------------------------------------------------------------------
@@ -1418,7 +1420,7 @@ class CHThorIndexCountActivity : public CHThorIndexReadActivityBase
     unsigned __int64 rowLimit = (unsigned __int64)-1;
 
 public:
-    CHThorIndexCountActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexCountArg &_arg, ThorActivityKind _kind, IDistributedFile * df, IPropertyTree *_node);
+    CHThorIndexCountActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexCountArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node);
 
     //interface IHThorInput
     virtual void ready();
@@ -1434,8 +1436,8 @@ protected:
 };
 
 
-CHThorIndexCountActivity::CHThorIndexCountActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexCountArg &_arg, ThorActivityKind _kind, IDistributedFile * _df, IPropertyTree *_node)
-    : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _df, _node), helper(_arg)
+CHThorIndexCountActivity::CHThorIndexCountActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexCountArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+    : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph, _node), helper(_arg)
 {
     choosenLimit = (unsigned __int64)-1;
     finished = false;
@@ -1453,11 +1455,13 @@ void CHThorIndexCountActivity::ready()
     finished = false;
     choosenLimit = helper.getChooseNLimit();
 
+    firstPart();
+
     if ((keyedLimit != (unsigned __int64) -1) && ((helper.getFlags() & TIRcountkeyedlimit) != 0))
     {
         if (singlePart)
         {
-            if (klManager) // NB: opened by base::ready()
+            if (klManager) // NB: opened by firstPart()
             {
                 unsigned __int64 result = klManager->checkCount(keyedLimit);
                 keyedLimitReached = (result > keyedLimit);
@@ -1546,22 +1550,9 @@ const void *CHThorIndexCountActivity::nextRow()
 }
 
 
-extern HTHOR_API IHThorActivity *createIndexCountActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexCountArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createIndexCountActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexCountArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    // A logical filename for the key should refer to a single physical file - either the TLK or a monolithic key
-    OwnedRoxieString lfn(arg.getFileName());
-    Owned<ILocalOrDistributedFile> ldFile = resolveLFNIndex(_agent, lfn, "IndexCount", 0 != (arg.getFlags() & TIRoptional), true, false, defaultPrivilegedUser);
-    Linked<IDistributedFile> dFile = ldFile ? ldFile->queryDistributedFile() : NULL;
-    if (!dFile)
-    {
-        StringBuffer buff;
-        buff.append("Skipping OPT index count of nonexistent file ").append(lfn);
-        _agent.addWuExceptionEx(buff.str(), WRN_SkipMissingOptIndex, SeverityInformation, MSGAUD_user, "hthor");
-        return new CHThorNullCountActivity(_agent, _activityId, _subgraphId, arg, _kind);
-    }
-    _agent.logFileAccess(dFile, "HThor", "READ");
-    enterSingletonSuperfiles(dFile);
-    return new CHThorIndexCountActivity(_agent, _activityId, _subgraphId, arg, _kind, dFile, _node);
+    return new CHThorIndexCountActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //-------------------------------------------------------------------------------------------------------------
@@ -1570,7 +1561,7 @@ class CHThorIndexGroupAggregateActivity : public CHThorIndexReadActivityBase, im
 {
 
 public:
-    CHThorIndexGroupAggregateActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexGroupAggregateArg &_arg, ThorActivityKind _kind, IDistributedFile * df, IPropertyTree *_node);
+    CHThorIndexGroupAggregateActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexGroupAggregateArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node);
     IMPLEMENT_IINTERFACE
 
     //interface IHThorInput
@@ -1591,7 +1582,7 @@ protected:
 };
 
 
-CHThorIndexGroupAggregateActivity::CHThorIndexGroupAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexGroupAggregateArg &_arg, ThorActivityKind _kind, IDistributedFile * _df, IPropertyTree *_node) : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _df, _node), helper(_arg), aggregated(_arg, _arg)
+CHThorIndexGroupAggregateActivity::CHThorIndexGroupAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexGroupAggregateArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node) : CHThorIndexReadActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph, _node), helper(_arg), aggregated(_arg, _arg)
 {
     eof = false;
     gathered = false;
@@ -1604,6 +1595,8 @@ void CHThorIndexGroupAggregateActivity::ready()
     gathered = false;
     aggregated.reset();
     aggregated.start(rowAllocator, agent.queryCodeContext(), activityId);
+
+    firstPart();
 }
 
 void CHThorIndexGroupAggregateActivity::processRow(const void * next)
@@ -1657,22 +1650,9 @@ const void *CHThorIndexGroupAggregateActivity::nextRow()
 }
 
 
-extern HTHOR_API IHThorActivity *createIndexGroupAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexGroupAggregateArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createIndexGroupAggregateActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorIndexGroupAggregateArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    // A logical filename for the key should refer to a single physical file - either the TLK or a monolithic key
-    OwnedRoxieString lfn(arg.getFileName());
-    Owned<ILocalOrDistributedFile> ldFile = resolveLFNIndex(_agent, lfn, "IndexGroupAggregate", 0 != (arg.getFlags() & TIRoptional), true, false, defaultPrivilegedUser);
-    Linked<IDistributedFile> dFile = ldFile ? ldFile->queryDistributedFile() : NULL;
-    if (!dFile)
-    {
-        StringBuffer buff;
-        buff.append("Skipping OPT index group aggregate of nonexistent file ").append(lfn);
-        _agent.addWuExceptionEx(buff.str(), WRN_SkipMissingOptIndex, SeverityInformation, MSGAUD_user, "hthor");
-        return new CHThorNullActivity(_agent, _activityId, _subgraphId, arg, _kind);
-    }
-    _agent.logFileAccess(dFile, "HThor", "READ");
-    enterSingletonSuperfiles(dFile);
-    return new CHThorIndexGroupAggregateActivity(_agent, _activityId, _subgraphId, arg, _kind, dFile, _node);
+    return new CHThorIndexGroupAggregateActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //-------------------------------------------------------------------------------------------------------------
@@ -2142,8 +2122,8 @@ class CHThorThreadedActivityBase : public CHThorActivityBase, implements IThread
     };
 
 public:
-    CHThorThreadedActivityBase (IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorArg &_arg, IHThorFetchContext &_fetch, ThorActivityKind _kind, IRecordSize *diskSize, IPropertyTree *_node)
-        : CHThorActivityBase(_agent, _activityId, _subgraphId, _arg, _kind), fetch(_fetch)
+    CHThorThreadedActivityBase (IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorArg &_arg, IHThorFetchContext &_fetch, ThorActivityKind _kind, EclGraph & _graph, IRecordSize *diskSize, IPropertyTree *_node)
+        : CHThorActivityBase(_agent, _activityId, _subgraphId, _arg, _kind, _graph), fetch(_fetch)
     {
         exception = NULL;
         rowLimit = 0;
@@ -2281,7 +2261,7 @@ public:
             if(dFile)
             {
                 verifyFetchFormatCrc(dFile);
-                agent.logFileAccess(dFile, "HThor", "READ");
+                agent.logFileAccess(dFile, "HThor", "READ", graph);
                 initParts(dFile);
             }
             else
@@ -2302,17 +2282,17 @@ protected:
 class CHThorFetchActivityBase : public CHThorThreadedActivityBase, public IFetchHandlerFactory<SimpleFetchPartHandlerBase>
 {
 public:
-    CHThorFetchActivityBase(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorArg &_arg, IHThorFetchContext &_fetch, ThorActivityKind _kind, IRecordSize *diskSize, IPropertyTree *_node)
-      : CHThorThreadedActivityBase (_agent, _activityId, _subgraphId, _arg, _fetch, _kind, diskSize, _node)
+    CHThorFetchActivityBase(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorArg &_arg, IHThorFetchContext &_fetch, ThorActivityKind _kind, EclGraph & _graph, IRecordSize *diskSize, IPropertyTree *_node)
+      : CHThorThreadedActivityBase (_agent, _activityId, _subgraphId, _arg, _fetch, _kind, _graph, diskSize, _node)
     {
         pendingSeq = 0;
         signalSeq = 0;
         dequeuedSeq = 0;
         if (_node)
         {
-            const char *recordTranslationModeHintText = _node->queryProp("hint[@name='layoutTranslation']/@value");
+            const char *recordTranslationModeHintText = _node->queryProp("hint[@name='layouttranslation']/@value");
             if (recordTranslationModeHintText)
-                recordTranslationModeHint = getTranslationMode(recordTranslationModeHintText);
+                recordTranslationModeHint = getTranslationMode(recordTranslationModeHintText, true);
         }
     }
 
@@ -2455,8 +2435,8 @@ protected:
 class CHThorFlatFetchActivity : public CHThorFetchActivityBase, public IFlatFetchHandlerCallback
 {
 public:
-    CHThorFlatFetchActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorFetchArg &_arg, IHThorFetchContext &_fetch, ThorActivityKind _kind, IRecordSize *diskSize, IPropertyTree *_node, MemoryAttr &encryptionkey)
-        : CHThorFetchActivityBase (_agent, _activityId, _subgraphId, _arg, _fetch, _kind, diskSize, _node), helper(_arg)
+    CHThorFlatFetchActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorFetchArg &_arg, IHThorFetchContext &_fetch, ThorActivityKind _kind, EclGraph & _graph, IRecordSize *diskSize, IPropertyTree *_node, MemoryAttr &encryptionkey)
+        : CHThorFetchActivityBase (_agent, _activityId, _subgraphId, _arg, _fetch, _kind, _graph, diskSize, _node), helper(_arg)
     {}
 
     ~CHThorFlatFetchActivity()
@@ -2492,7 +2472,7 @@ public:
             MemoryBufferBuilder aBuilder(buf, 0);
             FetchVirtualFieldCallback fieldCallback(fetch->pos);
             translator->translate(aBuilder, fieldCallback, rawBuffer);
-            rawBuffer = reinterpret_cast<const byte *>(buf.toByteArray());
+            rawBuffer = aBuilder.getSelf();
         }
 
         CriticalBlock procedure(transformCrit);
@@ -2551,9 +2531,8 @@ protected:
                     {
                         if (getLayoutTranslationMode()==RecordTranslationMode::None)
                             throw MakeStringException(0, "Translatable file layout mismatch reading file %s but translation disabled", f->queryLogicalName());
-#ifdef _DEBUG
-                        translator->describe();
-#endif
+                        VStringBuffer msg("Record layout translation required for %s", f->queryLogicalName());
+                        agent.addWuExceptionEx(msg.str(), WRN_UseLayoutTranslation, SeverityInformation, MSGAUD_user, "hthor");
                     }
                     else
                         throw MakeStringException(0, "Untranslatable file layout mismatch reading file %s", f->queryLogicalName());
@@ -2569,14 +2548,14 @@ protected:
     IHThorFetchArg & helper;
 };
 
-extern HTHOR_API IHThorActivity *createFetchActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorFetchArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createFetchActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorFetchArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
     size32_t kl;
     void *k;
     arg.getFileEncryptKey(kl,k);
     MemoryAttr encryptionkey;
     encryptionkey.setOwn(kl,k);
-    return new CHThorFlatFetchActivity(_agent, _activityId, _subgraphId, arg, arg, _kind, arg.queryDiskRecordSize(), _node, encryptionkey);
+    return new CHThorFlatFetchActivity(_agent, _activityId, _subgraphId, arg, arg, _kind, _graph, arg.queryDiskRecordSize(), _node, encryptionkey);
 }
 
 //------------------------------------------------------------------------------------------
@@ -2584,8 +2563,8 @@ extern HTHOR_API IHThorActivity *createFetchActivity(IAgentContext &_agent, unsi
 class CHThorCsvFetchActivity : public CHThorFetchActivityBase, public IFlatFetchHandlerCallback
 {
 public:
-    CHThorCsvFetchActivity (IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorCsvFetchArg &_arg, ThorActivityKind _kind, IPropertyTree *_node)
-        : CHThorFetchActivityBase(_agent, _activityId, _subgraphId, _arg, _arg, _kind, NULL, _node), helper(_arg)
+    CHThorCsvFetchActivity (IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorCsvFetchArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+        : CHThorFetchActivityBase(_agent, _activityId, _subgraphId, _arg, _arg, _kind, _graph, NULL, _node), helper(_arg)
     {
         //MORE: I have no idea what should be passed for recordSize in the line above, either something that reads a fixed size, or
         //reads a record based on the csv information
@@ -2605,7 +2584,7 @@ public:
             separators = options.queryProp("@csvSeparate");
             terminators = options.queryProp("@csvTerminate");
             escapes = options.queryProp("@csvEscape");
-            agent.logFileAccess(dFile, "HThor", "READ");
+            agent.logFileAccess(dFile, "HThor", "READ", graph);
         }
         else
         {
@@ -2673,9 +2652,9 @@ protected:
     IHThorCsvFetchArg & helper;
 };
 
-extern HTHOR_API IHThorActivity *createCsvFetchActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorCsvFetchArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createCsvFetchActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorCsvFetchArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    return new CHThorCsvFetchActivity(_agent, _activityId, _subgraphId, arg, _kind, _node);
+    return new CHThorCsvFetchActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //------------------------------------------------------------------------------------------
@@ -2752,8 +2731,8 @@ protected:
 class CHThorXmlFetchActivity : public CHThorFetchActivityBase, public IXmlFetchHandlerCallback
 {
 public:
-    CHThorXmlFetchActivity(IAgentContext & _agent, unsigned _activityId, unsigned _subgraphId, IHThorXmlFetchArg & _arg, ThorActivityKind _kind, IPropertyTree *_node)
-        : CHThorFetchActivityBase(_agent, _activityId, _subgraphId, _arg, _arg, _kind, NULL, _node), helper(_arg)
+    CHThorXmlFetchActivity(IAgentContext & _agent, unsigned _activityId, unsigned _subgraphId, IHThorXmlFetchArg & _arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+        : CHThorFetchActivityBase(_agent, _activityId, _subgraphId, _arg, _arg, _kind, _graph, NULL, _node), helper(_arg)
     {
     }
 
@@ -2812,9 +2791,9 @@ protected:
     IHThorXmlFetchArg & helper;
 };
 
-extern HTHOR_API IHThorActivity *createXmlFetchActivity(IAgentContext & _agent, unsigned _activityId, unsigned _subgraphId, IHThorXmlFetchArg & arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createXmlFetchActivity(IAgentContext & _agent, unsigned _activityId, unsigned _subgraphId, IHThorXmlFetchArg & arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    return new CHThorXmlFetchActivity(_agent, _activityId, _subgraphId, arg, _kind, _node);
+    return new CHThorXmlFetchActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }
 
 //------------------------------------------------------------------------------------------
@@ -3480,6 +3459,7 @@ class CHThorKeyedJoinActivity  : public CHThorThreadedActivityBase, implements I
     atomic_t skips;
     unsigned seeks;
     unsigned scans;
+    unsigned wildseeks;
     OwnedRowArray extractedRows;
     Owned <ILocalOrDistributedFile> ldFile;
     IDistributedFile * dFile;
@@ -3492,8 +3472,8 @@ class CHThorKeyedJoinActivity  : public CHThorThreadedActivityBase, implements I
     RecordTranslationMode recordTranslationModeHint = RecordTranslationMode::Unspecified;
     bool isCodeSigned = false;
 public:
-    CHThorKeyedJoinActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorKeyedJoinArg &_arg, ThorActivityKind _kind, IPropertyTree *_node)
-        : CHThorThreadedActivityBase(_agent, _activityId, _subgraphId, _arg, _arg, _kind, _arg.queryDiskRecordSize(), _node), helper(_arg)
+    CHThorKeyedJoinActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorKeyedJoinArg &_arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
+        : CHThorThreadedActivityBase(_agent, _activityId, _subgraphId, _arg, _arg, _kind, _graph, _arg.queryDiskRecordSize(), _node), helper(_arg)
     {
         atomic_set(&prefiltered, 0);
         atomic_set(&postfiltered, 0);
@@ -3503,9 +3483,9 @@ public:
         eclKeySize.set(helper.queryIndexRecordSize());
         if (_node)
         {
-            const char *recordTranslationModeHintText = _node->queryProp("hint[@name='layoutTranslation']/@value");
+            const char *recordTranslationModeHintText = _node->queryProp("hint[@name='layouttranslation']/@value");
             if (recordTranslationModeHintText)
-                recordTranslationModeHint = getTranslationMode(recordTranslationModeHintText);
+                recordTranslationModeHint = getTranslationMode(recordTranslationModeHintText, true);
             isCodeSigned = isActivityCodeSigned(*_node);
         }
     }
@@ -3685,7 +3665,7 @@ public:
             MemoryBufferBuilder aBuilder(buf, 0);
             FetchVirtualFieldCallback fieldCallback(pos);
             translator->translate(aBuilder, fieldCallback, row);
-            row = reinterpret_cast<const byte *>(buf.toByteArray());
+            row = aBuilder.getSelf();
         }
         if(match(fetch->ms, row))
         {
@@ -4058,7 +4038,7 @@ public:
                 lookup.setown(new MonolithicKeyLookupHandler(dFile, *this, agent));
             else
                 lookup.setown(new DistributedKeyLookupHandler(dFile, *this, agent));
-            agent.logFileAccess(dFile, "HThor", "READ");
+            agent.logFileAccess(dFile, "HThor", "READ", graph);
         }
         else
         {
@@ -4083,6 +4063,7 @@ public:
         CriticalBlock b(statsCrit);
         seeks += manager->querySeeks();
         scans += manager->queryScans();
+        wildseeks += manager->queryWildSeeks();
     }
 
     virtual bool addMatch(MatchSet * ms, IKeyManager * manager)
@@ -4154,6 +4135,7 @@ public:
         progress.addStatistic(StNumIndexSkips, atomic_read(&skips));
         progress.addStatistic(StNumIndexSeeks, seeks);
         progress.addStatistic(StNumIndexScans, scans);
+        progress.addStatistic(StNumIndexWildSeeks, wildseeks);
     }
 
 protected:
@@ -4168,6 +4150,7 @@ protected:
     {
         if(getLayoutTranslationMode() == RecordTranslationMode::AlwaysECL)
         {
+            verifyFormatCrc(helper.getIndexFormatCrc(), f, super ? super->queryLogicalName() : NULL, true, false);  // Traces if mismatch
             return NULL;
         }
 
@@ -4187,11 +4170,17 @@ protected:
         if (actualFormat)
         {
             actualLayouts.append(actualFormat.getLink());  // ensure adequate lifespan
-            Owned<const IDynamicTransform> payloadTranslator =  createRecordTranslator(helper.queryProjectedIndexRecordSize()->queryRecordAccessor(true), actualFormat->queryRecordAccessor(true));
+            Owned<const IDynamicTransform> payloadTranslator = createRecordTranslator(helper.queryProjectedIndexRecordSize()->queryRecordAccessor(true), actualFormat->queryRecordAccessor(true));
+            DBGLOG("Record layout translator created for %s", f->queryLogicalName());
+            payloadTranslator->describe();
             if (!payloadTranslator->canTranslate())
                 throw MakeStringException(0, "Untranslatable key layout mismatch reading index %s", f->queryLogicalName());
             if (payloadTranslator->keyedTranslated())
                 throw MakeStringException(0, "Untranslatable key layout mismatch reading index %s - keyed fields do not match", f->queryLogicalName());
+            if (getLayoutTranslationMode()==RecordTranslationMode::None)
+                throw MakeStringException(0, "Translatable file layout mismatch reading file %s but translation disabled", f->queryLogicalName());
+            VStringBuffer msg("Record layout translation required for %s", f->queryLogicalName());
+            agent.addWuExceptionEx(msg.str(), WRN_UseLayoutTranslation, SeverityInformation, MSGAUD_user, "hthor");
             return payloadTranslator.getClear();
         }
         throw MakeStringException(0, "Untranslatable key layout mismatch reading index %s - key layout information not found", f->queryLogicalName());
@@ -4237,6 +4226,8 @@ protected:
                     {
                         if (getLayoutTranslationMode()==RecordTranslationMode::None)
                             throw MakeStringException(0, "Translatable file layout mismatch reading file %s but translation disabled", f->queryLogicalName());
+                        VStringBuffer msg("Record layout translation required for %s", f->queryLogicalName());
+                        agent.addWuExceptionEx(msg.str(), WRN_UseLayoutTranslation, SeverityInformation, MSGAUD_user, "hthor");
                     }
                     else
                         throw MakeStringException(0, "Untranslatable file layout mismatch reading file %s", f->queryLogicalName());
@@ -4258,7 +4249,7 @@ protected:
     }
 };
 
-extern HTHOR_API IHThorActivity *createKeyedJoinActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorKeyedJoinArg &arg, ThorActivityKind _kind, IPropertyTree *_node)
+extern HTHOR_API IHThorActivity *createKeyedJoinActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorKeyedJoinArg &arg, ThorActivityKind _kind, EclGraph & _graph, IPropertyTree *_node)
 {
-    return new CHThorKeyedJoinActivity(_agent, _activityId, _subgraphId, arg, _kind, _node);
+    return new CHThorKeyedJoinActivity(_agent, _activityId, _subgraphId, arg, _kind, _graph, _node);
 }

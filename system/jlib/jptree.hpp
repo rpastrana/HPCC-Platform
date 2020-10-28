@@ -24,6 +24,8 @@
 #include "jiter.hpp"
 #include "jprop.hpp"
 
+#include <initializer_list>
+
 enum TextMarkupFormat
 {
     MarkupFmt_Unknown=0,
@@ -92,6 +94,8 @@ interface jlib_decl IPropertyTree : extends serializable
     virtual void setPropInt64(const char *xpath, __int64 val) = 0;
     virtual void addPropInt64(const char *xpath, __int64 val) = 0;
 
+    virtual double getPropReal(const char *xpath, double dft=0.0) const = 0;
+
     virtual bool getPropBin(const char *xpath, MemoryBuffer &ret) const = 0;
     virtual void setPropBin(const char *xpath, size32_t size, const void *data) = 0;
     virtual void addPropBin(const char *xpath, size32_t size, const void *data) = 0;
@@ -124,7 +128,10 @@ interface jlib_decl IPropertyTree : extends serializable
     virtual bool IsShared() const = 0;
     virtual void localizeElements(const char *xpath, bool allTail=false) = 0;
     virtual unsigned getCount(const char *xpath) = 0;
-    
+    virtual IPropertyTree *addPropTreeArrayItem(const char *xpath, IPropertyTree *val) = 0;
+    virtual bool isArray(const char *xpath=NULL) const = 0;
+    virtual unsigned getAttributeCount() const = 0;
+
 private:
     void setProp(const char *, int); // dummy to catch accidental use of setProp when setPropInt() intended
     void addProp(const char *, int); // likewise
@@ -134,7 +141,7 @@ jlib_decl bool validateXMLTag(const char *name);
 
 interface IPTreeNotifyEvent : extends IInterface
 {
-    virtual void beginNode(const char *tag, offset_t startOffset) = 0;
+    virtual void beginNode(const char *tag, bool sequence, offset_t startOffset) = 0;
     virtual void newAttribute(const char *name, const char *value) = 0;
     virtual void beginNodeContent(const char *tag) = 0; // attributes parsed
     virtual void endNode(const char *tag, unsigned length, const void *value, bool binary, offset_t endOffset) = 0;
@@ -254,13 +261,16 @@ jlib_decl void saveXML(IIOStream &stream, const IPropertyTree *tree, unsigned in
 jlib_decl void printXML(const IPropertyTree *tree, unsigned indent = 0, unsigned flags=XML_Format);
 jlib_decl void dbglogXML(const IPropertyTree *tree, unsigned indent = 0, unsigned flags=XML_Format);
 
-#define JSON_SortTags 0x01
+#define JSON_SortTags XML_SortTags
 #define JSON_Format   0x02
-#define JSON_Sanitize 0x08
-#define JSON_SanitizeAttributeValues 0x10
+#define JSON_HideRootArrayObject 0x04
+#define JSON_Sanitize XML_Sanitize
+#define JSON_SanitizeAttributeValues XML_SanitizeAttributeValues
 
-jlib_decl StringBuffer &toJSON(const IPropertyTree *tree, StringBuffer &ret, unsigned indent = 0, byte flags=JSON_Format);
-jlib_decl void toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent = 0, byte flags=JSON_Format);
+jlib_decl StringBuffer &toJSON(const IPropertyTree *tree, StringBuffer &ret, unsigned indent = 0, byte flags=JSON_Format|JSON_HideRootArrayObject);
+jlib_decl void toJSON(const IPropertyTree *tree, IIOStream &out, unsigned indent = 0, byte flags=JSON_Format|JSON_HideRootArrayObject);
+jlib_decl void printJSON(const IPropertyTree *tree, unsigned indent = 0, byte flags=JSON_Format|JSON_HideRootArrayObject);
+jlib_decl void dbglogJSON(const IPropertyTree *tree, unsigned indent = 0, byte flags=JSON_Format|JSON_HideRootArrayObject);
 
 jlib_decl const char *splitXPath(const char *xpath, StringBuffer &head); // returns tail, fills 'head' with leading xpath
 jlib_decl bool validateXPathSyntax(const char *xpath, StringBuffer *error=NULL);
@@ -287,5 +297,68 @@ inline static bool isValidXPathChr(char c)
 {
     return ('\0' != c && (isalnum(c) || strchr(validChrs, c)));
 }
+
+//export for unit test
+jlib_decl void mergeConfiguration(IPropertyTree & target, IPropertyTree & source, const char *altNameAttribute=nullptr);
+
+jlib_decl IPropertyTree * loadArgsIntoConfiguration(IPropertyTree *config, const char * * argv, std::initializer_list<const char *> ignoreOptions = {});
+jlib_decl IPropertyTree * loadConfiguration(IPropertyTree * defaultConfig, const char * * argv, const char * componentTag, const char * envPrefix, const char * legacyFilename, IPropertyTree * (mapper)(IPropertyTree *), const char *altNameAttribute=nullptr);
+jlib_decl IPropertyTree * loadConfiguration(const char * defaultYaml, const char * * argv, const char * componentTag, const char * envPrefix, const char * legacyFilename, IPropertyTree * (mapper)(IPropertyTree *), const char *altNameAttribute=nullptr);
+jlib_decl IPropertyTree * queryCostsConfiguration();
+
+//The following can only be called after loadConfiguration has been called.  All components must call loadConfiguration().
+jlib_decl IPropertyTree & queryGlobalConfig();
+jlib_decl IPropertyTree & queryComponentConfig();
+
+/*
+ YAML to PTree support
+   By default YAML scalars become PTree attributes unless the YAML has an !element or !el YAML tag specifying that the scalar
+   should be treated as an element.  Mixed content can be represented in YAML using a scalar named "^" also using the !el YAML tag
+
+ Person:
+   name: Adam Smith
+   note: Father of Economics
+
+ Becomes:
+  <Person name="Adam Smith" note="Father of Economics"/>
+
+ Person:
+   name: Adam Smith
+   note: !el Father of Economics
+
+ Becomes:
+  <Person name="Adam Smith">
+   <note>Father of Economics</note>
+  </Person>
+
+ Person:
+   name: Adam Smith
+   ^: !el Father of Economics
+
+ Becomes:
+  <Person name="Adam Smith">Father of Economics<Person/>
+*/
+
+jlib_decl IPropertyTree *createPTreeFromYAMLString(const char *yaml, byte flags=ipt_none, PTreeReaderOptions readFlags=ptr_ignoreWhiteSpace, IPTreeMaker *iMaker=NULL);
+jlib_decl IPropertyTree *createPTreeFromYAMLString(unsigned len, const char *yaml, byte flags=ipt_none, PTreeReaderOptions readFlags=ptr_ignoreWhiteSpace, IPTreeMaker *iMaker=NULL);
+jlib_decl IPropertyTree *createPTreeFromYAMLFile(const char *filename, byte flags=ipt_none, PTreeReaderOptions readFlags=ptr_ignoreWhiteSpace, IPTreeMaker *iMaker=NULL);
+
+#define YAML_HideRootArrayObject 0x04
+#define YAML_SortTags XML_SortTags
+#define YAML_Sanitize XML_Sanitize
+#define YAML_SanitizeAttributeValues XML_SanitizeAttributeValues
+
+jlib_decl StringBuffer &toYAML(const IPropertyTree *tree, StringBuffer &ret, unsigned indent, byte flags);
+jlib_decl void toYAML(const IPropertyTree *tree, IIOStream &out, unsigned indent, byte flags);
+
+jlib_decl void saveYAML(const char *filename, const IPropertyTree *tree, unsigned indent = 0, unsigned flags=YAML_HideRootArrayObject);
+jlib_decl void saveYAML(IFile &ifile, const IPropertyTree *tree, unsigned indent = 0, unsigned=YAML_HideRootArrayObject);
+jlib_decl void saveYAML(IFileIO &ifileio, const IPropertyTree *tree, unsigned indent = 0, unsigned flags=YAML_HideRootArrayObject);
+jlib_decl void saveYAML(IIOStream &stream, const IPropertyTree *tree, unsigned indent = 0, unsigned flags=YAML_HideRootArrayObject);
+jlib_decl void printYAML(const IPropertyTree *tree, unsigned indent = 0, unsigned flags=YAML_HideRootArrayObject);
+jlib_decl void dbglogYAML(const IPropertyTree *tree, unsigned indent = 0, unsigned flags=YAML_HideRootArrayObject);
+
+// Defines the threshold where attribute value maps are created for sibling ptrees for fast lookups
+jlib_decl void setPTreeMappingThreshold(unsigned threshold);
 
 #endif

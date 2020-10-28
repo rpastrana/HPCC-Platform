@@ -39,34 +39,58 @@
 
 //#define NO_CATCHALL
 
-static __thread ThreadTermFunc threadTerminationHook;
+//static __thread ThreadTermFunc threadTerminationHook;
+static thread_local std::vector<ThreadTermFunc> threadTermHooks;
+static std::vector<ThreadTermFunc> mainThreadTermHooks;
 
-ThreadTermFunc addThreadTermFunc(ThreadTermFunc onTerm)
+static struct MainThreadIdHelper
 {
-    ThreadTermFunc old = threadTerminationHook;
-    threadTerminationHook = onTerm;
-    return old;
+    ThreadId tid;
+    MainThreadIdHelper()
+    {
+        tid = GetCurrentThreadId();
+    }
+} mainThreadIdHelper;
+
+/*
+ * NB: Thread termination hook functions are tracked using a thread local vector (threadTermHooks).
+ * However, hook functions installed on the main thread must be tracked separately in a non thread local vector (mainThreadTermHooks).
+ * This is because thread local variables are destroyed before atexit functions are called and therefore before ModuleExitObjects().
+ * The hooks tracked by mainThreadTermHooks are called by the MODULE_EXIT below.
+ */
+void addThreadTermFunc(ThreadTermFunc onTerm)
+{
+    auto &termHooks = (GetCurrentThreadId() == mainThreadIdHelper.tid) ? mainThreadTermHooks : threadTermHooks;
+    for (auto hook: termHooks)
+    {
+        if (hook==onTerm)
+            return;
+    }
+    termHooks.push_back(onTerm);
 }
 
-void callThreadTerminationHooks()
+void callThreadTerminationHooks(bool isPooled)
 {
-    if (threadTerminationHook)
+    std::vector<ThreadTermFunc> keepHooks;
+
+    auto &termHooks = (GetCurrentThreadId() == mainThreadIdHelper.tid) ? mainThreadTermHooks : threadTermHooks;
+    for (auto hook: termHooks)
     {
-        (*threadTerminationHook)();
-        threadTerminationHook = NULL;
+        if ((*hook)(isPooled) && isPooled)
+           keepHooks.push_back(hook);
     }
+    termHooks.swap(keepHooks);
 }
 
 PointerArray *exceptionHandlers = NULL;
 MODULE_INIT(INIT_PRIORITY_JTHREAD)
 {
-    if (threadTerminationHook)
-        (*threadTerminationHook)();  // May be too late :(
     exceptionHandlers = new PointerArray();
     return true;
 }
 MODULE_EXIT()
 {
+    callThreadTerminationHooks(false);
     delete exceptionHandlers;
 }
 
@@ -276,7 +300,7 @@ int Thread::begin()
         handleException(MakeStringException(0, "Unknown exception in Thread %s", getName()));
     }
 #endif
-    callThreadTerminationHooks();
+    callThreadTerminationHooks(false);
 #ifdef _WIN32
 #ifndef _DEBUG
     CloseHandle(hThread);   // leak handle when debugging, 
@@ -928,7 +952,7 @@ public:
                 handleException(MakeStringException(0, "Unknown exception in Thread from pool %s", parent.poolname.get()));
             }
 #endif
-            callThreadTerminationHooks();    // Reset any pre-thread state.
+            callThreadTerminationHooks(true);    // Reset any per-thread state.
         } while (parent.notifyStopped(this));
         return 0;
     }
@@ -1294,6 +1318,17 @@ public:
     {
         traceStartDelayPeriod = secs;
     }
+    bool waitAvailable(unsigned timeout)
+    {
+        if (!defaultmax)
+            return true;
+        if (availsem.wait(timeout))
+        {
+            availsem.signal();
+            return true;
+        }
+        return false;
+    }
 };
 
 
@@ -1392,8 +1427,7 @@ class CWindowsPipeProcess: implements IPipeProcess, public CInterface
     CriticalSection sect;
     bool aborted;
     StringAttr allowedprogs;
-    StringArray envVars;
-    StringArray envValues;
+    StringArray env;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -1472,7 +1506,7 @@ public:
         
         PROCESS_INFORMATION ProcessInformation;
 
-        // MORE - should create a new environment block that is copy of parent's, then set all the values in envVars/envValues, and pass it
+        // MORE - should create a new environment block that is copy of parent's, then set all the values in env array, and pass it
 
         if (!CreateProcess(NULL, (char *)prog, NULL,NULL,TRUE,0,NULL, dir&&*dir?dir:NULL, &StartupInfo,&ProcessInformation)) {
             if (_title) {
@@ -1498,8 +1532,29 @@ public:
         assertex(var);
         if (!value)
             value = "";
-        envVars.append(var);
-        envValues.append(value);
+        VStringBuffer s("%s=%s", var, value);
+        aindex_t found = lookupEnv(s);
+        if (found != NotFound)
+            env.replace(s, found);
+        else
+            env.append(s);
+    }
+
+    aindex_t lookupEnv(const char *_s)
+    {
+        ForEachItemIn(idx, env)
+        {
+            const char *v = env.item(idx);
+            const char *s = _s;
+            while (*s && *v && *s==*v)
+            {
+                if (*s=='=')
+                    return idx;
+                s++;
+                v++;
+            }
+        }
+        return NotFound;
     }
 
     size32_t read(size32_t sz, void *buf)
@@ -1907,8 +1962,7 @@ protected: friend class PipeWriterThread;
     MemoryBuffer stderrbuf;
     size32_t stderrbufsize;
     StringAttr allowedprogs;
-    StringArray envVars;
-    StringArray envValues;
+    StringArray env;
 
     void clearUtilityThreads(bool clearStderr)
     {
@@ -1996,6 +2050,24 @@ public:
             started.signal();
             throw makeOsException(errno);
         }
+        ConstPointerArrayOf<char> envp;
+        if (env.length())
+        {
+            ForEachItemIn(idx, env)
+            {
+                envp.append(env.item(idx));
+            }
+            // Now add any existing environment variables that were not overridden
+            char **e = getSystemEnv();
+            while (*e)
+            {
+                const char *entry = *e++;
+                if (lookupEnv(entry) != NotFound)
+                    continue;
+                envp.append(entry);
+            }
+            envp.append(nullptr);
+        }
 
         /* NB: Important to call splitargs (which calls malloc) before the fork()
          * and not in the child process. Because performing malloc in the child
@@ -2027,6 +2099,9 @@ public:
                 return;
             }
         }
+        // NOTE - from here to the execvp/_exit call, we must only call "signal-safe" functions, that do not do any memory allocation
+        // fork() only clones the one thread from parent process, meaning any mutexes/semaphores protecting multi-threaded access
+        // to (for example) malloc cannot be relied upon not to be locked, and will never be unlocked if they are.
         if (pipeProcess==0) { // child
             if (newProcessGroup)//Force the child process into its own process group, so we can terminate it and its children.
                 setpgid(0,0);
@@ -2050,11 +2125,10 @@ public:
                 if (chdir(dir) == -1)
                     throw MakeStringException(-1, "CLinuxPipeProcess::run: could not change dir to %s", dir.get());
             }
-            ForEachItemIn(idx, envVars)
-            {
-                ::setenv(envVars.item(idx), envValues.item(idx), 1);
-            }
-            execvp(argv[0],argv);
+            if (envp.length())
+                execve(argv[0], argv, (char *const *) envp.detach());
+            else
+                execvp(argv[0], argv);
             if (haserror)
             {
                 Owned<IException> e = createPipeErrnoExceptionV(errno, "exec failed: %s", prog.get());
@@ -2092,13 +2166,15 @@ public:
         title.clear();
         prog.set(_prog);
         dir.set(_dir);
-        if (_title) {
+        if (_title)
+        {
             title.set(_title);
             PROGLOG("%s: Creating PIPE program process : '%s' - hasinput=%d, hasoutput=%d stderrbufsize=%d", title.get(), prog.get(),(int)hasinput, (int)hasoutput, stderrbufsize);
         }
         CheckAllowedProgram(prog,allowedprogs);
         retcode = 0;
-        if (forkthread) {
+        if (forkthread)
+        {
             {
                 CriticalUnblock unblock(sect); 
                 forkthread->join();
@@ -2107,18 +2183,23 @@ public:
         }
         forkthread.setown(new cForkThread(this));
         forkthread->start();
+        bool joined = false;
         {
             CriticalUnblock unblock(sect); 
             started.wait();
-            forkthread->join(50); // give a chance to fail
+            joined = forkthread->join(50); // give a chance to fail
         }
-        if (retcode==START_FAILURE) {   
+        // only check retcode if we were able to join
+        if ( (joined) && (retcode==START_FAILURE) )
+        {
             DBGLOG("%s: PIPE process '%s' failed to start", title.get()?title.get():"CLinuxPipeProcess", prog.get());
             forkthread.clear();
             return false;
         }
-        if (stderrbufsize) {
-            if (stderrbufferthread) {
+        if (stderrbufsize)
+        {
+            if (stderrbufferthread)
+            {
                 stderrbufferthread->stop();
                 delete stderrbufferthread;
             }
@@ -2133,10 +2214,31 @@ public:
         assertex(var);
         if (!value)
             value = "";
-        envVars.append(var);
-        envValues.append(value);
+        VStringBuffer s("%s=%s", var, value);
+        aindex_t found = lookupEnv(s);
+        if (found != NotFound)
+            env.replace(s, found);
+        else
+            env.append(s);
     }
-    
+
+    aindex_t lookupEnv(const char *_s)
+    {
+        ForEachItemIn(idx, env)
+        {
+            const char *v = env.item(idx);
+            const char *s = _s;
+            while (*s && *v && *s==*v)
+            {
+                if (*s=='=')
+                    return idx;
+                s++;
+                v++;
+            }
+        }
+        return NotFound;
+    }
+
     size32_t read(size32_t sz, void *buf)
     {
         CriticalBlock block(sect); 

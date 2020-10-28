@@ -31,6 +31,10 @@
 #include "roxiemem.hpp"
 #include "nbcd.hpp"
 
+#if (MYSQL_VERSION_ID >= 80000)
+  typedef bool my_bool;
+#endif
+
 __declspec(noreturn) static void UNSUPPORTED(const char *feature) __attribute__((noreturn));
 
 static unsigned mysqlCacheCheckPeriod = 10000;
@@ -569,6 +573,8 @@ public:
     }
     void bindResults(MYSQL_RES *res)
     {
+        //This could be optimized to avoid reallocating the buffers if the result type is identical
+        cleanup();
         init(mysql_num_fields(res));
         for (int i = 0; i < columns; i++)
         {
@@ -597,15 +603,23 @@ public:
     }
     ~MySQLBindingArray()
     {
+        cleanup();
+    }
+    void cleanup()
+    {
         for (int i = 0; i < columns; i++)
-        {
             rtlFree(bindinfo[i].buffer);
-        }
         delete [] bindinfo;
         delete [] is_null;
         delete [] error;
         delete [] lengths;
+        columns = 0;
+        bindinfo = nullptr;
+        is_null= nullptr;
+        error= nullptr;
+        lengths= nullptr;
     }
+
     inline int numColumns() const
     {
         return columns;
@@ -992,10 +1006,20 @@ static void getDecimalResult(const RtlFieldInfo *field, const MYSQL_BIND &bound,
         value.set(p.decimalResult);
         return;
     }
-    size32_t chars;
-    rtlDataAttr result;
-    mysqlembed::getStringResult(field, bound, chars, result.refstr());
-    value.setString(chars, result.getstr());
+    if (isInteger(bound.buffer_type))
+    {
+        if (bound.is_unsigned)
+            value.setUInt64(rtlReadUInt(bound.buffer, *bound.length));
+        else
+            value.setInt64(rtlReadInt(bound.buffer, *bound.length));
+    }
+    else
+    {
+        size32_t chars;
+        rtlDataAttr result;
+        mysqlembed::getStringResult(field, bound, chars, result.refstr());
+        value.setString(chars, result.getstr());
+    }
     if (field)
     {
         RtlDecimalTypeInfo *dtype = (RtlDecimalTypeInfo *) field->type;
@@ -1372,22 +1396,16 @@ protected:
 
 // Each call to a MySQL function will use a new MySQLEmbedFunctionContext object
 
-static __thread ThreadTermFunc threadHookChain;
-
 static bool mysqlInitialized = false;
 static __thread bool mysqlThreadInitialized = false;
 static CriticalSection initCrit;
 
-static void terminateMySqlThread()
+static bool terminateMySqlThread(bool isPooled)
 {
     MySQLConnection::clearThreadCache();
     mysql_thread_end();
     mysqlThreadInitialized = false;  // In case it was a threadpool thread...
-    if (threadHookChain)
-    {
-        (*threadHookChain)();
-        threadHookChain = NULL;
-    }
+    return false;
 }
 
 static void initializeMySqlThread()
@@ -1403,7 +1421,7 @@ static void initializeMySqlThread()
             }
         }
         mysql_thread_init();
-        threadHookChain = addThreadTermFunc(terminateMySqlThread);
+        addThreadTermFunc(terminateMySqlThread);
         mysqlThreadInitialized = true;
     }
 }
@@ -1674,6 +1692,7 @@ public:
         throwUnexpected();
     }
     virtual void enter() override {}
+    virtual void reenter(ICodeContext *codeCtx) override {}
     virtual void exit() override {}
 protected:
     void lazyExecute()

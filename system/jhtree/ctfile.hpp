@@ -27,14 +27,13 @@
 
 #define NODESIZE 8192
 
-
-#define HTREE_FPOS_OFFSET   0x01 // Obsolete, not supported
+#define TRAILING_HEADER_ONLY  0x01 // Leading header not updated - use trailing one
 #define HTREE_TOPLEVEL_KEY  0x02
 #define COL_PREFIX          0x04
-#define COL_SUFFIX          0x08 // Obsolete, not supported
+#define HTREE_QUICK_COMPRESSED 0x08 // See QUICK_COMPRESSED_KEY below
 #define HTREE_VARSIZE       0x10
 #define HTREE_FULLSORT_KEY  0x20
-#define INDAR_TRAILING_SEG  0x80 // Obsolete, not supported
+#define USE_TRAILING_HEADER  0x80 // Real index header node located at end of file
 #define HTREE_COMPRESSED_KEY 0x40
 #define HTREE_QUICK_COMPRESSED_KEY 0x48
 #define KEYBUILD_VERSION 1 // unsigned short. NB: This should upped if a change would make existing keys incompatible with current build.
@@ -124,7 +123,13 @@ struct jhtree_decl NodeHdr
 //#pragma pack(4)
 #pragma pack(pop)
 
-class jhtree_decl CKeyHdr : public CInterface
+class CWritableKeyNode : public CInterface
+{
+public:
+    virtual void write(IFileIOStream *, CRC32 *crc) = 0;
+};
+
+class jhtree_decl CKeyHdr : public CWritableKeyNode
 {
 private:
     KeyHdr hdr;
@@ -132,8 +137,7 @@ public:
     CKeyHdr();
 
     void load(KeyHdr &_hdr);
-    void write(IWriteSeq *, CRC32 *crc = NULL);
-    void write(IFileIOStream *, CRC32 *crc = NULL);
+    virtual void write(IFileIOStream *, CRC32 *crc) override;
 
     unsigned int getMaxKeyLength();
     bool isVariable();
@@ -153,7 +157,7 @@ public:
     inline static size32_t getSize() { return sizeof(KeyHdr); }
     inline unsigned getNodeSize() { return hdr.nodeSize; }
     inline bool hasSpecialFileposition() const { return true; }
-    inline bool isRowCompressed() const { return (hdr.ktype & HTREE_QUICK_COMPRESSED_KEY) == HTREE_QUICK_COMPRESSED_KEY; }
+    inline bool isRowCompressed() const { return (hdr.ktype & (HTREE_QUICK_COMPRESSED_KEY|HTREE_VARSIZE)) == HTREE_QUICK_COMPRESSED_KEY; }
     __uint64 getPartitionFieldMask()
     {
         if (hdr.partitionFieldMask == (__uint64) -1)
@@ -168,22 +172,28 @@ public:
         else
             return 0;
     }
-
+    void setPhyRec(offset_t pos)
+    {
+        hdr.phyrec = hdr.numrec = pos;
+    }
 };
 
-class jhtree_decl CNodeBase : public CInterface
+class jhtree_decl CNodeBase : public CWritableKeyNode
 {
 protected:
     NodeHdr hdr;
     byte keyType;
     size32_t keyLen;
     size32_t keyCompareLen;
-    offset_t fpos;
     CKeyHdr *keyHdr;
     bool isVariable;
 
+private:
+    offset_t fpos;
+
 public:
-    inline offset_t getFpos() const { return fpos; }
+    virtual void write(IFileIOStream *, CRC32 *crc) { throwUnexpected(); }
+    inline offset_t getFpos() const { assertex(fpos); return fpos; }
     inline size32_t getKeyLen() const { return keyLen; }
     inline size32_t getNumKeys() const { return hdr.numKeys; }
     inline bool isBlob() const { return hdr.leafFlag == 2; }
@@ -207,7 +217,7 @@ protected:
     unsigned __int64 firstSequence;
     size32_t expandedSize;
 
-    static char *expandKeys(void *src,unsigned keylength,size32_t &retsize);
+    static char *expandKeys(void *src,size32_t &retsize);
     static void releaseMem(void *togo, size32_t size);
     static void *allocMem(size32_t size);
 
@@ -221,8 +231,6 @@ public:
     offset_t prevNodeFpos() const;
     offset_t nextNodeFpos() const ;
     virtual bool getValueAt(unsigned int num, char *key) const;
-    virtual const char *queryValueAt(unsigned int index, char *scratchBuffer) const;
-    virtual const char *queryKeyAt(unsigned int index, char *scratchBuffer) const;
     virtual size32_t getSizeAt(unsigned int num) const;
     virtual offset_t getFPosAt(unsigned int num) const;
     virtual int compareValueAt(const char *src, unsigned int index) const;
@@ -230,6 +238,7 @@ public:
     inline offset_t getRightSib() const { return hdr.rightSib; }
     inline offset_t getLeftSib() const { return hdr.leftSib; }
     unsigned __int64 getSequence(unsigned int num) const;
+    size32_t getNodeSize() const;
 };
 
 class CJHVarTreeNode : public CJHTreeNode 
@@ -241,8 +250,6 @@ public:
     ~CJHVarTreeNode();
     virtual void load(CKeyHdr *keyHdr, const void *rawData, offset_t pos, bool needCopy);
     virtual bool getValueAt(unsigned int num, char *key) const;
-    virtual const char *queryValueAt(unsigned int index, char *scratchBuffer) const;
-    virtual const char *queryKeyAt(unsigned int index, char *scratchBuffer) const;
     virtual size32_t getSizeAt(unsigned int num) const;
     virtual offset_t getFPosAt(unsigned int num) const;
     virtual int compareValueAt(const char *src, unsigned int index) const;
@@ -255,8 +262,6 @@ class CJHRowCompressedNode : public CJHTreeNode
 public:
     virtual void load(CKeyHdr *keyHdr, const void *rawData, offset_t pos, bool needCopy);
     virtual bool getValueAt(unsigned int num, char *key) const;
-    virtual const char *queryValueAt(unsigned int index, char *scratchBuffer) const;
-    virtual const char *queryKeyAt(unsigned int index, char *scratchBuffer) const;
     virtual offset_t getFPosAt(unsigned int num) const;
     virtual int compareValueAt(const char *src, unsigned int index) const;
 };
@@ -267,8 +272,6 @@ public:
     CJHTreeBlobNode ();
     ~CJHTreeBlobNode ();
     virtual bool getValueAt(unsigned int num, char *key) const {throwUnexpected();}
-    virtual const char *queryValueAt(unsigned int index, char *scratchBuffer) const {throwUnexpected();}
-    virtual const char *queryKeyAt(unsigned int index, char *scratchBuffer) const {throwUnexpected();}
     virtual offset_t getFPosAt(unsigned int num) const {throwUnexpected();}
     virtual size32_t getSizeAt(unsigned int num) const {throwUnexpected();}
     virtual int compareValueAt(const char *src, unsigned int index) const {throwUnexpected();}
@@ -282,8 +285,6 @@ class CJHTreeMetadataNode : public CJHTreeNode
 {
 public:
     virtual bool getValueAt(unsigned int num, char *key) const {throwUnexpected();}
-    virtual const char *queryValueAt(unsigned int index, char *scratchBuffer) const {throwUnexpected();}
-    virtual const char *queryKeyAt(unsigned int index, char *scratchBuffer) const {throwUnexpected();}
     virtual offset_t getFPosAt(unsigned int num) const {throwUnexpected();}
     virtual size32_t getSizeAt(unsigned int num) const {throwUnexpected();}
     virtual int compareValueAt(const char *src, unsigned int index) const {throwUnexpected();}
@@ -295,8 +296,6 @@ class CJHTreeBloomTableNode : public CJHTreeNode
 {
 public:
     virtual bool getValueAt(unsigned int num, char *key) const {throwUnexpected();}
-    virtual const char *queryValueAt(unsigned int index, char *scratchBuffer) const {throwUnexpected();}
-    virtual const char *queryKeyAt(unsigned int index, char *scratchBuffer) const {throwUnexpected();}
     virtual offset_t getFPosAt(unsigned int num) const {throwUnexpected();}
     virtual size32_t getSizeAt(unsigned int num) const {throwUnexpected();}
     virtual int compareValueAt(const char *src, unsigned int index) const {throwUnexpected();}
@@ -306,17 +305,6 @@ public:
     unsigned get4();
 private:
     unsigned read = 0;
-};
-
-class jhtree_decl CNodeHeader : public CNodeBase
-{
-public:
-    CNodeHeader();
-
-    void load(NodeHdr &hdr);
-
-    inline offset_t getRightSib() const { return hdr.rightSib; }
-    inline offset_t getLeftSib() const { return hdr.leftSib; }
 };
 
 class jhtree_decl CWriteNodeBase : public CNodeBase
@@ -332,7 +320,7 @@ public:
     CWriteNodeBase(offset_t fpos, CKeyHdr *keyHdr);
     ~CWriteNodeBase();
 
-    void write(IFileIOStream *, CRC32 *crc = NULL);
+    virtual void write(IFileIOStream *, CRC32 *crc) override;
     void setLeftSib(offset_t leftSib) { hdr.leftSib = leftSib; }
     void setRightSib(offset_t rightSib) { hdr.rightSib = rightSib; }
 };

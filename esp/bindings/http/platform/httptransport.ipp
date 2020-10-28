@@ -19,6 +19,7 @@
 #define _HTTPTRANSPORT_IPP__
 
 #include "esphttp.hpp"
+#include "espthread.hpp"
 
 //Jlib
 #include "jsocket.hpp"
@@ -49,6 +50,10 @@ enum MessageLogFlag
     LOGCONTENT = 2
 };
 
+#define HTTP_HEADER_CONTENT_ENCODING  "Content-Encoding"
+#define HTTP_HEADER_TRANSFER_ENCODING "Transfer-Encoding"
+#define HTTP_HEADER_ACCEPT_ENCODING   "Accept-Encoding"
+
 class esp_http_decl CHttpMessage : implements IHttpMessage, public CInterface
 {
 protected:
@@ -70,6 +75,7 @@ protected:
     bool         m_persistentEligible = false;
     bool         m_persistentEnabled = false;
     bool         m_peerClosed = false;
+    bool         m_compressionEnabled = false;
 
     int m_paramCount;
     int m_attachCount;
@@ -82,6 +88,7 @@ protected:
     IArrayOf<CEspCookie> m_cookies;
 
     Owned<CMimeMultiPart> m_multipart;
+    ISocketReturner* m_socketReturner = nullptr;
 
     int parseOneHeader(char* oneline);
     virtual void parseCookieHeader(char* cookiestr);
@@ -93,6 +100,9 @@ protected:
 
     virtual StringBuffer& constructHeaderBuffer(StringBuffer& headerbuf, bool inclLength);
     virtual int processHeaders(IMultiException *me);
+
+protected:
+    virtual bool checkPersistentEligible();
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -119,6 +129,7 @@ public:
     void logSOAPMessage(const char* message, const char* prefix = NULL);
     void logMessage(const char *message, const char *prefix = NULL, const char *find = NULL, const char *replace = NULL);
     void logMessage(MessageLogFlag logFlag, const char *prefix = NULL);
+    void logMessage(MessageLogFlag logFlag, StringBuffer& content, const char *prefix = NULL);
 
     virtual StringBuffer& getContent(StringBuffer& content);
     virtual void setContent(const char* content);
@@ -152,6 +163,8 @@ public:
     virtual void setHeader(const char* headername, const char* headerval);
     virtual void addHeader(const char* headername, const char* headerval);
     virtual StringBuffer& getHeader(const char* headername, StringBuffer& headerval);
+    virtual bool hasHeader(const char* headername);
+    virtual void removeHeader(const char* headername);
     virtual int getParameterCount(){return m_paramCount;}
     virtual int getAttachmentCount(){return m_attachCount;}
     virtual IProperties *queryParameters();
@@ -259,6 +272,13 @@ public:
     virtual bool getPersistentEligible() { return m_persistentEligible; }
     virtual void setPersistentEnabled(bool enabled) { m_persistentEnabled = enabled; }
     virtual bool getPeerClosed() { return m_peerClosed; }
+    virtual void enableCompression();
+    virtual bool shouldCompress(int& compressType) { return false; }
+    virtual bool compressContent(StringBuffer* originalContent, int compressType) { return false; }
+    virtual bool shouldDecompress(int& compressType) { return false; }
+    virtual bool decompressContent(StringBuffer* originalContent, int compressType) { return false; }
+    virtual void setSocketReturner(ISocketReturner* returner) { m_socketReturner = returner; }
+    virtual ISocketReturner* querySocketReturner() { return m_socketReturner; }
 };
 
 
@@ -314,11 +334,11 @@ private:
     virtual StringBuffer& constructHeaderBuffer(StringBuffer& headerbuf, bool inclLen);
     virtual int processHeaders(IMultiException *me);
     virtual void parseCookieHeader(char* cookiestr);
-    inline bool checkPersistentEligible();
+
+protected:
+    virtual bool checkPersistentEligible() override;
 
 public:
-    
-
     CHttpRequest(ISocket& socket);
     virtual ~CHttpRequest();
     
@@ -348,7 +368,7 @@ public:
 
     bool readContentToBuffer(MemoryBuffer& fileContent, __int64& bytesNotRead);
     bool readUploadFileName(CMimeMultiPart* mimemultipart, StringBuffer& fileName, MemoryBuffer& contentBuffer, __int64& bytesNotRead);
-    IFile* createUploadFile(const char *netAddress, const char* filePath, StringBuffer& fileName);
+    IFile* createUploadFile(const char *netAddress, const char* filePath, const char* fileName, StringBuffer& fileNameWithPath);
     virtual int readContentToFiles(const char * netAddress, const char * path, StringArray& fileNames);
     virtual void readUploadFileContent(StringArray& fileNames, StringArray& files);
 };
@@ -365,6 +385,9 @@ private:
     virtual int processHeaders(IMultiException *me);
     virtual void parseCookieHeader(char* cookiestr);
     virtual void parseOneCookie(char* cookiestr);
+
+protected:
+    virtual bool checkPersistentEligible() override;
 
 public:
     CHttpResponse(ISocket& socket);
@@ -402,6 +425,10 @@ public:
     void CheckModifiedHTTPContent(bool modified, const char *lastModified, const char *etag, const char *contenttype, MemoryBuffer &content);
     bool getRespSent() { return m_respSent; }
     void setRespSent(bool sent) { m_respSent = sent; }
+    virtual bool shouldCompress(int& compressType);
+    virtual bool compressContent(StringBuffer* originalContent, int compressType);
+    virtual bool shouldDecompress(int& compressType);
+    virtual bool decompressContent(StringBuffer* originalContent, int compressType);
 };
 
 inline bool canRedirect(CHttpRequest &req)
@@ -423,6 +450,8 @@ inline bool checkRedirect(IEspContext &ctx)
 
 inline bool skipXslt(IEspContext &context)
 {
+    if (queryComponentConfig().getPropBool("@api_only"))
+        return true;
     return (context.getResponseFormat()!=ESPSerializationANY);  //for now
 }
 

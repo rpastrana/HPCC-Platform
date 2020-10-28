@@ -38,183 +38,188 @@
 #include "commonext.hpp"
 #include "thorcommon.hpp"
 
+#include <list>
+#include <string>
+#include <algorithm>
+
 using roxiemem::OwnedRoxieString;
 
 //---------------------------------------------------------------------------
 
 static IHThorActivity * createActivity(IAgentContext & agent, unsigned activityId, unsigned subgraphId, unsigned graphId, ThorActivityKind kind, bool isLocal, bool isGrouped, IHThorArg & arg, IPropertyTree * node, EclGraphElement * graphElement)
 {
+    EclGraph & graph = graphElement->subgraph->parent;
     switch (kind)
     {
     case TAKdiskwrite:
     case TAKspillwrite:
-        return createDiskWriteActivity(agent, activityId, subgraphId, (IHThorDiskWriteArg &)arg, kind);
-    case TAKsort: 
-        return createGroupSortActivity(agent, activityId, subgraphId, (IHThorSortArg &)arg, kind);
-    case TAKdedup: 
-        return createGroupDedupActivity(agent, activityId, subgraphId, (IHThorDedupArg &)arg, kind);
-    case TAKfilter: 
-        return createFilterActivity(agent, activityId, subgraphId, (IHThorFilterArg &)arg, kind);
-    case TAKproject: 
-        return createProjectActivity(agent, activityId, subgraphId, (IHThorProjectArg &)arg, kind);
+        return createDiskWriteActivity(agent, activityId, subgraphId, (IHThorDiskWriteArg &)arg, kind, graph);
+    case TAKsort:
+        return createGroupSortActivity(agent, activityId, subgraphId, (IHThorSortArg &)arg, kind, graph);
+    case TAKdedup:
+        return createGroupDedupActivity(agent, activityId, subgraphId, (IHThorDedupArg &)arg, kind, graph);
+    case TAKfilter:
+        return createFilterActivity(agent, activityId, subgraphId, (IHThorFilterArg &)arg, kind, graph);
+    case TAKproject:
+        return createProjectActivity(agent, activityId, subgraphId, (IHThorProjectArg &)arg, kind, graph);
     case TAKprefetchproject:
-        return createPrefetchProjectActivity(agent, activityId, subgraphId, (IHThorPrefetchProjectArg &)arg, kind);
-    case TAKfilterproject : 
-        return createFilterProjectActivity(agent, activityId, subgraphId, (IHThorFilterProjectArg &)arg, kind);
+        return createPrefetchProjectActivity(agent, activityId, subgraphId, (IHThorPrefetchProjectArg &)arg, kind, graph);
+    case TAKfilterproject :
+        return createFilterProjectActivity(agent, activityId, subgraphId, (IHThorFilterProjectArg &)arg, kind, graph);
     case TAKrollup:
-        return createRollupActivity(agent, activityId, subgraphId, (IHThorRollupArg &)arg, kind);
+        return createRollupActivity(agent, activityId, subgraphId, (IHThorRollupArg &)arg, kind, graph);
     case TAKiterate:
-        return createIterateActivity(agent, activityId, subgraphId, (IHThorIterateArg &)arg, kind);
+        return createIterateActivity(agent, activityId, subgraphId, (IHThorIterateArg &)arg, kind, graph);
     case TAKaggregate:
     case TAKexistsaggregate:
     case TAKcountaggregate:
-        return createAggregateActivity(agent, activityId, subgraphId, (IHThorAggregateArg &)arg, kind);
+        return createAggregateActivity(agent, activityId, subgraphId, (IHThorAggregateArg &)arg, kind, graph);
     case TAKhashaggregate:
-        return createHashAggregateActivity(agent, activityId, subgraphId, (IHThorHashAggregateArg &)arg, kind, isGrouped);
+        return createHashAggregateActivity(agent, activityId, subgraphId, (IHThorHashAggregateArg &)arg, kind, graph, isGrouped);
     case TAKfirstn:
-        return createFirstNActivity(agent, activityId, subgraphId, (IHThorFirstNArg &)arg, kind);
+        return createFirstNActivity(agent, activityId, subgraphId, (IHThorFirstNArg &)arg, kind, graph);
     case TAKsample:
-        return createSampleActivity(agent, activityId, subgraphId, (IHThorSampleArg &)arg, kind);
+        return createSampleActivity(agent, activityId, subgraphId, (IHThorSampleArg &)arg, kind, graph);
     case TAKdegroup:
-        return createDegroupActivity(agent, activityId, subgraphId, (IHThorDegroupArg &)arg, kind);
+        return createDegroupActivity(agent, activityId, subgraphId, (IHThorDegroupArg &)arg, kind, graph);
     case TAKjoin:
     case TAKjoinlight:
     case TAKdenormalize:
     case TAKdenormalizegroup:
-        return createJoinActivity(agent, activityId, subgraphId, (IHThorJoinArg &)arg, kind);
+        return createJoinActivity(agent, activityId, subgraphId, (IHThorJoinArg &)arg, kind, graph);
     case TAKselfjoin:
     case TAKselfjoinlight:
-        return createSelfJoinActivity(agent, activityId, subgraphId, (IHThorJoinArg &)arg, kind);
+        return createSelfJoinActivity(agent, activityId, subgraphId, (IHThorJoinArg &)arg, kind, graph);
     case TAKkeyedjoin:
     case TAKkeyeddenormalize:
     case TAKkeyeddenormalizegroup:
-        return createKeyedJoinActivity(agent, activityId, subgraphId, (IHThorKeyedJoinArg &)arg, kind, node);
+        return createKeyedJoinActivity(agent, activityId, subgraphId, (IHThorKeyedJoinArg &)arg, kind, graph, node);
     case TAKlookupjoin:
     case TAKlookupdenormalize:
     case TAKlookupdenormalizegroup:
     case TAKsmartjoin:
     case TAKsmartdenormalize:
     case TAKsmartdenormalizegroup:
-        return createLookupJoinActivity(agent, activityId, subgraphId, (IHThorHashJoinArg &)arg, kind);
+        return createLookupJoinActivity(agent, activityId, subgraphId, (IHThorHashJoinArg &)arg, kind, graph);
     case TAKalljoin:
     case TAKalldenormalize:
     case TAKalldenormalizegroup:
-        return createAllJoinActivity(agent, activityId, subgraphId, (IHThorAllJoinArg &)arg, kind);
+        return createAllJoinActivity(agent, activityId, subgraphId, (IHThorAllJoinArg &)arg, kind, graph);
     case TAKgroup:
-        return createGroupActivity(agent, activityId, subgraphId, (IHThorGroupArg &)arg, kind);
+        return createGroupActivity(agent, activityId, subgraphId, (IHThorGroupArg &)arg, kind, graph);
     case TAKworkunitwrite:
-        return createWorkUnitWriteActivity(agent, activityId, subgraphId, (IHThorWorkUnitWriteArg &)arg, kind);
+        return createWorkUnitWriteActivity(agent, activityId, subgraphId, (IHThorWorkUnitWriteArg &)arg, kind, graph);
     case TAKdictionaryworkunitwrite:
-        return createDictionaryWorkUnitWriteActivity(agent, activityId, subgraphId, (IHThorDictionaryWorkUnitWriteArg &)arg, kind);
+        return createDictionaryWorkUnitWriteActivity(agent, activityId, subgraphId, (IHThorDictionaryWorkUnitWriteArg &)arg, kind, graph);
     case TAKfunnel:
-        return createConcatActivity(agent, activityId, subgraphId, (IHThorFunnelArg &)arg, kind);
+        return createConcatActivity(agent, activityId, subgraphId, (IHThorFunnelArg &)arg, kind, graph);
     case TAKapply:
-        return createApplyActivity(agent, activityId, subgraphId, (IHThorApplyArg &)arg, kind);
+        return createApplyActivity(agent, activityId, subgraphId, (IHThorApplyArg &)arg, kind, graph);
     case TAKinlinetable:
-        return createInlineTableActivity(agent, activityId, subgraphId, (IHThorInlineTableArg &)arg, kind);
+        return createInlineTableActivity(agent, activityId, subgraphId, (IHThorInlineTableArg &)arg, kind, graph);
     case TAKnormalize:
-        return createNormalizeActivity(agent, activityId, subgraphId, (IHThorNormalizeArg &)arg, kind);
+        return createNormalizeActivity(agent, activityId, subgraphId, (IHThorNormalizeArg &)arg, kind, graph);
     case TAKnormalizechild:
-        return createNormalizeChildActivity(agent, activityId, subgraphId, (IHThorNormalizeChildArg &)arg, kind);
+        return createNormalizeChildActivity(agent, activityId, subgraphId, (IHThorNormalizeChildArg &)arg, kind, graph);
     case TAKnormalizelinkedchild:
-        return createNormalizeLinkedChildActivity(agent, activityId, subgraphId, (IHThorNormalizeLinkedChildArg &)arg, kind);
+        return createNormalizeLinkedChildActivity(agent, activityId, subgraphId, (IHThorNormalizeLinkedChildArg &)arg, kind, graph);
     case TAKremoteresult:
-        return createRemoteResultActivity(agent, activityId, subgraphId, (IHThorRemoteResultArg &)arg, kind);
+        return createRemoteResultActivity(agent, activityId, subgraphId, (IHThorRemoteResultArg &)arg, kind, graph);
     case TAKselectn:
-        return createSelectNActivity(agent, activityId, subgraphId, (IHThorSelectNArg &)arg, kind);
+        return createSelectNActivity(agent, activityId, subgraphId, (IHThorSelectNArg &)arg, kind, graph);
     case TAKif:
-        return createIfActivity(agent, activityId, subgraphId, (IHThorIfArg &)arg, kind);
+        return createIfActivity(agent, activityId, subgraphId, (IHThorIfArg &)arg, kind, graph);
     case TAKchildif:
-        return createChildIfActivity(agent, activityId, subgraphId, (IHThorIfArg &)arg, kind);
+        return createChildIfActivity(agent, activityId, subgraphId, (IHThorIfArg &)arg, kind, graph);
     case TAKchildcase:
-        return createCaseActivity(agent, activityId, subgraphId, (IHThorCaseArg &)arg, kind);
+        return createCaseActivity(agent, activityId, subgraphId, (IHThorCaseArg &)arg, kind, graph);
     case TAKnull:
-        return createNullActivity(agent, activityId, subgraphId, (IHThorNullArg &)arg, kind);
+        return createNullActivity(agent, activityId, subgraphId, (IHThorNullArg &)arg, kind, graph);
     case TAKdistribution:
-        return createDistributionActivity(agent, activityId, subgraphId, (IHThorDistributionArg &)arg, kind);
+        return createDistributionActivity(agent, activityId, subgraphId, (IHThorDistributionArg &)arg, kind, graph);
     case TAKchoosesets:
-        return createChooseSetsActivity(agent, activityId, subgraphId, (IHThorChooseSetsArg &)arg, kind);
+        return createChooseSetsActivity(agent, activityId, subgraphId, (IHThorChooseSetsArg &)arg, kind, graph);
     case TAKpiperead:
-        return createPipeReadActivity(agent, activityId, subgraphId, (IHThorPipeReadArg &)arg, kind);
+        return createPipeReadActivity(agent, activityId, subgraphId, (IHThorPipeReadArg &)arg, kind, graph);
     case TAKpipewrite:
-        return createPipeWriteActivity(agent, activityId, subgraphId, (IHThorPipeWriteArg &)arg, kind);
+        return createPipeWriteActivity(agent, activityId, subgraphId, (IHThorPipeWriteArg &)arg, kind, graph);
     case TAKcsvwrite:
-        return createCsvWriteActivity(agent, activityId, subgraphId, (IHThorCsvWriteArg &)arg, kind);
+        return createCsvWriteActivity(agent, activityId, subgraphId, (IHThorCsvWriteArg &)arg, kind, graph);
     case TAKxmlwrite:
     case TAKjsonwrite:
-        return createXmlWriteActivity(agent, activityId, subgraphId, (IHThorXmlWriteArg &)arg, kind);
+        return createXmlWriteActivity(agent, activityId, subgraphId, (IHThorXmlWriteArg &)arg, kind, graph);
     case TAKpipethrough:
-        return createPipeThroughActivity(agent, activityId, subgraphId, (IHThorPipeThroughArg &)arg, kind);
+        return createPipeThroughActivity(agent, activityId, subgraphId, (IHThorPipeThroughArg &)arg, kind, graph);
     case TAKchoosesetsenth:
-        return createChooseSetsEnthActivity(agent, activityId, subgraphId, (IHThorChooseSetsExArg &)arg, kind);
+        return createChooseSetsEnthActivity(agent, activityId, subgraphId, (IHThorChooseSetsExArg &)arg, kind, graph);
     case TAKchoosesetslast:
-        return createChooseSetsLastActivity(agent, activityId, subgraphId, (IHThorChooseSetsExArg &)arg, kind);
+        return createChooseSetsLastActivity(agent, activityId, subgraphId, (IHThorChooseSetsExArg &)arg, kind, graph);
     case TAKfetch:
-        return createFetchActivity(agent, activityId, subgraphId, (IHThorFetchArg &)arg, kind, node);
+        return createFetchActivity(agent, activityId, subgraphId, (IHThorFetchArg &)arg, kind, graph, node);
     case TAKcsvfetch:
-        return createCsvFetchActivity(agent, activityId, subgraphId, (IHThorCsvFetchArg &)arg, kind, node);
+        return createCsvFetchActivity(agent, activityId, subgraphId, (IHThorCsvFetchArg &)arg, kind, graph, node);
     case TAKworkunitread:
-        return createWorkunitReadActivity(agent, activityId, subgraphId, (IHThorWorkunitReadArg &)arg, kind);
+        return createWorkunitReadActivity(agent, activityId, subgraphId, (IHThorWorkunitReadArg &)arg, kind, graph);
     case TAKspill:
-        return createSpillActivity(agent, activityId, subgraphId, (IHThorSpillArg &)arg, kind);
+        return createSpillActivity(agent, activityId, subgraphId, (IHThorSpillArg &)arg, kind, graph);
     case TAKlimit:
-        return createLimitActivity(agent, activityId, subgraphId, (IHThorLimitArg &)arg, kind);
+        return createLimitActivity(agent, activityId, subgraphId, (IHThorLimitArg &)arg, kind, graph);
     case TAKskiplimit:
-        return createSkipLimitActivity(agent, activityId, subgraphId, (IHThorLimitArg &)arg, kind);
+        return createSkipLimitActivity(agent, activityId, subgraphId, (IHThorLimitArg &)arg, kind, graph);
     case TAKcatch:
-        return createCatchActivity(agent, activityId, subgraphId, (IHThorCatchArg &)arg, kind);
+        return createCatchActivity(agent, activityId, subgraphId, (IHThorCatchArg &)arg, kind, graph);
     case TAKskipcatch:
     case TAKcreaterowcatch:
-        return createSkipCatchActivity(agent, activityId, subgraphId, (IHThorCatchArg &)arg, kind);
+        return createSkipCatchActivity(agent, activityId, subgraphId, (IHThorCatchArg &)arg, kind, graph);
     case TAKcountproject:
-        return createCountProjectActivity(agent, activityId, subgraphId, (IHThorCountProjectArg &)arg, kind);
+        return createCountProjectActivity(agent, activityId, subgraphId, (IHThorCountProjectArg &)arg, kind, graph);
     case TAKindexwrite:
-        return createIndexWriteActivity(agent, activityId, subgraphId, (IHThorIndexWriteArg &)arg, kind);
+        return createIndexWriteActivity(agent, activityId, subgraphId, (IHThorIndexWriteArg &)arg, kind, graph);
     case TAKparse:
-        return createParseActivity(agent, activityId, subgraphId, (IHThorParseArg &)arg, kind);
+        return createParseActivity(agent, activityId, subgraphId, (IHThorParseArg &)arg, kind, graph);
     case TAKsideeffect:
-        return createSideEffectActivity(agent, activityId, subgraphId, (IHThorSideEffectArg &)arg, kind);
+        return createSideEffectActivity(agent, activityId, subgraphId, (IHThorSideEffectArg &)arg, kind, graph);
     case TAKsimpleaction:
-        return createActionActivity(agent, activityId, subgraphId, (IHThorActionArg &)arg, kind);
+        return createActionActivity(agent, activityId, subgraphId, (IHThorActionArg &)arg, kind, graph);
     case TAKenth:
-        return createEnthActivity(agent, activityId, subgraphId, (IHThorEnthArg &)arg, kind);
+        return createEnthActivity(agent, activityId, subgraphId, (IHThorEnthArg &)arg, kind, graph);
     case TAKtopn:
-        return createTopNActivity(agent, activityId, subgraphId, (IHThorTopNArg &)arg, kind);
+        return createTopNActivity(agent, activityId, subgraphId, (IHThorTopNArg &)arg, kind, graph);
     case TAKxmlparse:
-        return createXmlParseActivity(agent, activityId, subgraphId, (IHThorXmlParseArg &)arg, kind);
+        return createXmlParseActivity(agent, activityId, subgraphId, (IHThorXmlParseArg &)arg, kind, graph);
     case TAKxmlfetch:
     case TAKjsonfetch:
-        return createXmlFetchActivity(agent, activityId, subgraphId, (IHThorXmlFetchArg &)arg, kind, node);
-    case TAKmerge: 
-        return createMergeActivity(agent, activityId, subgraphId, (IHThorMergeArg &)arg, kind);
+        return createXmlFetchActivity(agent, activityId, subgraphId, (IHThorXmlFetchArg &)arg, kind, graph, node);
+    case TAKmerge:
+        return createMergeActivity(agent, activityId, subgraphId, (IHThorMergeArg &)arg, kind, graph);
     case TAKhttp_rowdataset:
-        return createHttpRowCallActivity(agent, activityId, subgraphId, (IHThorHttpCallArg &)arg, kind);
+        return createHttpRowCallActivity(agent, activityId, subgraphId, (IHThorHttpCallArg &)arg, kind, graph);
     case TAKsoap_rowdataset:
-        return createSoapRowCallActivity(agent, activityId, subgraphId, (IHThorSoapCallArg &)arg, kind);
+        return createSoapRowCallActivity(agent, activityId, subgraphId, (IHThorSoapCallArg &)arg, kind, graph);
     case TAKsoap_rowaction:
-        return createSoapRowActionActivity(agent, activityId, subgraphId, (IHThorSoapActionArg &)arg, kind);
+        return createSoapRowActionActivity(agent, activityId, subgraphId, (IHThorSoapActionArg &)arg, kind, graph);
     case TAKsoap_datasetdataset:
-        return createSoapDatasetCallActivity(agent, activityId, subgraphId, (IHThorSoapCallArg &)arg, kind);
+        return createSoapDatasetCallActivity(agent, activityId, subgraphId, (IHThorSoapCallArg &)arg, kind, graph);
     case TAKsoap_datasetaction:
-        return createSoapDatasetActionActivity(agent, activityId, subgraphId, (IHThorSoapActionArg &)arg, kind);
-    case TAKchilditerator:          
-        return createChildIteratorActivity(agent, activityId, subgraphId, (IHThorChildIteratorArg &)arg, kind);
+        return createSoapDatasetActionActivity(agent, activityId, subgraphId, (IHThorSoapActionArg &)arg, kind, graph);
+    case TAKchilditerator:
+        return createChildIteratorActivity(agent, activityId, subgraphId, (IHThorChildIteratorArg &)arg, kind, graph);
     case TAKlinkedrawiterator:
-        return createLinkedRawIteratorActivity(agent, activityId, subgraphId, (IHThorLinkedRawIteratorArg &)arg, kind);
-    case TAKrowresult:          
-        return createRowResultActivity(agent, activityId, subgraphId, (IHThorRowResultArg &)arg, kind);
-    case TAKdatasetresult:          
-        return createDatasetResultActivity(agent, activityId, subgraphId, (IHThorDatasetResultArg &)arg, kind);
+        return createLinkedRawIteratorActivity(agent, activityId, subgraphId, (IHThorLinkedRawIteratorArg &)arg, kind, graph);
+    case TAKrowresult:
+        return createRowResultActivity(agent, activityId, subgraphId, (IHThorRowResultArg &)arg, kind, graph);
+    case TAKdatasetresult:
+        return createDatasetResultActivity(agent, activityId, subgraphId, (IHThorDatasetResultArg &)arg, kind, graph);
     case TAKwhen_dataset:
     case TAKwhen_action:
-        return createWhenActionActivity(agent, activityId, subgraphId, (IHThorWhenActionArg &)arg, kind, graphElement);
+        return createWhenActionActivity(agent, activityId, subgraphId, (IHThorWhenActionArg &)arg, kind, graph, graphElement);
     case TAKsequential:
     case TAKparallel:
     case TAKemptyaction:
     case TAKifaction:
-        return createDummyActivity(agent, activityId, subgraphId, arg, kind);
+        return createDummyActivity(agent, activityId, subgraphId, arg, kind, graph);
     case TAKhashdedup:
-        return createHashDedupActivity(agent, activityId, subgraphId, (IHThorHashDedupArg &)arg, kind);
+        return createHashDedupActivity(agent, activityId, subgraphId, (IHThorHashDedupArg &)arg, kind, graph);
     case TAKhashdenormalize:
     case TAKhashdistribute:
     case TAKhashdistributemerge:
@@ -224,106 +229,106 @@ static IHThorActivity * createActivity(IAgentContext & agent, unsigned activityI
     case TAKsplit:
         throwUnexpected();  // Code generator should have removed or transformed
     case TAKchildnormalize:
-        return createChildNormalizeActivity(agent, activityId, subgraphId, (IHThorChildNormalizeArg &)arg, kind);
+        return createChildNormalizeActivity(agent, activityId, subgraphId, (IHThorChildNormalizeArg &)arg, kind, graph);
     case TAKchildaggregate:
-        return createChildAggregateActivity(agent, activityId, subgraphId, (IHThorChildAggregateArg &)arg, kind);
+        return createChildAggregateActivity(agent, activityId, subgraphId, (IHThorChildAggregateArg &)arg, kind, graph);
     case TAKchildgroupaggregate:
-        return createChildGroupAggregateActivity(agent, activityId, subgraphId, (IHThorChildGroupAggregateArg &)arg, kind);
+        return createChildGroupAggregateActivity(agent, activityId, subgraphId, (IHThorChildGroupAggregateArg &)arg, kind, graph);
     case TAKchildthroughnormalize:
-        return createChildThroughNormalizeActivity(agent, activityId, subgraphId, (IHThorChildThroughNormalizeArg &)arg, kind);
+        return createChildThroughNormalizeActivity(agent, activityId, subgraphId, (IHThorChildThroughNormalizeArg &)arg, kind, graph);
     case TAKdiskread:
     case TAKspillread:
-        return createDiskReadActivity(agent, activityId, subgraphId, (IHThorDiskReadArg &)arg, kind, node);
+        return createDiskReadActivity(agent, activityId, subgraphId, (IHThorDiskReadArg &)arg, kind, graph, node);
     case TAKnewdiskread:
-        return createNewDiskReadActivity(agent, activityId, subgraphId, (IHThorNewDiskReadArg &)arg, kind, node);
+        return createNewDiskReadActivity(agent, activityId, subgraphId, (IHThorNewDiskReadArg &)arg, kind, graph, node);
     case TAKdisknormalize:
-        return createDiskNormalizeActivity(agent, activityId, subgraphId, (IHThorDiskNormalizeArg &)arg, kind, node);
+        return createDiskNormalizeActivity(agent, activityId, subgraphId, (IHThorDiskNormalizeArg &)arg, kind, graph, node);
     case TAKdiskaggregate:
-        return createDiskAggregateActivity(agent, activityId, subgraphId, (IHThorDiskAggregateArg &)arg, kind, node);
+        return createDiskAggregateActivity(agent, activityId, subgraphId, (IHThorDiskAggregateArg &)arg, kind, graph, node);
     case TAKdiskcount:
-        return createDiskCountActivity(agent, activityId, subgraphId, (IHThorDiskCountArg &)arg, kind, node);
+        return createDiskCountActivity(agent, activityId, subgraphId, (IHThorDiskCountArg &)arg, kind, graph, node);
     case TAKdiskgroupaggregate:
-        return createDiskGroupAggregateActivity(agent, activityId, subgraphId, (IHThorDiskGroupAggregateArg &)arg, kind, node);
+        return createDiskGroupAggregateActivity(agent, activityId, subgraphId, (IHThorDiskGroupAggregateArg &)arg, kind, graph, node);
     case TAKindexread:
-        return createIndexReadActivity(agent, activityId, subgraphId, (IHThorIndexReadArg &)arg, kind, node);
+        return createIndexReadActivity(agent, activityId, subgraphId, (IHThorIndexReadArg &)arg, kind, graph, node);
     case TAKindexnormalize:
-        return createIndexNormalizeActivity(agent, activityId, subgraphId, (IHThorIndexNormalizeArg &)arg, kind, node);
+        return createIndexNormalizeActivity(agent, activityId, subgraphId, (IHThorIndexNormalizeArg &)arg, kind, graph, node);
     case TAKindexaggregate:
-        return createIndexAggregateActivity(agent, activityId, subgraphId, (IHThorIndexAggregateArg &)arg, kind, node);
+        return createIndexAggregateActivity(agent, activityId, subgraphId, (IHThorIndexAggregateArg &)arg, kind, graph, node);
     case TAKindexcount:
-        return createIndexCountActivity(agent, activityId, subgraphId, (IHThorIndexCountArg &)arg, kind, node);
+        return createIndexCountActivity(agent, activityId, subgraphId, (IHThorIndexCountArg &)arg, kind, graph, node);
     case TAKindexgroupaggregate:
     case TAKindexgroupexists:
     case TAKindexgroupcount:
-        return createIndexGroupAggregateActivity(agent, activityId, subgraphId, (IHThorIndexGroupAggregateArg &)arg, kind, node);
+        return createIndexGroupAggregateActivity(agent, activityId, subgraphId, (IHThorIndexGroupAggregateArg &)arg, kind, graph, node);
     case TAKchilddataset:
     case TAKthroughaggregate:
         UNIMPLEMENTED;
     case TAKcsvread:
-        return createCsvReadActivity(agent, activityId, subgraphId, (IHThorCsvReadArg &)arg, kind, node);
+        return createCsvReadActivity(agent, activityId, subgraphId, (IHThorCsvReadArg &)arg, kind, graph, node);
     case TAKxmlread:
     case TAKjsonread:
-        return createXmlReadActivity(agent, activityId, subgraphId, (IHThorXmlReadArg &)arg, kind, node);
+        return createXmlReadActivity(agent, activityId, subgraphId, (IHThorXmlReadArg &)arg, kind, graph, node);
     case TAKlocalresultread:
-        return createLocalResultReadActivity(agent, activityId, subgraphId, (IHThorLocalResultReadArg &)arg, kind, node->getPropInt("att[@name='_graphId']/@value"));
+        return createLocalResultReadActivity(agent, activityId, subgraphId, (IHThorLocalResultReadArg &)arg, kind, graph, node->getPropInt("att[@name='_graphId']/@value"));
     case TAKlocalresultwrite:
-        return createLocalResultWriteActivity(agent, activityId, subgraphId, (IHThorLocalResultWriteArg &)arg, kind, graphId);
+        return createLocalResultWriteActivity(agent, activityId, subgraphId, (IHThorLocalResultWriteArg &)arg, kind, graph, graphId);
     case TAKdictionaryresultwrite:
-        return createDictionaryResultWriteActivity(agent, activityId, subgraphId, (IHThorDictionaryResultWriteArg &)arg, kind, graphId);
+        return createDictionaryResultWriteActivity(agent, activityId, subgraphId, (IHThorDictionaryResultWriteArg &)arg, kind, graph, graphId);
     case TAKlocalresultspill:
-        return createLocalResultSpillActivity(agent, activityId, subgraphId, (IHThorLocalResultSpillArg &)arg, kind, graphId);
+        return createLocalResultSpillActivity(agent, activityId, subgraphId, (IHThorLocalResultSpillArg &)arg, kind, graph, graphId);
     case TAKcombine:
-        return createCombineActivity(agent, activityId, subgraphId, (IHThorCombineArg &)arg, kind);
+        return createCombineActivity(agent, activityId, subgraphId, (IHThorCombineArg &)arg, kind, graph);
     case TAKcombinegroup:
-        return createCombineGroupActivity(agent, activityId, subgraphId, (IHThorCombineGroupArg &)arg, kind);
+        return createCombineGroupActivity(agent, activityId, subgraphId, (IHThorCombineGroupArg &)arg, kind, graph);
     case TAKregroup:
-        return createRegroupActivity(agent, activityId, subgraphId, (IHThorRegroupArg &)arg, kind);
+        return createRegroupActivity(agent, activityId, subgraphId, (IHThorRegroupArg &)arg, kind, graph);
     case TAKrollupgroup:
-        return createRollupGroupActivity(agent, activityId, subgraphId, (IHThorRollupGroupArg &)arg, kind);
+        return createRollupGroupActivity(agent, activityId, subgraphId, (IHThorRollupGroupArg &)arg, kind, graph);
     case TAKfiltergroup:
-        return createFilterGroupActivity(agent, activityId, subgraphId, (IHThorFilterGroupArg &)arg, kind);
+        return createFilterGroupActivity(agent, activityId, subgraphId, (IHThorFilterGroupArg &)arg, kind, graph);
     case TAKloopcount:
     case TAKlooprow:
     case TAKloopdataset:
-        return createLoopActivity(agent, activityId, subgraphId, (IHThorLoopArg &)arg, kind);
+        return createLoopActivity(agent, activityId, subgraphId, (IHThorLoopArg &)arg, kind, graph);
     case TAKgraphloop:
-        return createGraphLoopActivity(agent, activityId, subgraphId, (IHThorGraphLoopArg &)arg, kind);
+        return createGraphLoopActivity(agent, activityId, subgraphId, (IHThorGraphLoopArg &)arg, kind, graph);
     case TAKgraphloopresultread:
-        return createGraphLoopResultReadActivity(agent, activityId, subgraphId, (IHThorGraphLoopResultReadArg &)arg, kind, graphId);
+        return createGraphLoopResultReadActivity(agent, activityId, subgraphId, (IHThorGraphLoopResultReadArg &)arg, kind, graph, graphId);
     case TAKgraphloopresultwrite:
-        return createGraphLoopResultWriteActivity(agent, activityId, subgraphId, (IHThorGraphLoopResultWriteArg &)arg, kind, graphId);
+        return createGraphLoopResultWriteActivity(agent, activityId, subgraphId, (IHThorGraphLoopResultWriteArg &)arg, kind, graph, graphId);
     case TAKprocess:
-        return createProcessActivity(agent, activityId, subgraphId, (IHThorProcessArg &)arg, kind);
+        return createProcessActivity(agent, activityId, subgraphId, (IHThorProcessArg &)arg, kind, graph);
     case TAKlibrarycall:
-        return createLibraryCallActivity(agent, activityId, subgraphId, (IHThorLibraryCallArg &)arg, kind, node);
+        return createLibraryCallActivity(agent, activityId, subgraphId, (IHThorLibraryCallArg &)arg, kind, graph, node);
     case TAKsorted:
-        return createSortedActivity(agent, activityId, subgraphId, (IHThorSortedArg &)arg, kind);
+        return createSortedActivity(agent, activityId, subgraphId, (IHThorSortedArg &)arg, kind, graph);
     case TAKtrace:
-        return createTraceActivity(agent, activityId, subgraphId, (IHThorTraceArg &)arg, kind);
+        return createTraceActivity(agent, activityId, subgraphId, (IHThorTraceArg &)arg, kind, graph);
     case TAKgrouped:
-        return createGroupedActivity(agent, activityId, subgraphId, (IHThorGroupedArg &)arg, kind);
+        return createGroupedActivity(agent, activityId, subgraphId, (IHThorGroupedArg &)arg, kind, graph);
     case TAKnwayjoin:
-        return createNWayJoinActivity(agent, activityId, subgraphId, (IHThorNWayMergeJoinArg &)arg, kind);
+        return createNWayJoinActivity(agent, activityId, subgraphId, (IHThorNWayMergeJoinArg &)arg, kind, graph);
     case TAKnwaymerge:
-        return createNWayMergeActivity(agent, activityId, subgraphId, (IHThorNWayMergeArg &)arg, kind);
+        return createNWayMergeActivity(agent, activityId, subgraphId, (IHThorNWayMergeArg &)arg, kind, graph);
     case TAKnwaymergejoin:
-        return createNWayMergeJoinActivity(agent, activityId, subgraphId, (IHThorNWayMergeJoinArg &)arg, kind);
+        return createNWayMergeJoinActivity(agent, activityId, subgraphId, (IHThorNWayMergeJoinArg &)arg, kind, graph);
     case TAKnwayinput:
-        return createNWayInputActivity(agent, activityId, subgraphId, (IHThorNWayInputArg &)arg, kind);
+        return createNWayInputActivity(agent, activityId, subgraphId, (IHThorNWayInputArg &)arg, kind, graph);
     case TAKnwayselect:
-        return createNWaySelectActivity(agent, activityId, subgraphId, (IHThorNWaySelectArg &)arg, kind);
+        return createNWaySelectActivity(agent, activityId, subgraphId, (IHThorNWaySelectArg &)arg, kind, graph);
     case TAKnwaygraphloopresultread:
-        return createNWayGraphLoopResultReadActivity(agent, activityId, subgraphId, (IHThorNWayGraphLoopResultReadArg &)arg, kind, graphId);
+        return createNWayGraphLoopResultReadActivity(agent, activityId, subgraphId, (IHThorNWayGraphLoopResultReadArg &)arg, kind, graph, graphId);
     case TAKnonempty:
-        return createNonEmptyActivity(agent, activityId, subgraphId, (IHThorNonEmptyArg &)arg, kind);
+        return createNonEmptyActivity(agent, activityId, subgraphId, (IHThorNonEmptyArg &)arg, kind, graph);
     case TAKcreaterowlimit:
-        return createOnFailLimitActivity(agent, activityId, subgraphId, (IHThorLimitArg &)arg, kind);
+        return createOnFailLimitActivity(agent, activityId, subgraphId, (IHThorLimitArg &)arg, kind, graph);
     case TAKexternalsource:
     case TAKexternalsink:
     case TAKexternalprocess:
-        return createExternalActivity(agent, activityId, subgraphId, (IHThorExternalArg &)arg, kind, node);
+        return createExternalActivity(agent, activityId, subgraphId, (IHThorExternalArg &)arg, kind, graph, node);
     case TAKstreamediterator:
-        return createStreamedIteratorActivity(agent, activityId, subgraphId, (IHThorStreamedIteratorArg &)arg, kind);
+        return createStreamedIteratorActivity(agent, activityId, subgraphId, (IHThorStreamedIteratorArg &)arg, kind, graph);
     }
     throw MakeStringException(-1, "UNIMPLEMENTED activity '%s'(kind=%d) at %s(%d)", activityKindStr(kind), kind, sanitizeSourceFile(__FILE__), __LINE__);
 }
@@ -343,7 +348,7 @@ EclGraphElement::EclGraphElement(EclSubGraph * _subgraph, EclSubGraph * _results
 
 void EclGraphElement::addDependsOn(EclSubGraph & other, EclGraphElement * sourceActivity, int controlId)
 {
-    dependentOn.append(other); 
+    dependentOn.append(other);
     dependentOnActivity.append(*sourceActivity);
     dependentControlId.append(controlId);
 }
@@ -404,7 +409,7 @@ bool EclGraphElement::alreadyUpToDate(IAgentContext & agent)
         Owned<IPartDescriptor> part = fdesc->getPart(0);
         RemoteFilename rfn;
         OwnedIFile file = createIFile(part->getFilename(0, rfn));
-        if (file->isFile() != foundYes)
+        if (file->isFile() != fileBool::foundYes)
             return false;
         CDateTime modified;
         file->getTime(NULL, &modified, NULL);
@@ -499,13 +504,13 @@ void EclGraphElement::createActivity(IAgentContext & agent, EclSubGraph * owner)
                                                         input.queryOutput(branchIndexes.item(i2)),  //input
                                                         input.activity.get(),   //Source act
                                                         activity.get(),         //target activity
-                                                        0,//input.id, 
-                                                        0,//id, 
+                                                        0,//input.id,
+                                                        0,//id,
                                                         0);
                         probe = & dynamic_cast<IHThorInput &> (base->queryInput());
                     }
                 }
-                else 
+                else
                 {
                     probe = subgraph->createLegacyProbe(input.queryOutput(branchIndexes.item(i2)),
                                                     input.id,
@@ -669,8 +674,8 @@ bool EclGraphElement::prepare(IAgentContext & agent, const byte * parentExtract,
         case TAKparallel:
             {
                 Owned<IHThorArg> helper = createHelper(agent, subgraph->owner);
-                unsigned numBranches = (kind == TAKsequential) ? 
-                                        ((IHThorSequentialArg *)helper.get())->numBranches() : 
+                unsigned numBranches = (kind == TAKsequential) ?
+                                        ((IHThorSequentialArg *)helper.get())->numBranches() :
                                         ((IHThorParallelArg *)helper.get())->numBranches();
                 for (unsigned branch=1; branch <= numBranches; branch++)
                     executeDependentActions(agent, parentExtract, branch);
@@ -870,7 +875,7 @@ void EclSubGraph::updateProgress()
 {
     if (!isChildGraph && agent->queryRemoteWorkunit())
     {
-        Owned<IWUGraphStats> progress = parent.updateStats(queryStatisticsComponentType(), queryStatisticsComponentName(), agent->getWorkflowId(), id);
+        Owned<IWUGraphStats> progress = parent.updateStats(queryStatisticsComponentType(), queryStatisticsComponentName(), parent.queryWfid(), id);
         IStatisticGatherer & stats = progress->queryStatsBuilder();
         updateProgress(stats);
 
@@ -882,7 +887,17 @@ void EclSubGraph::updateProgress()
             if (startGraphTime)
                 parent.updateWUStatistic(lockedwu, SSTsubgraph, subgraphid, StWhenStarted, nullptr, startGraphTime);
             if (elapsedGraphCycles)
-                parent.updateWUStatistic(lockedwu, SSTsubgraph, subgraphid, StTimeElapsed, nullptr, cycle_to_nanosec(elapsedGraphCycles));
+            {
+                unsigned __int64 elapsedTime = cycle_to_nanosec(elapsedGraphCycles);
+                parent.updateWUStatistic(lockedwu, SSTsubgraph, subgraphid, StTimeElapsed, nullptr, elapsedTime);
+                const cost_type cost = calcCost(agent->queryAgentMachineCost(), nanoToMilli(elapsedTime));
+                if (cost)
+                {
+                    StringBuffer scope;
+                    scope.append(WorkflowScopePrefix).append(parent.queryWfid()).append(":").append(subgraphid);
+                    lockedwu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTsubgraph, scope, StCostExecute, NULL, cost, 1, 0, StatsMergeReplace);
+                }
+            }
         }
     }
 }
@@ -957,10 +972,30 @@ void EclSubGraph::doExecute(const byte * parentExtract, bool checkDependencies)
 
     ForEachItemIn(ir, sinks)
         sinks.item(ir).ready();
-    ForEachItemIn(ie, sinks)
-        sinks.item(ie).execute();
-    ForEachItemIn(id, sinks)
-        sinks.item(id).stop();
+    IException *e = nullptr;
+    try
+    {
+        ForEachItemIn(ie, sinks)
+           sinks.item(ie).execute();
+    }
+    catch (IException * _e)
+    {
+        e = _e;
+    }
+    try
+    {
+       ForEachItemIn(id, sinks)
+           sinks.item(id).stop();
+    }
+    catch (IException *_e)
+    {
+        if (!e)
+            e = _e;
+        else
+            _e->Release();
+    }
+    if (e)
+        throw e;
 
     elapsedGraphCycles += (get_cycles_now() - startGraphCycles);
     executed = true;
@@ -995,7 +1030,7 @@ void EclSubGraph::execute(const byte * parentExtract)
         updateProgress();
         cleanupActivities();
     }
-    agent->updateWULogfile();//Update workunit logfile name in case of rollover
+    agent->updateWULogfile(nullptr);//Update workunit logfile name in case of rollover
 }
 
 
@@ -1105,19 +1140,19 @@ EclGraphElement * EclSubGraph::idToActivity(unsigned id)
     return NULL;
 }
 
-void EclSubGraph::reset() 
-{ 
-    executed = false; 
+void EclSubGraph::reset()
+{
+    executed = false;
     ForEachItemIn(i, subgraphs)
         subgraphs.item(i).reset();
 }
 
 //---------------------------------------------------------------------------
 
-void EclAgentQueryLibrary::updateProgress() 
+void EclAgentQueryLibrary::updateProgress()
 {
     if (graph)
-        graph->updateLibraryProgress(); 
+        graph->updateLibraryProgress();
 }
 
 void EclAgentQueryLibrary::destroyGraph()
@@ -1181,7 +1216,7 @@ void EclGraph::createFromXGMML(ILoadedDllEntry * dll, IPropertyTree * xgmml, boo
             {
                 targetGraph = targetActivity->subgraph;
                 targetGraphContext = targetGraph->parentActivityId;
-                if (sourceGraphContext == targetGraphContext) 
+                if (sourceGraphContext == targetGraphContext)
                     break;
 
                 targetActivity = recurseFindActivityFromId(targetGraph, targetGraphContext);
@@ -1208,7 +1243,7 @@ void EclGraph::execute(const byte * parentExtract)
 
     {
         Owned<IWorkUnit> wu(agent->updateWorkUnit());
-        addTimeStamp(wu, SSTgraph, queryGraphName(), StWhenStarted, agent->getWorkflowId());
+        addTimeStamp(wu, SSTgraph, queryGraphName(), StWhenStarted, wfid);
     }
 
     try
@@ -1231,7 +1266,15 @@ void EclGraph::execute(const byte * parentExtract)
             formatGraphTimerLabel(description, queryGraphName(), 0, 0);
 
             unsigned __int64 elapsedNs = milliToNano(elapsed);
-            updateWorkunitStat(wu, SSTgraph, queryGraphName(), StTimeElapsed, description.str(), elapsedNs, agent->getWorkflowId());
+            updateWorkunitStat(wu, SSTgraph, queryGraphName(), StTimeElapsed, description.str(), elapsedNs, wfid);
+
+            const cost_type cost = calcCost(agent->queryAgentMachineCost(), nanoToMilli(elapsedNs));
+            if (cost)
+            {
+                StringBuffer scope;
+                scope.append(WorkflowScopePrefix).append(wfid).append(":").append(queryGraphName());
+                wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTgraph, scope, StCostExecute, NULL, cost, 1, 0, StatsMergeReplace);
+            }
         }
 
         if (agent->queryRemoteWorkunit())
@@ -1448,7 +1491,7 @@ IWUGraphStats *EclGraph::updateStats(StatisticCreatorType creatorType, const cha
 
 void EclGraph::updateWUStatistic(IWorkUnit *lockedwu, StatisticScopeType scopeType, const char * scope, StatisticKind kind, const char * descr, unsigned __int64 value)
 {
-    updateWorkunitStat(lockedwu, scopeType, scope, kind, descr, value, agent->getWorkflowId());
+    updateWorkunitStat(lockedwu, scopeType, scope, kind, descr, value, wfid);
 }
 
 IThorChildGraph * EclGraph::resolveChildQuery(unsigned subgraphId)
@@ -1502,194 +1545,11 @@ EclGraph * EclAgent::loadGraph(const char * graphName, IConstWorkUnit * wu, ILoa
 
 extern IProbeManager *createDebugManager(IDebuggableContext *debugContext, const char *graphName);
 
-#define ABORT_POLL_PERIOD (5*1000)
-
-void EclAgent::executeThorGraph(const char * graphName)
-{
-    StringAttr wuid(wuRead->queryWuid());
-    StringAttr owner(wuRead->queryUser());
-    StringAttr cluster(wuRead->queryClusterName());
-    int priority = wuRead->getPriorityValue();
-    unsigned timelimit = queryWorkUnit()->getDebugValueInt("thorConnectTimeout", config->getPropInt("@thorConnectTimeout", 60));
-    Owned<IConstWUClusterInfo> c = getTargetClusterInfo(cluster.str());
-    if (!c)
-        throw MakeStringException(0, "Invalid thor cluster %s", cluster.str());
-    SCMStringBuffer queueName;
-    c->getThorQueue(queueName);
-    Owned<IJobQueue> jq = createJobQueue(queueName.str());
-
-    bool resubmit;
-    Owned<IWorkUnitFactory> wuFactory = getWorkUnitFactory();
-    do // loop if pause interrupted graph and needs resubmitting on resume
-    {
-        resubmit = false; // set if job interrupted in thor
-        unlockWorkUnit();
-        if (WUStatePaused == queryWorkUnit()->getState()) // check initial state - and wait if paused
-        {
-            for (;;)
-            {
-                WUAction action = wuFactory->waitForWorkUnitAction(wuid, queryWorkUnit()->getAction());
-                if (action == WUActionUnknown)
-                    throw new WorkflowException(0, "Workunit aborting", 0, WorkflowException::ABORT, MSGAUD_user);
-                if (action != WUActionPause && action != WUActionPauseNow)
-                    break;
-            }
-        }
-        {
-            Owned <IWorkUnit> w = updateWorkUnit();
-            w->setState(WUStateBlocked);
-        }
-        unlockWorkUnit();
-            
-        class cPollThread: public Thread
-        {
-            Semaphore sem;
-            bool stopped;
-            IJobQueue *jq;
-            IConstWorkUnit *wu;
-        public:
-            
-            bool timedout;
-            CTimeMon tm;
-            cPollThread(IJobQueue *_jq, IConstWorkUnit *_wu, unsigned timelimit)
-                : tm(timelimit)
-            {
-                stopped = false;
-                jq = _jq;
-                wu = _wu;
-                timedout = false;
-            }
-            ~cPollThread()
-            {
-                stop();
-            }
-            int run()
-            {
-                while (!stopped) {
-                    sem.wait(ABORT_POLL_PERIOD);
-                    if (stopped)
-                        break;
-                    if (tm.timedout()) {
-                        timedout = true;
-                        stopped = true;
-                        jq->cancelInitiateConversation();
-                    }
-                    else if (wu->aborting()) {
-                        stopped = true;
-                        jq->cancelInitiateConversation();
-                    }
-
-                }
-                return 0;
-            }
-            void stop()
-            {
-                stopped = true;
-                sem.signal();
-            }
-        } pollthread(jq,wuRead,timelimit*1000);
-
-        pollthread.start();
-
-        PROGLOG("Enqueuing on %s to run wuid=%s, graph=%s, timelimit=%d seconds, priority=%d", queueName.str(), wuid.str(), graphName, timelimit, priority);
-        IJobQueueItem* item = createJobQueueItem(wuid.str());
-        item->setOwner(owner.str());
-        item->setPriority(priority);        
-        Owned<IConversation> conversation = jq->initiateConversation(item);
-        bool got = conversation.get()!=NULL;
-        pollthread.stop();
-        pollthread.join();
-        if (!got) {
-            if (pollthread.timedout)
-                throw MakeStringException(0, "Query %s failed to start within specified timelimit (%d) seconds", wuid.str(), timelimit);
-            throw MakeStringException(0, "Query %s cancelled (1)",wuid.str());
-        }
-        // get the thor ep from whoever picked up
-
-        SocketEndpoint thorMaster;
-        MemoryBuffer msg;
-        if (!conversation->recv(msg,1000*60)) {
-            throw MakeStringException(0, "Query %s cancelled (2)",wuid.str());
-        }
-        thorMaster.deserialize(msg);
-        msg.clear().append(graphName);
-        SocketEndpoint myep;
-        myep.setLocalHost(0);
-        myep.serialize(msg);  // only used for tracing
-        if (!conversation->send(msg)) {
-            StringBuffer s("Failed to send query to Thor on ");
-            thorMaster.getUrlStr(s);
-            throw MakeStringExceptionDirect(-1, s.str()); // maybe retry?
-        }
-
-        StringBuffer eps;
-        PROGLOG("Thor on %s running %s",thorMaster.getUrlStr(eps).str(),wuid.str());
-        MemoryBuffer reply;
-        try
-        {
-            if (!conversation->recv(reply,INFINITE))
-            {
-                StringBuffer s("Failed to receive reply from thor ");
-                thorMaster.getUrlStr(s);
-                throw MakeStringExceptionDirect(-1, s.str());
-            }
-        }
-        catch (IException *e)
-        {
-            StringBuffer s("Failed to receive reply from thor ");
-            thorMaster.getUrlStr(s);
-            s.append("; (").append(e->errorCode()).append(", ");
-            e->errorMessage(s).append(")");
-            e->Release();
-            throw MakeStringExceptionDirect(-1, s.str());
-        }
-        unsigned replyCode;
-        reply.read(replyCode);
-        switch ((ThorReplyCodes) replyCode)
-        {
-            case DAMP_THOR_REPLY_PAUSED:
-            {
-                bool isException ;
-                reply.read(isException);
-                if (isException)
-                {
-                    Owned<IException> e = deserializeException(reply);
-                    VStringBuffer str("Pausing job %s caused exception", queryWorkUnit()->queryWuid());
-                    EXCLOG(e, str.str());
-                }
-                Owned <IWorkUnit> w = updateWorkUnit();
-                w->setState(WUStatePaused); // will trigger executeThorGraph to pause next time around.
-                WUAction action = w->getAction();
-                switch (action)
-                {
-                    case WUActionPause:
-                    case WUActionPauseNow:
-                        w->setAction(WUActionUnknown);
-                }
-                resubmit = true; // JCSMORE - all subgraph _could_ be done, thor will check though and not rerun
-                break;
-            }
-            case DAMP_THOR_REPLY_GOOD:
-                break;
-            case DAMP_THOR_REPLY_ERROR:
-            {
-                throw deserializeException(reply);
-            }
-            case DAMP_THOR_REPLY_ABORT:
-                throw new WorkflowException(0,"User abort requested", 0, WorkflowException::ABORT, MSGAUD_user);
-            default:
-                assertex(false);
-        }
-        reloadWorkUnit();
-    }
-    while (resubmit); // if pause interrupted job (i.e. with pausenow action), resubmit graph
-}
-
 //In case of logfile rollover, update logfile name(s) stored in workunit
 
-void EclAgent::updateWULogfile()
+void EclAgent::updateWULogfile(IWorkUnit *outputWU)
 {
-    if (logMsgHandler && config->hasProp("@name"))
+    if (logMsgHandler && agentTopology->hasProp("@name"))
     {
         StringBuffer logname;
         bool ok = logMsgHandler->getLogName(logname);
@@ -1699,8 +1559,15 @@ void EclAgent::updateWULogfile()
             rlf.setLocalPath(logname);
             rlf.getRemotePath(logname.clear());
 
-            Owned <IWorkUnit> w = updateWorkUnit();
-            w->addProcess("EclAgent", config->queryProp("@name"), GetCurrentProcessId(), logname.str());
+            if (outputWU)
+            {
+                outputWU->addProcess("EclAgent", agentTopology->queryProp("@name"), GetCurrentProcessId(), 0, nullptr, false, logname.str());
+            }
+            else
+            {
+                Owned<IWorkUnit> w = updateWorkUnit();
+                w->addProcess("EclAgent", agentTopology->queryProp("@name"), GetCurrentProcessId(), 0, nullptr, false, logname.str());
+            }
         }
         else
         {
@@ -1709,7 +1576,18 @@ void EclAgent::updateWULogfile()
         }
     }
 }
-
+EclGraph * EclAgent::addGraph(const char * graphName)
+{
+    CriticalBlock thisBlock(activeGraphCritSec);
+    EclGraph * graphPtr = loadGraph(graphName, queryWorkUnit(), dll, false);
+    activeGraphs.append(graphPtr);
+    return graphPtr;
+}
+void EclAgent::removeGraph(EclGraph * g)
+{
+    CriticalBlock thisBlock(activeGraphCritSec);
+    activeGraphs.zap(g);
+}
 void EclAgent::executeGraph(const char * graphName, bool realThor, size32_t parentExtractSize, const void * parentExtract)
 {
     assertex(parentExtractSize == 0);
@@ -1717,10 +1595,11 @@ void EclAgent::executeGraph(const char * graphName, bool realThor, size32_t pare
     {
         if (isStandAloneExe)
             throw MakeStringException(0, "Cannot execute Thor Graph in standalone mode");
-        executeThorGraph(graphName);
+        executeThorGraph(graphName, *wuRead, *agentTopology);
     }
     else
     {
+        Owned<EclGraph> activeGraph;
         try
         {
             PROGLOG("Executing hthor graph %s", graphName);
@@ -1731,8 +1610,7 @@ void EclAgent::executeGraph(const char * graphName, bool realThor, size32_t pare
                 probeManager.setown(createDebugManager(debugContext, graphName));
                 debugContext->checkBreakpoint(DebugStateGraphCreate, NULL, graphName);
             }
-
-            activeGraph.setown(loadGraph(graphName, queryWorkUnit(), dll, false));
+            activeGraph.setown(addGraph(graphName));
             unsigned guillotineTimeout = queryWorkUnit()->getDebugValueInt("maxRunTime", 0);
             if (guillotineTimeout)
                 abortmonitor->setGuillotineTimeout(guillotineTimeout);
@@ -1741,12 +1619,12 @@ void EclAgent::executeGraph(const char * graphName, bool realThor, size32_t pare
             if (!recursiveCreateDirectory(jobTempDir))
                 throw MakeStringException(0, "Failed to create temporary directory: %s", jobTempDir.str());
             activeGraph->execute(NULL);
-            updateWULogfile();//Update workunit logfile name in case of rollover
+            updateWULogfile(nullptr);//Update workunit logfile name in case of rollover
             if (guillotineTimeout)
                 abortmonitor->setGuillotineTimeout(0);
             if (debugContext)
                 debugContext->checkBreakpoint(DebugStateGraphEnd, NULL, graphName);
-            activeGraph.clear();
+            removeGraph(activeGraph.get());
             if (debugContext)
             {
                 if (isAborting)
@@ -1756,19 +1634,19 @@ void EclAgent::executeGraph(const char * graphName, bool realThor, size32_t pare
         catch (WorkflowException *e)
         {
             EXCLOG(e,"EclAgent::executeGraph");
-            activeGraph.clear();
+            removeGraph(activeGraph.get());
             throw;
         }
         catch (IException *e)
         {
             EXCLOG(e,"EclAgent::executeGraph");
-            activeGraph.clear();
+            removeGraph(activeGraph.get());
             throw;
         }
         catch (...)
         {
             PROGLOG("EclAgent::executeGraph unknown exception");
-            activeGraph.clear();
+            removeGraph(activeGraph.get());
             throw;
         }
     }
@@ -1776,8 +1654,8 @@ void EclAgent::executeGraph(const char * graphName, bool realThor, size32_t pare
 
 IHThorGraphResults * EclAgent::executeLibraryGraph(const char * libraryName, unsigned expectedInterfaceHash, unsigned activityId, const char * embeddedGraphName, const byte * parentExtract)
 {
-    Linked<EclGraph> savedGraph = activeGraph.get();
-
+    //Linked<EclGraph> savedGraph = activeGraph.get();
+    Owned<EclGraph> activeGraph;
     try
     {
         EclAgentQueryLibrary * library = loadEclLibrary(libraryName, expectedInterfaceHash, embeddedGraphName);
@@ -1786,13 +1664,10 @@ IHThorGraphResults * EclAgent::executeLibraryGraph(const char * libraryName, uns
 
         activeGraph.set(library->graph);
         activeGraph->executeLibrary(parentExtract, libraryResults);
-        activeGraph.set(savedGraph);
-
         return libraryResults.getClear();
     }
     catch (...)
     {
-        activeGraph.set(savedGraph);
         throw;
     }
 }
@@ -1804,7 +1679,7 @@ IThorChildGraph * EclAgent::resolveChildQuery(__int64 subgraphId, IHThorArg * co
 }
 
 IEclGraphResults * EclAgent::resolveLocalQuery(__int64 activityId)
-{ 
+{
     throwUnexpected();
 }
 

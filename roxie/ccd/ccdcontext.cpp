@@ -18,6 +18,8 @@
 #include "platform.h"
 #include "jlib.hpp"
 
+#include "environment.hpp"
+#include "workunit.hpp"
 #include "wujobq.hpp"
 #include "nbcd.hpp"
 #include "rtlread_imp.hpp"
@@ -38,22 +40,26 @@
 #include "roxiehelper.hpp"
 #include "enginecontext.hpp"
 
+#include <list>
+#include <string>
+#include <algorithm>
+
 using roxiemem::IRowManager;
 
 //=======================================================================================================================
 
 #define DEBUGEE_TIMEOUT 10000
-class CSlaveDebugContext : public CBaseDebugContext
+class CAgentDebugContext : public CBaseDebugContext
 {
     /*
 
-    Some thoughts on slave debugging
-    1. Something like a ping can be used to get data from slave when needed
+    Some thoughts on agent debugging
+    1. Something like a ping can be used to get data from agent when needed
     2. Should disable IBYTI processing (always use primary) - DONE
        and server-side caching - DONE
-    3. Roxie server can know what slave transactions are pending by intercepting the sends - no need for slave to call back just to indicate start of slave subgraph
-    4. There is a problem when a slave hits a breakpoint in that the breakpoint cound have been deleted by the time it gets a chance to tell the Roxie server - can't
-       happen in local case because of the critical block at the head of checkBreakpoint but the local copy of BPs out on slave CAN get out of date. Should we care?
+    3. Roxie server can know what agent transactions are pending by intercepting the sends - no need for agent to call back just to indicate start of agent subgraph
+    4. There is a problem when a agent hits a breakpoint in that the breakpoint cound have been deleted by the time it gets a chance to tell the Roxie server - can't
+       happen in local case because of the critical block at the head of checkBreakpoint but the local copy of BPs out on agent CAN get out of date. Should we care?
        Should there be a "Sorry, your breakpoints are out of date, here's the new set" response?
        Actually what we do is recheck the BP on the server, and ensure that breakpoint indexes are persistent. DONE
     5. We need to serialize over our graph info if changed since last time.
@@ -69,7 +75,7 @@ class CSlaveDebugContext : public CBaseDebugContext
     const IRoxieContextLogger &logctx; // hides base class definition with more derived class pointer
 
 public:
-    CSlaveDebugContext(IRoxieSlaveContext *_ctx, const IRoxieContextLogger &_logctx, RoxiePacketHeader &_header)
+    CAgentDebugContext(IRoxieAgentContext *_ctx, const IRoxieContextLogger &_logctx, RoxiePacketHeader &_header)
         : CBaseDebugContext(_logctx), header(_header), logctx(_logctx)
     {
         channel = header.channel;
@@ -161,7 +167,7 @@ public:
 
     virtual IRoxieQueryPacket *onDebugCallback(const RoxiePacketHeader &header, size32_t len, char *data)
     {
-        // MORE - Implies a server -> slave child -> slave grandchild type situation - need to pass call on to Roxie server (rather as I do for file callback)
+        // MORE - Implies a server -> agent child -> agent grandchild type situation - need to pass call on to Roxie server (rather as I do for file callback)
         UNIMPLEMENTED;
     }
 
@@ -209,12 +215,14 @@ class CRoxieWorkflowMachine : public WorkflowMachine
     };
 
 public:
-    CRoxieWorkflowMachine(IPropertyTree *_workflowInfo, IConstWorkUnit *_wu, bool _doOnce, const IRoxieContextLogger &_logctx)
+    CRoxieWorkflowMachine(IPropertyTree *_workflowInfo, IConstWorkUnit *_wu, bool _doOnce, bool _parallelWorkflow, unsigned _numWorkflowThreads, const IRoxieContextLogger &_logctx)
     : WorkflowMachine(_logctx)
     {
         workunit = _wu;
         workflowInfo = _workflowInfo;
         doOnce = _doOnce;
+        parallelWorkflow = _parallelWorkflow;
+        numWorkflowThreads = _numWorkflowThreads;
     }
     void returnPersistVersion(char const * logicalName, unsigned eclCRC, unsigned __int64 allCRC, bool isFile)
     {
@@ -244,6 +252,14 @@ protected:
                     workflow->queryWfid(item->queryWfid()).setState(WFStateDone);
             }
         }
+    }
+    virtual bool getParallelFlag() const override
+    {
+        return parallelWorkflow;
+    }
+    virtual unsigned getThreadNumFlag() const override
+    {
+        return numWorkflowThreads;
     }
     virtual void end()
     {
@@ -304,11 +320,15 @@ protected:
     {
         if (workunit)
         {
-            StringBuffer msg;
-            msg.append(type).append(" clause failed (execution will continue): ").append(e->errorCode()).append(": ");
-            e->errorMessage(msg);
-            WorkunitUpdate wu(&workunit->lock());
-            addExceptionToWorkunit(wu, SeverityWarning, "user", e->errorCode(), msg.str(), NULL, 0, 0, 0);
+            ErrorSeverity severity = workunit->getWarningSeverity(e->errorCode(), SeverityWarning);
+            if (severity != SeverityIgnore)
+            {
+                StringBuffer msg;
+                msg.append(type).append(" clause failed (execution will continue): ").append(e->errorCode()).append(": ");
+                e->errorMessage(msg);
+                WorkunitUpdate wu(&workunit->lock());
+                addExceptionToWorkunit(wu, severity, "user", e->errorCode(), msg.str(), NULL, 0, 0, 0);
+            }
         }
     }
     virtual void checkForAbort(unsigned wfid, IException * handling)
@@ -765,11 +785,13 @@ private:
     Owned<PersistVersion> persist;
     IArray persistReadLocks;
     bool doOnce;
+    bool parallelWorkflow;
+    unsigned numWorkflowThreads;
 };
 
-CRoxieWorkflowMachine *createRoxieWorkflowMachine(IPropertyTree *_workflowInfo, IConstWorkUnit *_wu, bool _doOnce, const IRoxieContextLogger &_logctx)
+CRoxieWorkflowMachine *createRoxieWorkflowMachine(IPropertyTree *_workflowInfo, IConstWorkUnit *_wu, bool _doOnce, bool _parallelWorkflow, unsigned _numWorkflowThreads, const IRoxieContextLogger &_logctx)
 {
-    return new CRoxieWorkflowMachine(_workflowInfo, _wu, _doOnce, _logctx);
+    return new CRoxieWorkflowMachine(_workflowInfo, _wu, _doOnce, _parallelWorkflow, _numWorkflowThreads, _logctx);
 }
 
 //=======================================================================================================================
@@ -1048,7 +1070,7 @@ public:
 
             // Note: I am the only thread reading (we only support a single input dataset in roxiepipe mode)
             MemoryBuffer reply;
-            client.readBlock(reply, readTimeout);
+            client.readBlocktms(reply, readTimeout*1000, INFINITE);
             tlen = reply.length();
             // MORE - not very robust!
             // skip past block header
@@ -1147,7 +1169,7 @@ public:
 //---------------------------------------------------------------------------------------
 
 static const StatisticsMapping graphStatistics({});
-class CRoxieContextBase : implements IRoxieSlaveContext, implements ICodeContext, implements roxiemem::ITimeLimiter, implements IRowAllocatorMetaActIdCacheCallback, public CInterface
+class CRoxieContextBase : implements IRoxieAgentContext, implements ICodeContext, implements roxiemem::ITimeLimiter, implements IRowAllocatorMetaActIdCacheCallback, public CInterface
 {
 protected:
     Owned<IWUGraphStats> graphStats;   // This needs to be destroyed very late (particularly, after the childgraphs)
@@ -1162,7 +1184,7 @@ protected:
     Owned<IPropertyTree> probeQuery;
     unsigned lastWuAbortCheck;
     unsigned startTime;
-    unsigned totSlavesReplyLen;
+    unsigned totAgentsReplyLen;
     CCycleTimer elapsedTimer;
 
     QueryOptions options;
@@ -1241,7 +1263,7 @@ public:
         xmlStoredDatasetReadFlags = ptr_none;
         aborted = false;
         exceptionLogged = false;
-        totSlavesReplyLen = 0;
+        totAgentsReplyLen = 0;
 
         allocatorMetaCache.setown(createRowAllocatorCache(this));
         rowManager.setown(roxiemem::createRowManager(options.memoryLimit, this, logctx, allocatorMetaCache, false));
@@ -1310,7 +1332,8 @@ public:
 
     virtual StringBuffer &getLogPrefix(StringBuffer &ret) const
     {
-        return logctx.getLogPrefix(ret);
+        logctx.getLogPrefix(ret);
+        return ret.append(':').append(factory->queryQueryName());
     }
 
     virtual bool isIntercepted() const
@@ -1363,7 +1386,7 @@ public:
 
     virtual void checkAbort()
     {
-        // MORE - really should try to apply limits at slave end too
+        // MORE - really should try to apply limits at agent end too
 #ifdef __linux__
         if (linuxYield)
             sched_yield();
@@ -1460,7 +1483,7 @@ public:
     virtual void noteChildGraph(unsigned id, IActivityGraph *childGraph)
     {
         if (queryTraceLevel() > 10)
-            CTXLOG("CSlaveContext %p noteChildGraph %d=%p", this, id, childGraph);
+            CTXLOG("CAgentContext %p noteChildGraph %d=%p", this, id, childGraph);
         childGraphs.setValue(id, childGraph);
     }
 
@@ -1474,7 +1497,9 @@ public:
         {
             Owned<IQueryFactory> libraryQuery = factory->lookupLibrary(extra.libraryName, extra.interfaceHash, *this);
             assertex(libraryQuery);
-            return libraryQuery->lookupGraph(this, "graph1", probeManager, *this, parentActivity);
+            IActivityGraph *ret = libraryQuery->lookupGraph(this, "graph1", probeManager, *this, parentActivity);
+            ret->setPrefix(libraryQuery->queryQueryName());
+            return ret;
         }
     }
 
@@ -1493,7 +1518,7 @@ public:
         if (debugContext)
             debugContext->checkBreakpoint(DebugStateGraphStart, NULL, graphName);
         if (collectingDetailedStatistics())
-            graphStats.setown(workUnit->updateStats(graph->queryName(), SCTroxie, queryStatisticsComponentName(), getWorkflowId(), 0));
+            graphStats.setown(workUnit->updateStats(graph->queryName(), SCTroxie, queryStatisticsComponentName(), graph->queryWorkflowId(), 0));
     }
 
     virtual void endGraph(unsigned __int64 startTimeStamp, cycle_t startCycles, bool aborting)
@@ -1515,10 +1540,10 @@ public:
                     formatGraphTimerLabel(graphDesc, graphName);
                     WorkunitUpdate progressWorkUnit(&workUnit->lock());
                     StringBuffer graphScope;
-                    graphScope.append(WorkflowScopePrefix).append(getWorkflowId()).append(":").append(graphName);
+                    graphScope.append(WorkflowScopePrefix).append(graph->queryWorkflowId()).append(":").append(graphName);
                     progressWorkUnit->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTgraph, graphScope, StWhenStarted, NULL, startTimeStamp, 1, 0, StatsMergeAppend);
                     updateWorkunitStat(progressWorkUnit, SSTgraph, graphScope, StTimeElapsed, graphDesc, elapsedTime);
-                    addTimeStamp(progressWorkUnit, SSTgraph, graphName, StWhenFinished, getWorkflowId());
+                    addTimeStamp(progressWorkUnit, SSTgraph, graphName, StWhenFinished, graph->queryWorkflowId());
                 }
                 graph->reset();
             }
@@ -1579,7 +1604,7 @@ public:
 
         if (realThor)
         {
-            executeThorGraph(name);
+            executeThorGraph(name, *workUnit, queryComponentConfig());
         }
         else
         {
@@ -1631,7 +1656,7 @@ public:
     virtual IActivityGraph * queryChildGraph(unsigned  id)
     {
         if (queryTraceLevel() > 10)
-            CTXLOG("CSlaveContext %p resolveChildGraph %d", this, id);
+            CTXLOG("CAgentContext %p resolveChildGraph %d", this, id);
         if (id == 0)
             return graph;
         IActivityGraph *childGraph = childGraphs.getValue(id);
@@ -1655,10 +1680,10 @@ public:
         return *rowManager;
     }
 
-    virtual void addSlavesReplyLen(unsigned len)
+    virtual void addAgentsReplyLen(unsigned len)
     {
         CriticalBlock b(statsCrit); // MORE: change to atomic_add, or may not need it at all?
-        totSlavesReplyLen += len;
+        totAgentsReplyLen += len;
     }
 
     virtual const char *loadResource(unsigned id)
@@ -1703,7 +1728,7 @@ public:
     virtual char *getDaliServers() { throwUnexpected(); }
     virtual unsigned getWorkflowId() { return 0; } // this is a virtual which is implemented in IGlobalContext
 
-    // The following from ICodeContext should never be executed in slave activity. If we are on Roxie server, they will be implemented by more derived CRoxieServerContext class
+    // The following from ICodeContext should never be executed in agent activity. If we are on Roxie server, they will be implemented by more derived CRoxieServerContext class
     virtual void setResultBool(const char *name, unsigned sequence, bool value) { throwUnexpected(); }
     virtual void setResultData(const char *name, unsigned sequence, int len, const void * data) { throwUnexpected(); }
     virtual void setResultDecimal(const char * stepname, unsigned sequence, int len, int precision, bool isSigned, const void *val) { throwUnexpected(); }
@@ -2089,7 +2114,7 @@ protected:
             if (context)
                 return *context;
             else
-                throw MakeStringException(ROXIE_CODEGEN_ERROR, "Code generation error - attempting to access stored variable on slave");
+                throw MakeStringException(ROXIE_CODEGEN_ERROR, "Code generation error - attempting to access stored variable on agent");
         case ResultSequencePersist:
             {
                 CriticalBlock b(contextCrit);
@@ -2261,211 +2286,31 @@ protected:
         }
         throw MakeStringException(ROXIE_DATA_ERROR, "Failed to retrieve data value %s", stepname);
     }
-
-    // Copied from eclgraph.cpp, in the hope that we will be deleting that code soon
-    void executeThorGraph(const char *graphName)
-    {
-        assertex(workUnit);
-        StringAttr wuid(workUnit->queryWuid());
-        StringAttr owner(workUnit->queryUser());
-        StringAttr cluster(workUnit->queryClusterName());
-
-        int priority = workUnit->getPriorityValue();
-        unsigned timelimit = workUnit->getDebugValueInt("thorConnectTimeout", defaultThorConnectTimeout);
-        Owned<IConstWUClusterInfo> c = getTargetClusterInfo(cluster.str());
-        if (!c)
-            throw MakeStringException(0, "Invalid thor cluster %s", cluster.str());
-        SCMStringBuffer queueName;
-        c->getThorQueue(queueName);
-        Owned<IJobQueue> jq = createJobQueue(queueName.str());
-        Owned<IWorkUnitFactory> wuFactory = getWorkUnitFactory();
-        bool resubmit;
-        do // loop if pause interrupted graph and needs resubmitting on resume
-        {
-            resubmit = false; // set if job interrupted in thor
-            if (WUStatePaused == workUnit->getState()) // check initial state - and wait if paused
-            {
-                for (;;)
-                {
-                    WUAction action = wuFactory->waitForWorkUnitAction(wuid, queryWorkUnit()->getAction());
-                    if (action == WUActionUnknown)
-                        throw new WorkflowException(0, "Workunit aborting", 0, WorkflowException::ABORT, MSGAUD_user);
-                    if (action != WUActionPause && action != WUActionPauseNow)
-                        break;
-                }
-            }
-            setWUState(WUStateBlocked);
-
-            class cPollThread: public Thread  // MORE - why do we ned a thread here?
-            {
-                Semaphore sem;
-                bool stopped;
-                IJobQueue *jq;
-                IConstWorkUnit *wu;
-            public:
-
-                bool timedout;
-                CTimeMon tm;
-                cPollThread(IJobQueue *_jq, IConstWorkUnit *_wu, unsigned timelimit)
-                    : tm(timelimit)
-                {
-                    stopped = false;
-                    jq = _jq;
-                    wu = _wu;
-                    timedout = false;
-                }
-                ~cPollThread()
-                {
-                    stop();
-                }
-                int run()
-                {
-                    while (!stopped) {
-                        sem.wait(ABORT_POLL_PERIOD);
-                        if (stopped)
-                            break;
-                        if (tm.timedout()) {
-                            timedout = true;
-                            stopped = true;
-                            jq->cancelInitiateConversation();
-                        }
-                        else if (wu->aborting()) {
-                            stopped = true;
-                            jq->cancelInitiateConversation();
-                        }
-
-                    }
-                    return 0;
-                }
-                void stop()
-                {
-                    stopped = true;
-                    sem.signal();
-                }
-            } pollthread(jq, workUnit, timelimit*1000);
-
-            pollthread.start();
-
-            PROGLOG("Enqueuing on %s to run wuid=%s, graph=%s, timelimit=%d seconds, priority=%d", queueName.str(), wuid.str(), graphName, timelimit, priority);
-            IJobQueueItem* item = createJobQueueItem(wuid.str());
-            item->setOwner(owner.str());
-            item->setPriority(priority);
-            Owned<IConversation> conversation = jq->initiateConversation(item);
-            bool got = conversation.get()!=NULL;
-            pollthread.stop();
-            pollthread.join();
-            if (!got)
-            {
-                if (pollthread.timedout)
-                    throw MakeStringException(0, "Query %s failed to start within specified timelimit (%d) seconds", wuid.str(), timelimit);
-                throw MakeStringException(0, "Query %s cancelled (1)",wuid.str());
-            }
-            // get the thor ep from whoever picked up
-
-            SocketEndpoint thorMaster;
-            MemoryBuffer msg;
-            if (!conversation->recv(msg,1000*60)) {
-                throw MakeStringException(0, "Query %s cancelled (2)",wuid.str());
-            }
-            thorMaster.deserialize(msg);
-            msg.clear().append(graphName);
-            SocketEndpoint myep;
-            myep.setLocalHost(0);
-            myep.serialize(msg);  // only used for tracing
-            if (!conversation->send(msg)) {
-                StringBuffer s("Failed to send query to Thor on ");
-                thorMaster.getUrlStr(s);
-                throw MakeStringExceptionDirect(-1, s.str()); // maybe retry?
-            }
-
-            StringBuffer eps;
-            PROGLOG("Thor on %s running %s",thorMaster.getUrlStr(eps).str(),wuid.str());
-            MemoryBuffer reply;
-            try
-            {
-                if (!conversation->recv(reply,INFINITE))
-                {
-                    StringBuffer s("Failed to receive reply from thor ");
-                    thorMaster.getUrlStr(s);
-                    throw MakeStringExceptionDirect(-1, s.str());
-                }
-            }
-            catch (IException *e)
-            {
-                StringBuffer s("Failed to receive reply from thor ");
-                thorMaster.getUrlStr(s);
-                s.append("; (").append(e->errorCode()).append(", ");
-                e->errorMessage(s).append(")");
-                e->Release();
-                throw MakeStringExceptionDirect(-1, s.str());
-            }
-            unsigned replyCode;
-            reply.read(replyCode);
-            switch ((ThorReplyCodes) replyCode)
-            {
-                case DAMP_THOR_REPLY_PAUSED:
-                {
-                    bool isException ;
-                    reply.read(isException);
-                    if (isException)
-                    {
-                        Owned<IException> e = deserializeException(reply);
-                        VStringBuffer str("Pausing job %s caused exception", wuid.str());
-                        EXCLOG(e, str.str());
-                    }
-                    WorkunitUpdate w(&workUnit->lock());
-                    w->setState(WUStatePaused); // will trigger executeThorGraph to pause next time around.
-                    WUAction action = w->getAction();
-                    switch (action)
-                    {
-                        case WUActionPause:
-                        case WUActionPauseNow:
-                            w->setAction(WUActionUnknown);
-                    }
-                    resubmit = true; // JCSMORE - all subgraph _could_ be done, thor will check though and not rerun
-                    break;
-                }
-                case DAMP_THOR_REPLY_GOOD:
-                    break;
-                case DAMP_THOR_REPLY_ERROR:
-                {
-                    throw deserializeException(reply);
-                }
-                case DAMP_THOR_REPLY_ABORT:
-                    throw new WorkflowException(0,"User abort requested", 0, WorkflowException::ABORT, MSGAUD_user);
-                default:
-                    throwUnexpected();
-            }
-            workUnit->forceReload();
-        }
-        while (resubmit); // if pause interrupted job (i.e. with pausenow action), resubmit graph
-
-    }
 };
 
 //-----------------------------------------------------------------------------------------------
 
-class CSlaveContext : public CRoxieContextBase
+class CAgentContext : public CRoxieContextBase
 {
 protected:
     RoxiePacketHeader *header;
 
 public:
-    CSlaveContext(const IQueryFactory *_factory, const SlaveContextLogger &_logctx, IRoxieQueryPacket *_packet, bool _hasChildren)
+    CAgentContext(const IQueryFactory *_factory, const AgentContextLogger &_logctx, IRoxieQueryPacket *_packet, bool _hasChildren)
     : CRoxieContextBase(_factory, _logctx)
     {
         if (_packet)
         {
             header = &_packet->queryHeader();
             const byte *traceInfo = _packet->queryTraceInfo();
-            options.setFromSlaveLoggingFlags(*traceInfo);
+            options.setFromAgentLoggingFlags(*traceInfo);
             bool debuggerActive = (*traceInfo & LOGGING_DEBUGGERACTIVE) != 0 && _hasChildren;  // No option to debug simple remote activity
             if (debuggerActive)
             {
-                CSlaveDebugContext *slaveDebugContext = new CSlaveDebugContext(this, logctx, *header);
-                slaveDebugContext->init(_packet);
-                debugContext.setown(slaveDebugContext);
-                probeManager.setown(createDebugManager(debugContext, "slaveDebugger"));
+                CAgentDebugContext *agentDebugContext = new CAgentDebugContext(this, logctx, *header);
+                agentDebugContext->init(_packet);
+                debugContext.setown(agentDebugContext);
+                probeManager.setown(createDebugManager(debugContext, "agentDebugger"));
             }
         }
         else
@@ -2490,7 +2335,7 @@ public:
     virtual const IResolvedFile *resolveLFN(const char *filename, bool isOpt, bool isPrivilegedUser)
     {
         CDateTime cacheDate; // Note - this is empty meaning we don't know...
-        return querySlaveDynamicFileCache()->lookupDynamicFile(*this, filename, cacheDate, 0, header, isOpt, false);
+        return queryAgentDynamicFileCache()->lookupDynamicFile(*this, filename, cacheDate, 0, header, isOpt, false);
     }
 
     virtual IRoxieWriteHandler *createLFN(const char *filename, bool overwrite, bool extend, const StringArray &clusters, bool isPrivilegedUser)
@@ -2500,7 +2345,7 @@ public:
 
     virtual void onFileCallback(const RoxiePacketHeader &header, const char *lfn, bool isOpt, bool isLocal, bool isPrivilegedUser)
     {
-        // On a slave, we need to request info using our own header (not the one passed in) and need to get global rather than just local info
+        // On a agent, we need to request info using our own header (not the one passed in) and need to get global rather than just local info
         // (possibly we could get just local if the channel matches but not sure there is any point)
         Owned<const IResolvedFile> dFile = resolveLFN(lfn, isOpt, isPrivilegedUser);
         if (dFile)
@@ -2521,20 +2366,20 @@ public:
 
     virtual void noteProcessed(unsigned subgraphId, unsigned activityId, unsigned _idx, unsigned _processed, unsigned _strands) const
     {
-        const SlaveContextLogger &slaveLogCtx = static_cast<const SlaveContextLogger &>(logctx);
-        slaveLogCtx.putStatProcessed(subgraphId, activityId, _idx, _processed, _strands);
+        const AgentContextLogger &agentLogCtx = static_cast<const AgentContextLogger &>(logctx);
+        agentLogCtx.putStatProcessed(subgraphId, activityId, _idx, _processed, _strands);
     }
 
     virtual void mergeActivityStats(const CRuntimeStatisticCollection &fromStats, unsigned subgraphId, unsigned activityId) const
     {
-        const SlaveContextLogger &slaveLogCtx = static_cast<const SlaveContextLogger &>(logctx);
-        slaveLogCtx.putStats(subgraphId, activityId, fromStats);
+        const AgentContextLogger &agentLogCtx = static_cast<const AgentContextLogger &>(logctx);
+        agentLogCtx.putStats(subgraphId, activityId, fromStats);
     }
 };
 
-IRoxieSlaveContext *createSlaveContext(const IQueryFactory *_factory, const SlaveContextLogger &_logctx, IRoxieQueryPacket *packet, bool hasChildren)
+IRoxieAgentContext *createAgentContext(const IQueryFactory *_factory, const AgentContextLogger &_logctx, IRoxieQueryPacket *packet, bool hasChildren)
 {
-    return new CSlaveContext(_factory, _logctx, packet, hasChildren);
+    return new CAgentContext(_factory, _logctx, packet, hasChildren);
 }
 
 //-----------------------------------------------------------------------------------------------
@@ -2548,9 +2393,9 @@ class CRoxieServerDebugContext : extends CBaseServerDebugContext
     //    semaphore and it all becomes easier to code... Anything calling checkBreakPoint while program state is "in debugger" will block on that critSec.
     // 3. I think we need to recheck breakpoints on Roxie server but just check not deleted
 public:
-    IRoxieSlaveContext *ctx;
+    IRoxieAgentContext *ctx;
 
-    CRoxieServerDebugContext(IRoxieSlaveContext *_ctx, const IContextLogger &_logctx, IPropertyTree *_queryXGMML)
+    CRoxieServerDebugContext(IRoxieAgentContext *_ctx, const IContextLogger &_logctx, IPropertyTree *_queryXGMML)
         : CBaseServerDebugContext(_logctx, _queryXGMML), ctx(_ctx)
     {
     }
@@ -2600,45 +2445,45 @@ public:
 
     virtual IRoxieQueryPacket *onDebugCallback(const RoxiePacketHeader &header, size32_t len, char *data)
     {
-        MemoryBuffer slaveInfo;
-        slaveInfo.setBuffer(len, data, false);
+        MemoryBuffer agentInfo;
+        agentInfo.setBuffer(len, data, false);
         unsigned debugSequence;
-        slaveInfo.read(debugSequence);
+        agentInfo.read(debugSequence);
         {
             CriticalBlock b(breakCrit); // we want to wait until it's our turn before updating the graph info or the counts get ahead of the current row and life is confusing
-            char slaveStateChar;
-            slaveInfo.read(slaveStateChar);
-            DebugState slaveState = (DebugState) slaveStateChar;
-            if (slaveState==DebugStateGraphFinished)
+            char agentStateChar;
+            agentInfo.read(agentStateChar);
+            DebugState agentState = (DebugState) agentStateChar;
+            if (agentState==DebugStateGraphFinished)
             {
                 unsigned numCounts;
-                slaveInfo.read(numCounts);
+                agentInfo.read(numCounts);
                 while (numCounts)
                 {
                     StringAttr edgeId;
                     unsigned edgeCount;
-                    slaveInfo.read(edgeId);
-                    slaveInfo.read(edgeCount);
+                    agentInfo.read(edgeId);
+                    agentInfo.read(edgeCount);
                     Owned<IGlobalEdgeRecord> thisEdge = getEdgeRecord(edgeId);
                     thisEdge->incrementCount(edgeCount, sequence);
                     numCounts--;
                 }
             }
-            slaveInfo.read(currentBreakpointUID);
-            memsize_t slaveActivity;
+            agentInfo.read(currentBreakpointUID);
+            memsize_t agentActivity;
             unsigned channel;
             __uint64 tmp;
-            slaveInfo.read(tmp);
-            slaveActivity = (memsize_t)tmp;
-            slaveInfo.read(channel);
+            agentInfo.read(tmp);
+            agentActivity = (memsize_t)tmp;
+            agentInfo.read(channel);
             assertex(currentGraph);
-            currentGraph->deserializeProxyGraphs(slaveState, slaveInfo, (IActivityBase *) slaveActivity, channel);
-            if (slaveState != DebugStateGraphFinished) // MORE - this is debatable - may (at least sometimes) want a child graph finished to be a notified event...
+            currentGraph->deserializeProxyGraphs(agentState, agentInfo, (IActivityBase *) agentActivity, channel);
+            if (agentState != DebugStateGraphFinished) // MORE - this is debatable - may (at least sometimes) want a child graph finished to be a notified event...
             {
-                StringBuffer slaveActivityId;
-                slaveInfo.read(slaveActivityId);
-                IActivityDebugContext *slaveActivityCtx = slaveActivityId.length() ? currentGraph->lookupActivityByEdgeId(slaveActivityId.str()) : NULL;
-                checkBreakpoint(slaveState, slaveActivityCtx , NULL);
+                StringBuffer agentActivityId;
+                agentInfo.read(agentActivityId);
+                IActivityDebugContext *agentActivityCtx = agentActivityId.length() ? currentGraph->lookupActivityByEdgeId(agentActivityId.str()) : NULL;
+                checkBreakpoint(agentState, agentActivityCtx , NULL);
             }
         }
         MemoryBuffer mb;
@@ -2660,13 +2505,13 @@ public:
         if (running)
             throw MakeStringException(ROXIE_DEBUG_ERROR, "Command not available while query is running");
         output->outputBeginNested("Variables", true);
-        if (!type || stricmp(type, "temporary"))
+        if (!type || strieq(type, "temporary"))
         {
             output->outputBeginNested("Temporary", true);
             ctx->printResults(output, name, (unsigned) ResultSequenceInternal);
             output->outputEndNested("Temporary");
         }
-        if (!type || stricmp(type, "global"))
+        if (!type || strieq(type, "global"))
         {
             output->outputBeginNested("Global", true);
             ctx->printResults(output, name, (unsigned) ResultSequenceStored);
@@ -2740,7 +2585,7 @@ protected:
 
     void init()
     {
-        totSlavesReplyLen = 0;
+        totAgentsReplyLen = 0;
         isRaw = false;
         isBlocked = false;
         isNative = true;
@@ -2811,7 +2656,7 @@ public:
     {
         init();
         rowManager->setMemoryLimit(options.memoryLimit);
-        workflow.setown(_factory->createWorkflowMachine(workUnit, true, logctx));
+        workflow.setown(_factory->createWorkflowMachine(workUnit, true, logctx, options));
         context.setown(createPTree(ipt_caseInsensitive|ipt_fast));
     }
 
@@ -2821,7 +2666,7 @@ public:
         init();
         workUnit.set(_workUnit);
         rowManager->setMemoryLimit(options.memoryLimit);
-        workflow.setown(_factory->createWorkflowMachine(workUnit, false, logctx));
+        workflow.setown(_factory->createWorkflowMachine(workUnit, false, logctx, options));
         context.setown(createPTree(ipt_caseInsensitive|ipt_fast));
 
         //MORE: Use various debug settings to override settings:
@@ -2873,7 +2718,7 @@ public:
         rowManager->setActivityTracking(context->getPropBool("_TraceMemory", false));
         rowManager->setMemoryLimit(options.memoryLimit);
 
-        workflow.setown(_factory->createWorkflowMachine(workUnit, false, logctx));
+        workflow.setown(_factory->createWorkflowMachine(workUnit, false, logctx, options));
     }
 
     virtual roxiemem::IRowManager &queryRowManager()
@@ -2951,15 +2796,15 @@ public:
         return rowManager->getMemoryUsage();
     }
 
-    virtual unsigned getSlavesReplyLen()
+    virtual unsigned getAgentsReplyLen()
     {
-        return totSlavesReplyLen;
+        return totAgentsReplyLen;
     }
 
     virtual void process()
     {
         MTIME_SECTION(myTimer, "Process");
-        QueryTerminationCleanup threadCleanup;
+        QueryTerminationCleanup threadCleanup(true);
         EclProcessFactory pf = (EclProcessFactory) factory->queryDll()->getEntry("createProcess");
         Owned<IEclProcess> p = pf();
         try
@@ -3010,6 +2855,11 @@ public:
             debugContext->debugTerminate();
         if (workUnit)
         {
+#ifdef _CONTAINERIZED
+            // signal to any lingering Thor's that job is complete and they can quit before timeout.
+            executeGraphOnLingeringThor(*workUnit, nullptr, nullptr);
+#endif
+
             if (options.failOnLeaks && !failed)
             {
                 cleanupGraphs();
@@ -3136,7 +2986,11 @@ public:
     virtual StringBuffer &getQueryId(StringBuffer &result, bool isShared) const
     {
         if (workUnit)
-            result.append(workUnit->queryWuid()); // In workunit mode, this works for both shared and non-shared variants
+        {
+            if (isShared)
+                result.append('Q');
+            result.append(workUnit->queryWuid());
+        }
         else if (isShared)
             result.append('Q').append(factory->queryHash());
         else
@@ -3757,6 +3611,10 @@ public:
     }
     virtual char *getGroupName()
     {
+#ifdef _CONTAINERIZED
+        // in a containerized setup, the group is moving..
+        return strdup("unknown");
+#endif
         StringBuffer groupName;
         if (workUnit && clusterNames.length())
         {
@@ -3821,6 +3679,19 @@ public:
     }
     virtual char *getPlatform()
     {
+#ifdef _CONTAINERIZED
+        /* NB: platform specs. are defined if agent is running in the context of
+         * another engine, e.g. query has been submitted to Thor, but some code is
+        * executing outside of it.
+        *
+        * If not defined then assumed to be executing in roxie context,
+        * where platform() defaults to "roxie".
+        */
+        StringBuffer type;
+        if (!topology->getProp("platform/@type", type))
+            type.set("roxie");
+        return type.detach();
+#else
         if (clusterNames.length())
         {
             const char * cluster = clusterNames.tos();
@@ -3831,6 +3702,7 @@ public:
         }
         else
             return strdup("roxie");
+#endif
     }
     virtual char *getWuid()
     {
@@ -3862,7 +3734,11 @@ public:
         addWuExceptionEx(text, code, 2, MSGAUD_user, "user");
     }
 
-    virtual unsigned getWorkflowId() { return workflow->queryCurrentWfid(); }
+    virtual unsigned getWorkflowId()
+    {
+        logctx.CTXLOG("Trying to access WFID from workflow");
+        throwUnexpected();
+    }
 
     void doNotify(char const * name, char const * text)
     {
@@ -3953,6 +3829,16 @@ public:
         {
             if (clusterWidth == -1)
             {
+#ifdef _CONTAINERIZED
+                /* NB: platform specs. are defined if agent is running in the context of
+                 * another engine, e.g. query has been submitted to Thor, but some code is
+                 * executing outside of it.
+                 *
+                 * If not defined then assumed to be executing in roxie context,
+                 * where getNodes() defaults to 'numChannels'.
+                 */
+                clusterWidth = topology->getPropInt("platform/@width", numChannels);
+#else
                 const char * cluster = clusterNames.tos();
                 Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(cluster);
                 if (!clusterInfo)
@@ -3961,6 +3847,7 @@ public:
                     clusterWidth = numChannels;  // We assume it's the current roxie - that's ok so long as roxie's don't call other roxies.
                 else
                     clusterWidth = clusterInfo->getSize();
+#endif
             }
             return clusterWidth;
         }

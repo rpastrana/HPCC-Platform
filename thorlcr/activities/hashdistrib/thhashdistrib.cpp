@@ -38,8 +38,8 @@ class HashDistributeMasterBase : public CMasterActivity
     mptag_t mptag;
     mptag_t mptag2; // for tag 2
 public:
-    HashDistributeMasterBase(DistributeMode _mode, CMasterGraphElement *info) 
-        : CMasterActivity(info), mode(_mode) 
+    HashDistributeMasterBase(DistributeMode _mode, CMasterGraphElement *info, const StatisticsMapping &actStatsMapping = basicActivityStatistics) 
+        : CMasterActivity(info, actStatsMapping), mode(_mode) 
     {
         mptag = TAG_NULL;
         mptag2 = TAG_NULL;
@@ -75,35 +75,12 @@ public:
     HashDistributeActivityMaster(DistributeMode mode, CMasterGraphElement *info) : HashDistributeMasterBase(mode, info) { }
 };
 
-class HashJoinDistributeActivityMaster : public HashDistributeActivityMaster
+class HashJoinDistributeActivityMaster : public HashDistributeMasterBase
 {
-    Owned<ProgressInfo> lhsProgress, rhsProgress;
-
 public:
-    HashJoinDistributeActivityMaster(DistributeMode mode, CMasterGraphElement *info) : HashDistributeActivityMaster(mode, info)
+    HashJoinDistributeActivityMaster(DistributeMode mode, CMasterGraphElement *info)
+        : HashDistributeMasterBase(mode, info, hashJoinActivityStatistics)
     {
-        lhsProgress.setown(new ProgressInfo(queryJob()));
-        rhsProgress.setown(new ProgressInfo(queryJob()));
-    }
-    virtual void deserializeStats(unsigned node, MemoryBuffer &mb)
-    {
-        HashDistributeActivityMaster::deserializeStats(node, mb);
-        rowcount_t lhsProgressCount, rhsProgressCount;
-        mb.read(lhsProgressCount);
-        mb.read(rhsProgressCount);
-        lhsProgress->set(node, lhsProgressCount);
-        rhsProgress->set(node, rhsProgressCount);
-    }
-    virtual void getEdgeStats(IStatisticGatherer & stats, unsigned idx)
-    {
-        //This should be an activity stats
-        HashDistributeActivityMaster::getEdgeStats(stats, idx);
-        assertex(0 == idx);
-        lhsProgress->processInfo();
-        rhsProgress->processInfo();
-
-        stats.addStatistic(StNumLeftRows, lhsProgress->queryTotal());
-        stats.addStatistic(StNumRightRows, rhsProgress->queryTotal());
     }
 };
 
@@ -163,7 +140,7 @@ class ReDistributeActivityMaster : public HashDistributeMasterBase
     mptag_t statstag;
 
 public:
-    ReDistributeActivityMaster(CMasterGraphElement *info) : HashDistributeMasterBase(DM_redistribute, info) 
+    ReDistributeActivityMaster(CMasterGraphElement *info) : HashDistributeMasterBase(DM_redistribute, info)
     { 
         statstag = container.queryJob().allocateMPTag();
     }
@@ -178,7 +155,7 @@ public:
     }
     void process()
     {
-        ActPrintLog("ReDistributeActivityMaster::process");
+        ::ActPrintLog(this, thorDetailedLogLevel, "ReDistributeActivityMaster::process");
         HashDistributeMasterBase::process();        
         IHThorHashDistributeArg *helper = (IHThorHashDistributeArg *)queryHelper(); 
         unsigned n = container.queryJob().querySlaves();
@@ -190,26 +167,20 @@ public:
                 if (abortSoon)
                     return;
                 CMessageBuffer mb;
-#ifdef _TRACE
-                ActPrintLog("ReDistribute process, Receiving on tag %d",statstag);
-#endif
+                ::ActPrintLog(this, thorDetailedLogLevel, "ReDistribute process, Receiving on tag %d",statstag);
                 rank_t sender;
                 if (!receiveMsg(mb, RANK_ALL, statstag, &sender)||abortSoon) 
                     return;
-#ifdef _TRACE
-                ActPrintLog("ReDistribute process, Received size from %d",sender);
-#endif
+                ::ActPrintLog(this, thorDetailedLogLevel, "ReDistribute process, Received size from %d",sender);
                 sender--;
                 assertex((unsigned)sender<n);
                 mb.read(sizes[sender]);
             }
-            ActPrintLog("ReDistributeActivityMaster::process sizes got");
+            ::ActPrintLog(this, thorDetailedLogLevel, "ReDistributeActivityMaster::process sizes got");
             for (i=0;i<n;i++) {
                 CMessageBuffer mb;
                 mb.append(n*sizeof(offset_t),sizes);
-#ifdef _TRACE
-                ActPrintLog("ReDistribute process, Replying to node %d tag %d",i+1,statstag);
-#endif
+                ::ActPrintLog(this, thorDetailedLogLevel, "ReDistribute process, Replying to node %d tag %d",i+1,statstag);
                 if (!queryJobChannel().queryJobComm().send(mb, (rank_t)i+1, statstag))
                     return;
             }
@@ -233,7 +204,7 @@ public:
             ActPrintLog(e,"ReDistribute");
             throw;
         }
-        ActPrintLog("ReDistributeActivityMaster::process exit");
+        ::ActPrintLog(this, thorDetailedLogLevel, "ReDistributeActivityMaster::process exit");
     }
     void abort()
     {

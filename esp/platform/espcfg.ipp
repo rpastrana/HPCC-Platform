@@ -42,6 +42,7 @@ using namespace std;
 #include "esp.hpp"
 #include "espplugin.hpp"
 #include "espcache.hpp"
+#include "espcontext.hpp"
 
 struct binding_cfg
 {
@@ -116,14 +117,12 @@ public:
 
     virtual ~CSessionCleaner()
     {
-        stopping = true;
-        sem.signal();
-        join();
     }
 
     void setIsDetached(bool isDetached) {m_isDetached = isDetached;}
 
     virtual int run();
+    void stop();
 };
 
 static CriticalSection attachcrit;
@@ -159,6 +158,9 @@ private:
     bool m_detachedFromDali = false;
     bool m_subscribedToDali = false;
     StringBuffer m_daliAttachStateFileName;
+    bool sdsSessionEnsured = false;
+    bool sdsSessionNeeded = false;
+    int  serverSessionTimeoutSeconds = 120 * ESP_SESSION_TIMEOUT;//2 x clientSessionTimeoutSeconds
 
 private:
     CEspConfig(CEspConfig &);
@@ -219,6 +221,8 @@ public:
 
     ~CEspConfig()
     {
+         if (m_sessionCleaner.get() != nullptr)
+            m_sessionCleaner->stop();
         closedownClientProcess();
     }
 
@@ -233,8 +237,9 @@ public:
 
     const SocketEndpoint &getLocalEndpoint(){return m_address;}
 
-    void ensureESPSessionInTree(IPropertyTree* sessionRoot, const char* procName);
-    void ensureSDSSessionDomains();
+    void readSessionDomainsSetting();
+    void ensureSDSSessionApplications(IPropertyTree* espSession);
+    void ensureSDSSession();
 
     void loadProtocols();
     void loadServices();
@@ -243,6 +248,7 @@ public:
 
     void loadAll()
     {
+        loadProtocols();
         DBGLOG("loadServices");
         try
         {
@@ -254,7 +260,6 @@ public:
                 UERRLOG("Could not load ESP service(s) while DETACHED from DALI - Consider re-attaching ESP process.");
             throw(ie);
         }
-        loadProtocols();
         loadBindings();
         if(useDali)
             startEsdlMonitor();
@@ -300,7 +305,6 @@ public:
 
     void stopping()
     {
-        clearPasswordsFromSDS();
         try
         {
             if (serverstatus)

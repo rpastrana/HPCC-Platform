@@ -77,7 +77,7 @@ class CReceiveManager : implements IReceiveManager, public CInterface
     /*
      * Handling lost packets
      *
-     * We try to make lost packets unlikely by telling slaves when to send (and making sure they don't send unless
+     * We try to make lost packets unlikely by telling agents when to send (and making sure they don't send unless
      * there's a good chance that socket buffer will have room). But we can't legislate for network issues.
      *
      * What packets can be lost?
@@ -368,7 +368,7 @@ class CReceiveManager : implements IReceiveManager, public CInterface
 
         unsigned timedOut(UdpSenderEntry *requester)
         {
-            // MORE - this will retry indefinitely if slave in question is dead
+            // MORE - this will retry indefinitely if agent in question is dead
             currentRequester = nullptr;
             if (requester->retryOnTimeout())
                 enqueueRequest(requester);
@@ -466,54 +466,66 @@ class CReceiveManager : implements IReceiveManager, public CInterface
             adjustPriority(1);
         #endif
             UdpRequestToSendMsg msg;
-            unsigned timeout = 5000;  // Is this too long?
+            unsigned timeoutExpires = msTick() + 5000;
             while (running)
             {
                 try
                 {
                     const unsigned l = sizeof(msg);
                     unsigned int res ;
-                    flow_socket->readtms(&msg, l, l, res, timeout);
-                    assert(res==l);
-                    if (udpTraceLevel > 5)
+                    unsigned now = msTick();
+                    if (now >= timeoutExpires)
                     {
-                        StringBuffer ipStr;
-                        DBGLOG("UdpReceiver: received %s msg from node=%s", flowType::name(msg.cmd), msg.sourceNode.getTraceText(ipStr).str());
+                        if (currentRequester)
+                            timeoutExpires = now + timedOut(currentRequester);
+                        else
+                            timeoutExpires = now + 5000;
                     }
-                    UdpSenderEntry *sender = &parent.sendersTable[msg.sourceNode.getNodeAddress()];
-                    switch (msg.cmd)
+                    else
                     {
-                    case flowType::request_to_send:
-                        if (pendingRequests || currentRequester)
-                            enqueueRequest(sender);   // timeout does not change - there's still an active request
-                        else
-                            timeout = okToSend(sender);
-                        break;
-
-                    case flowType::send_completed:
-                        parent.inflight += msg.packets;
-                        if (noteDone(sender) && pendingRequests)
-                            timeout = sendNextOk();
-                        else
-                            timeout = 5000;
-                        break;
-
-                    case flowType::request_to_send_more:
-                        parent.inflight += msg.packets;
-                        if (noteDone(sender))
+                        flow_socket->readtms(&msg, l, l, res, timeoutExpires-now);
+                        now = msTick();
+                        assert(res==l);
+                        if (udpTraceLevel > 5)
                         {
-                            if (pendingRequests)
-                            {
-                                enqueueRequest(sender);
-                                timeout = sendNextOk();
-                            }
-                            else
-                                timeout = okToSend(sender);
+                            StringBuffer ipStr;
+                            DBGLOG("UdpReceiver: received %s msg from node=%s", flowType::name(msg.cmd), msg.sourceNode.getTraceText(ipStr).str());
                         }
-                        break;
+                        UdpSenderEntry *sender = &parent.sendersTable[msg.sourceNode.getNodeAddress()];
+                        switch (msg.cmd)
+                        {
+                        case flowType::request_to_send:
+                            if (pendingRequests || currentRequester)
+                                enqueueRequest(sender);   // timeoutExpires does not change - there's still an active request
+                            else
+                                timeoutExpires = now + okToSend(sender);
+                            break;
 
-                    default:
-                        DBGLOG("UdpReceiver: received unrecognized flow control message cmd=%i", msg.cmd);
+                        case flowType::send_completed:
+                            parent.inflight += msg.packets;
+                            if (noteDone(sender) && pendingRequests)
+                                timeoutExpires = now + sendNextOk();
+                            else
+                                timeoutExpires = now + 5000;
+                            break;
+
+                        case flowType::request_to_send_more:
+                            parent.inflight += msg.packets;
+                            if (noteDone(sender))
+                            {
+                                if (pendingRequests)
+                                {
+                                    enqueueRequest(sender);
+                                    timeoutExpires = now + sendNextOk();
+                                }
+                                else
+                                    timeoutExpires = now + okToSend(sender);
+                            }
+                            break;
+
+                        default:
+                            DBGLOG("UdpReceiver: received unrecognized flow control message cmd=%i", msg.cmd);
+                        }
                     }
                 }
                 catch (IException *e)
@@ -522,9 +534,9 @@ class CReceiveManager : implements IReceiveManager, public CInterface
                     if (e->errorCode() == JSOCKERR_timeout_expired)
                     {
                         // A timeout implies that there is an active permission to send, but nothing has happened.
-                        // Could be a really busy (or crashed) slave, could be a lost packet
+                        // Could be a really busy (or crashed) agent, could be a lost packet
                         if (currentRequester)
-                            timeout = timedOut(currentRequester);
+                            timeoutExpires = msTick() + timedOut(currentRequester);
                     }
                     else if (running)
                     {
@@ -694,7 +706,7 @@ class CReceiveManager : implements IReceiveManager, public CInterface
         }
         else if (i >= free)
         {
-            if (udpTraceLevel)
+            if ((i > free) && (udpTraceLevel))
                 DBGLOG("UdpReceiver: ERROR: more packets in flight (%d) than slots free (%d)", i, free);  // Should never happen
             inflight = i = free-1;
         }
@@ -757,7 +769,7 @@ class CReceiveManager : implements IReceiveManager, public CInterface
     {
         while(running) 
         {
-            DataBuffer *dataBuff = input_queue->pop();
+            DataBuffer *dataBuff = input_queue->pop(true);
             collatePacket(dataBuff);
         }
     }
@@ -835,27 +847,27 @@ IReceiveManager *createReceiveManager(int server_flow_port, int data_port, int c
 /*
 Thoughts on flow control / streaming:
 1. The "continuation packet" mechanism does have some advantages
-    - easy recovery from slave failures
-    - slave recovers easily from Roxie server failures
+    - easy recovery from agent failures
+    - agent recovers easily from Roxie server failures
     - flow control is simple (but is it effective?)
 
 2. Abandoning continuation packet in favour of streaming would give us the following issues:
     - would need some flow control to stop getting ahead of a Roxie server that consumed slowly
-        - flow control is non trivial if you want to avoid tying up a slave thread and want slave to be able to recover from Roxie server failure
+        - flow control is non trivial if you want to avoid tying up a agent thread and want agent to be able to recover from Roxie server failure
     - Need to work out how to do GSS - the nextGE info needs to be passed back in the flow control?
-    - can't easily recover from slave failures if you already started processing
-        - unless you assume that the results from slave are always deterministic and can retry and skip N
-    - potentially ties up a slave thread for a while 
+    - can't easily recover from agent failures if you already started processing
+        - unless you assume that the results from agent are always deterministic and can retry and skip N
+    - potentially ties up a agent thread for a while 
         - do we need to have a larger thread pool but limit how many actually active?
 
 3. Order of work
     - Just adding streaming while ignoring flow control and continuation stuff (i.e. we still stop for permission to continue periodically)
         - Shouldn't make anything any _worse_ ...
-            - except that won't be able to recover from a slave dying mid-stream (at least not without some considerable effort)
+            - except that won't be able to recover from a agent dying mid-stream (at least not without some considerable effort)
                 - what will happen then?
             - May also break server-side caching (that no-one has used AFAIK). Maybe restrict to nohits as we change....
     - Add some flow control
-        - would prevent slave getting too far ahead in cases that are inadequately flow-controlled today
+        - would prevent agent getting too far ahead in cases that are inadequately flow-controlled today
         - shouldn't make anything any worse...
     - Think about removing continuation mechanism from some cases
 
@@ -877,7 +889,7 @@ More questions:
 
 Problems found while testing implemetnation:
     - the unpacker cursor read code is crap
-    - there is a potential to deadlock when need to make a callback slave->server during a streamed result (indexread5 illustrates)
+    - there is a potential to deadlock when need to make a callback agent->server during a streamed result (indexread5 illustrates)
         - resolution callback code doesn't really need to be query specific - could go to the default handler
         - but other callbacks - ALIVE, EXCEPTION, and debugger are not so clear
     - It's not at all clear where to move the code for processing metadata
@@ -912,7 +924,7 @@ Problems found while testing implemetnation:
 
     If continuation info was restricted to a "yes/no" (i.e. had to be continued on same node as started on) could have simple "Is there any continuation" bit. Others are sent in their 
     own packets so are a little different. Does that make it harder to recover? Not sure that it does really (just means that the window at which a failure causes a problem starts earlier).
-    However it may be an issue tying up slave thread for a while (and do we know when to untie it if the Roxie server abandons/restarts?)
+    However it may be an issue tying up agent thread for a while (and do we know when to untie it if the Roxie server abandons/restarts?)
 
     Perhaps it makes sense to pause at this point (with streaming disabled and with retry mechanism optional)
 

@@ -56,44 +56,53 @@
 
 #define SDS_LOCK_TIMEOUT 30000
 
-static INode *masterNode;
-static IGroup *rawGroup;
-static IGroup *nodeGroup;
-static IGroup *clusterGroup;
-static IGroup *slaveGroup;
-static IGroup *dfsGroup;
-static ICommunicator *nodeComm;
+static Owned<INode> masterNode;
+static Owned<IGroup> processGroup; // group of slave processes
+static Owned<IGroup> nodeGroup;    // master + processGroup
+static Owned<IGroup> slaveGroup;   // group containing all channels
+static Owned<IGroup> clusterGroup; // master + slaveGroup
+static Owned<IGroup> dfsGroup;     // same as slaveGroup, but without ports
+static Owned<ICommunicator> nodeComm; // communicator based on nodeGroup (master+slave processes)
 
 
 mptag_t masterSlaveMpTag;
 mptag_t kjServiceMpTag;
-IPropertyTree *globals;
-static IMPtagAllocator *ClusterMPAllocator = NULL;
+Owned<IPropertyTree> globals;
+static Owned<IMPtagAllocator> ClusterMPAllocator;
+
+// stat. mappings shared between master and slave activities
+const StatisticsMapping spillStatistics({StTimeSpillElapsed, StTimeSortElapsed, StNumSpills, StSizeSpillFile});
+const StatisticsMapping basicActivityStatistics({StTimeLocalExecute, StTimeBlocked});
+const StatisticsMapping groupActivityStatistics({StNumGroups, StNumGroupMax}, basicActivityStatistics);
+const StatisticsMapping hashJoinActivityStatistics({StNumLeftRows, StNumRightRows}, basicActivityStatistics);
+const StatisticsMapping indexReadActivityStatistics({StNumRowsProcessed, StNumIndexSeeks, StNumIndexScans, StNumPostFiltered, StNumIndexWildSeeks}, basicActivityStatistics);
+const StatisticsMapping indexWriteActivityStatistics({StPerReplicated}, basicActivityStatistics);
+const StatisticsMapping keyedJoinActivityStatistics({ StNumIndexSeeks, StNumIndexScans, StNumIndexAccepted, StNumPostFiltered, StNumPreFiltered, StNumDiskSeeks, StNumDiskAccepted, StNumDiskRejected, StNumIndexWildSeeks}, basicActivityStatistics);
+const StatisticsMapping loopActivityStatistics({StNumIterations}, basicActivityStatistics);
+const StatisticsMapping lookupJoinActivityStatistics({StNumSmartJoinSlavesDegradedToStd, StNumSmartJoinDegradedToLocal}, basicActivityStatistics);
+const StatisticsMapping joinActivityStatistics({StNumLeftRows, StNumRightRows}, basicActivityStatistics, spillStatistics);
+const StatisticsMapping diskReadActivityStatistics({StNumDiskRowsRead}, basicActivityStatistics, diskReadRemoteStatistics);
+const StatisticsMapping diskWriteActivityStatistics({StPerReplicated}, basicActivityStatistics, diskWriteRemoteStatistics);
+const StatisticsMapping sortActivityStatistics({}, basicActivityStatistics, spillStatistics);
+const StatisticsMapping graphStatistics({StNumExecutions}, basicActivityStatistics);
+
 
 MODULE_INIT(INIT_PRIORITY_STANDARD)
 {
-    masterNode = NULL;
-    globals = NULL;
-    rawGroup = NULL;
-    nodeGroup = NULL;
-    clusterGroup = NULL;
-    slaveGroup = NULL;
-    dfsGroup = NULL;
-    nodeComm = NULL;
-    ClusterMPAllocator = createMPtagRangeAllocator(MPTAG_THORGLOBAL_BASE,MPTAG_THORGLOBAL_COUNT);
+    ClusterMPAllocator.setown(createMPtagRangeAllocator(MPTAG_THORGLOBAL_BASE,MPTAG_THORGLOBAL_COUNT));
     return true;
 }
 
 MODULE_EXIT()
 {
-    ::Release(masterNode);
-    ::Release(rawGroup);
-    ::Release(nodeGroup);
-    ::Release(clusterGroup);
-    ::Release(slaveGroup);
-    ::Release(dfsGroup);
-    ::Release(nodeComm);
-    ::Release(ClusterMPAllocator);
+    masterNode.clear();
+    nodeGroup.clear();
+    processGroup.clear();
+    clusterGroup.clear();
+    slaveGroup.clear();
+    dfsGroup.clear();
+    nodeComm.clear();
+    ClusterMPAllocator.clear();
 }
 
 
@@ -163,6 +172,14 @@ void ActPrintLog(const CActivityBase *activity, const char *format, ...)
     va_end(args);
 }
 
+void ActPrintLog(const CActivityBase *activity, unsigned traceLevel, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    ActPrintLogArgs(&activity->queryContainer(), thorlog_null, MCdebugInfo(traceLevel), format, args);
+    va_end(args);
+}
+
 void ActPrintLog(const CActivityBase *activity, IException *e, const char *format, ...)
 {
     va_list args;
@@ -213,6 +230,7 @@ void GraphPrintLog(CGraphBase *graph, IException *e, const char *format, ...)
     GraphPrintLogArgs(graph, e, thorlog_null, MCexception(e, MSGCLS_error), format, args);
     va_end(args);
 }
+
 
 class DECL_EXCEPTION CThorException : public CSimpleInterface, implements IThorException
 {
@@ -608,6 +626,7 @@ public:
     CriticalSection crit;
     bool altallowed;
     bool cleardir;
+    unsigned slaveNum = 0;
 
     CTempNameHandler()
     {
@@ -626,10 +645,11 @@ public:
             return alttempdir;
         return tempdir; 
     }
-    void setTempDir(const char *name, const char *_tempPrefix, bool clear)
+    void setTempDir(unsigned _slaveNum, const char *name, const char *_tempPrefix, bool clear)
     {
         assertex(name && *name);
         CriticalBlock block(crit);
+        slaveNum = _slaveNum;
         assertex(tempdir.isEmpty()); // should only be called once
         tempPrefix.set(_tempPrefix);
         StringBuffer base(name);
@@ -665,7 +685,7 @@ public:
             ForEach (*iter)
             {
                 IFile &file = iter->query();
-                if (file.isFile())
+                if (file.isFile()==fileBool::foundYes)
                 {
                     if (log)
                         LOG(MCdebugInfo, thorJob, "Deleting %s", file.queryFilename());
@@ -693,7 +713,7 @@ public:
             name.append(alttempdir);
         else
             name.append(tempdir);
-        name.append(tempPrefix).append((unsigned)GetCurrentProcessId()).append('_').append(++num);
+        name.append(tempPrefix).append((unsigned)GetCurrentProcessId()).append('_').append(slaveNum).append('_').append(++num);
         if (suffix)
             name.append("__").append(suffix);
         name.append(".tmp");
@@ -707,9 +727,9 @@ void GetTempName(StringBuffer &name, const char *prefix,bool altdisk)
     TempNameHandler.getTempName(name, prefix, altdisk);
 }
 
-void SetTempDir(const char *name, const char *tempPrefix, bool clear)
+void SetTempDir(unsigned slaveNum, const char *name, const char *tempPrefix, bool clear)
 {
-    TempNameHandler.setTempDir(name, tempPrefix, clear);
+    TempNameHandler.setTempDir(slaveNum, name, tempPrefix, clear);
 }
 
 void ClearDir(const char *dir)
@@ -720,7 +740,7 @@ void ClearDir(const char *dir)
 void ClearTempDirs()
 {
     TempNameHandler.clearDirs(true);
-    PROGLOG("temp directory cleared");
+    LOG(MCthorDetailedDebugInfo, thorJob, "temp directory cleared");
 }
 
 
@@ -820,18 +840,48 @@ StringBuffer &getCompoundQueryName(StringBuffer &compoundName, const char *query
     return compoundName.append('V').append(version).append('_').append(queryName);
 }
 
-void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerNode, unsigned channelsPerSlave, unsigned portBase, unsigned portInc)
+void setupGroups(INode *_masterNode, IGroup *_processGroup, IGroup *_slaveGroup)
 {
-    ::Release(masterNode);
-    ::Release(rawGroup);
-    ::Release(nodeGroup);
-    ::Release(clusterGroup);
-    ::Release(slaveGroup);
-    ::Release(dfsGroup);
-    ::Release(nodeComm);
-    masterNode = LINK(_masterNode);
-    rawGroup = LINK(_rawGroup);
+    masterNode.set(_masterNode);
+    processGroup.set(_processGroup);
+    slaveGroup.set(_slaveGroup);
 
+    // nodeGroup contains master + all slave processes (excludes virtual slaves)
+    nodeGroup.setown(processGroup->add(LINK(masterNode), 0));
+
+    // clusterGroup contains master + all slaves (including virtuals)
+    clusterGroup.setown(slaveGroup->add(LINK(masterNode), 0));
+
+    // dfsGroup is same as slaveGroup, but stripped of ports. So is a IP group as wide as slaveGroup, used for publishing
+    IArrayOf<INode> dfsGroupNodes;
+    Owned<INodeIterator> nodeIter = slaveGroup->getIterator();
+    ForEach(*nodeIter)
+        dfsGroupNodes.append(*createINodeIP(nodeIter->query().endpoint(), 0));
+    dfsGroup.setown(createIGroup(dfsGroupNodes.ordinality(), dfsGroupNodes.getArray()));
+
+    nodeComm.setown(createCommunicator(nodeGroup));
+}
+    
+void setupCluster(INode *_masterNode, IGroup *_processGroup, unsigned channelsPerSlave, unsigned portBase, unsigned portInc)
+{
+    IArrayOf<INode> slaveGroupNodes;
+    for (unsigned s=0; s<channelsPerSlave; s++)
+    {
+        for (unsigned p=0; p<_processGroup->ordinality(); p++)
+        {
+            INode &processNode = _processGroup->queryNode(p);
+            SocketEndpoint ep = processNode.endpoint();
+            ep.port = ep.port + (s * portInc);
+            Owned<INode> node = createINode(ep);
+            slaveGroupNodes.append(*node.getClear());
+        }
+    }
+    Owned<IGroup> _slaveGroup = createIGroup(slaveGroupNodes.ordinality(), slaveGroupNodes.getArray());
+    setupGroups(_masterNode, _processGroup, _slaveGroup);
+}
+
+void setClusterGroup(INode *_masterNode, IGroup *rawGroup, unsigned slavesPerNode, unsigned channelsPerSlave, unsigned portBase, unsigned portInc)
+{
     SocketEndpointArray epa;
     OwnedMalloc<unsigned> hostStartPort, hostNextStartPort;
     hostStartPort.allocateN(rawGroup->ordinality());
@@ -853,9 +903,7 @@ void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerNo
             hostNextStartPort[hostPos] += (slavesPerNode * channelsPerSlave * portInc);
         }
     }
-    IArrayOf<INode> clusterGroupNodes, nodeGroupNodes;
-    clusterGroupNodes.append(*LINK(masterNode));
-    nodeGroupNodes.append(*LINK(masterNode));
+    IArrayOf<INode> slaveGroupNodes, processGroupNodes;
     for (unsigned s=0; s<channelsPerSlave; s++)
     {
         for (unsigned p=0; p<slavesPerNode; p++)
@@ -865,35 +913,22 @@ void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerNo
                 SocketEndpoint ep = rawGroup->queryNode(n).endpoint();
                 ep.port = hostStartPort[n] + (((p * channelsPerSlave) + s) * portInc);
                 Owned<INode> node = createINode(ep);
-                clusterGroupNodes.append(*node.getLink());
+                slaveGroupNodes.append(*node.getLink());
                 if (0 == s)
-                    nodeGroupNodes.append(*node.getLink());
+                    processGroupNodes.append(*node.getLink());
             }
         }
     }
-    // clusterGroup contains master + all slaves (including virtuals)
-    clusterGroup = createIGroup(clusterGroupNodes.ordinality(), clusterGroupNodes.getArray());
-
-    // nodeGroup container master + all slave processes (excludes virtual slaves)
-    nodeGroup = createIGroup(nodeGroupNodes.ordinality(), nodeGroupNodes.getArray());
-
-    // slaveGroup contains all slaves (including virtuals) but excludes master
-    slaveGroup = clusterGroup->remove(0);
-
-    // dfsGroup is same as slaveGroup, but stripped of ports. So is a IP group as wide as slaveGroup, used for publishing
-    IArrayOf<INode> slaveGroupNodes;
-    Owned<INodeIterator> nodeIter = slaveGroup->getIterator();
-    ForEach(*nodeIter)
-    slaveGroupNodes.append(*createINodeIP(nodeIter->query().endpoint(),0));
-    dfsGroup = createIGroup(slaveGroupNodes.ordinality(), slaveGroupNodes.getArray());
-
-    nodeComm = createCommunicator(nodeGroup);
+    Owned<IGroup> _processGroup = createIGroup(processGroupNodes.ordinality(), processGroupNodes.getArray());
+    Owned<IGroup> _slaveGroup = createIGroup(slaveGroupNodes.ordinality(), slaveGroupNodes.getArray());
+    setupGroups(_masterNode, _processGroup, _slaveGroup);
 }
+
 bool clusterInitialized() { return NULL != nodeComm; }
 INode &queryMasterNode() { return *masterNode; }
 ICommunicator &queryNodeComm() { return *nodeComm; }
-IGroup &queryRawGroup() { return *rawGroup; }
 IGroup &queryNodeGroup() { return *nodeGroup; }
+IGroup &queryProcessGroup() { return *processGroup; }
 IGroup &queryClusterGroup() { return *clusterGroup; }
 IGroup &querySlaveGroup() { return *slaveGroup; }
 IGroup &queryDfsGroup() { return *dfsGroup; }
@@ -1107,7 +1142,7 @@ void CFifoFileCache::init(const char *cacheDir, unsigned _limit, const char *pat
     ForEach (*iter)
     {
         IFile &file = iter->query();
-        if (file.isFile())
+        if (file.isFile()==fileBool::foundYes)
             deleteFile(file);
     }
 }
@@ -1395,8 +1430,6 @@ IPerfMonHook *createThorMemStatsPerfMonHook(CJobBase &job, int maxLevel, IPerfMo
     return new CPerfMonHook(job, maxLevel, chain);
 }
 
-const StatisticsMapping spillStatistics({StTimeSpillElapsed, StTimeSortElapsed, StNumSpills, StSizeSpillFile});
-
 bool isOOMException(IException *_e)
 {
     if (_e)
@@ -1435,11 +1468,15 @@ IThorException *checkAndCreateOOMContextException(CActivityBase *activity, IExce
 
 RecordTranslationMode getTranslationMode(CActivityBase &activity)
 {
+    bool local = true;
     StringBuffer val;
     activity.getOpt("layoutTranslation", val);
     if (!val.length())
+    {
         globals->getProp("@fieldTranslationEnabled", val);
-    return getTranslationMode(val);
+        local = false;
+    }
+    return getTranslationMode(val, local);
 }
 
 void getLayoutTranslations(IConstPointerArrayOf<ITranslator> &translators, const char *fname, IArrayOf<IPartDescriptor> &partDescriptors, RecordTranslationMode translationMode, unsigned expectedFormatCrc, IOutputMetaData *expectedFormat, unsigned projectedFormatCrc, IOutputMetaData *projectedFormat)
@@ -1480,6 +1517,7 @@ const ITranslator *getLayoutTranslation(const char *fname, IPartDescriptor &part
 
 bool isRemoteReadCandidate(const CActivityBase &activity, const RemoteFilename &rfn)
 {
+#ifndef _CONTAINERIZED
     if (!activity.getOptBool(THOROPT_FORCE_REMOTE_DISABLED))
     {
         if (!rfn.isLocal())
@@ -1489,6 +1527,7 @@ bool isRemoteReadCandidate(const CActivityBase &activity, const RemoteFilename &
         if (activity.getOptBool(THOROPT_FORCE_REMOTE_READ, testForceRemote(localPath)))
             return true;
     }
+#endif
     return false;
 }
 

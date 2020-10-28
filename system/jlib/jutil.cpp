@@ -49,6 +49,8 @@
 #include <paths.h>
 #include <cmath>
 #endif
+
+#include <limits.h>
 #include "build-config.h"
 
 #include "portlist.h"
@@ -415,7 +417,6 @@ HINSTANCE LoadSharedObject(const char *name, bool isGlobal, bool raiseOnError)
     if (name&&isPathSepChar(*name)&&isPathSepChar(name[1])) {
         RemoteFilename rfn;
         rfn.setRemotePath(name);
-        SocketEndpoint ep;
         if (!rfn.isLocal()) {
             // I guess could copy to a temporary location but currently just fail
             throw MakeStringException(-1,"LoadSharedObject: %s is not a local file",name);
@@ -1693,6 +1694,15 @@ void doStackProbe()
 #pragma GCC diagnostic pop
 #endif
 
+extern jlib_decl bool isContainerized()
+{
+#ifdef _CONTAINERIZED
+    return true;
+#else
+    return false;
+#endif
+}
+
 #ifdef _WIN32
 
 DWORD dwTlsIndex = -1;
@@ -1830,11 +1840,16 @@ static const char *findExtension(const char *fn)
 
 unsigned runExternalCommand(StringBuffer &output, StringBuffer &error, const char *cmd, const char *input)
 {
+    return runExternalCommand(cmd, output, error, cmd, input);
+}
+
+unsigned runExternalCommand(const char *title, StringBuffer &output, StringBuffer &error, const char *cmd, const char *input)
+{
     try
     {
         Owned<IPipeProcess> pipe = createPipeProcess();
         int ret = START_FAILURE;
-        if (pipe->run(cmd, cmd, ".", input != NULL, true, true, 1024*1024))
+        if (pipe->run(title, cmd, ".", input != NULL, true, true, 1024*1024))
         {
             if (input)
             {
@@ -2732,6 +2747,13 @@ const char * queryCurrentProcessPath()
         default:
             break;
         }
+        const char *canon = realpath(processPath.str(), nullptr);
+        if (canon)
+        {
+            processPath.clear();
+            processPath.set(canon);
+            free((void *) canon);
+        }
 #else
         char path[PATH_MAX + 1];
         ssize_t len = readlink("/proc/self/exe", path, PATH_MAX);
@@ -3005,6 +3027,85 @@ int getEnum(const char *v, const EnumMapping *map, int defval)
     }
     return defval;
 }
+
+//---------------------------------------------------------------------------------------------------------------------
+
+extern jlib_decl offset_t friendlyStringToSize(const char *in)
+{
+    char *tail;
+    offset_t result = strtoull(in, &tail, 10);
+    offset_t scale = 1;
+    if (*tail)
+    {
+        if (tail[1] == '\0')
+        {
+            switch (*tail)
+            {
+            case 'K': scale = 1000; break;
+            case 'M': scale = 1000000; break;
+            case 'G': scale = 1000000000; break;
+            case 'T': scale = 1000000000000; break;
+            case 'P': scale = 1000000000000000; break;
+            case 'E': scale = 1000000000000000000; break;
+            default:
+                throw makeStringExceptionV(0, "Invalid size suffix %s", tail);
+            }
+        }
+        else if (streq(tail+1, "i"))
+        {
+            switch (*tail)
+            {
+            case 'K': scale = 1llu<<10; break;
+            case 'M': scale = 1llu<<20; break;
+            case 'G': scale = 1llu<<30; break;
+            case 'T': scale = 1llu<<40; break;
+            case 'P': scale = 1llu<<50; break;
+            case 'E': scale = 1llu<<60; break;
+            default:
+                throw makeStringExceptionV(0, "Invalid size suffix %s", tail);
+            }
+        }
+        else
+            throw makeStringExceptionV(0, "Invalid size suffix %s", tail);
+    }
+    return result * scale;
+}
+
+void jlib_decl atomicWriteFile(const char *fileName, const char *output)
+{
+    recursiveCreateDirectoryForFile(fileName);
+#ifdef _WIN32
+    StringBuffer newFileName;
+    makeTempCopyName(newFileName, fileName);
+    Owned<IFile> newFile = createIFile(newFileName);
+    Owned<IFile> file = createIFile(fileName);
+    {
+        OwnedIFileIO ifileio = newFile->open(IFOcreate);
+        if (!ifileio)
+            throw MakeStringException(0, "atomicWriteFile: could not create output file %s", newFileName.str());
+        ifileio->write(0, strlen(output), output);
+    }
+#else
+    VStringBuffer newFileName("%s.XXXXXX", fileName);
+    int fh = mkstemp(const_cast<char *>(newFileName.str()));
+    if (fh==-1)
+        throw MakeStringException(0, "atomicWriteFile: could not create output file for %s", fileName);
+    Owned<IFile> newFile = createIFile(newFileName);
+    Owned<IFile> file = createIFile(fileName);
+    {
+        OwnedIFileIO ifileio = createIFileIO(fh, IFOwrite);
+        if (!ifileio)
+            throw MakeStringException(0, "atomicWriteFile: could not create output file %s", newFileName.str());
+        ifileio->write(0, strlen(output), output);
+    }
+#endif
+    if (file->exists())
+        file->remove();
+    newFile->rename(fileName);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+
 
 //#define TESTURL
 #ifdef TESTURL

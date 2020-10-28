@@ -939,6 +939,11 @@ int CSocket::post_connect ()
 
 void CSocket::open(int listen_queue_size,bool reuseports)
 {
+    // If listen_queue_size==0 then bind port to address but
+    // do not actually listen() for accepting connections.
+    // This is used when a unique IP:port is needed for MP client
+    // INode/IGroup internals, but client never actually accepts connections.
+
     if (IP6preferred)
         sock = ::socket(AF_INET6, connectionless()?SOCK_DGRAM:SOCK_STREAM, PF_INET6);
     else
@@ -964,7 +969,7 @@ void CSocket::open(int listen_queue_size,bool reuseports)
 #ifndef _WIN32
     reuseports = true;  // for some reason linux requires reuse ports
 #endif
-    if (reuseports) {
+    if (reuseports && listen_queue_size) {
         int on = 1;
         setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on));
     }
@@ -996,7 +1001,7 @@ ErrPortInUse:
             THROWJSOCKEXCEPTION(saverr);
         }
     }
-    if (!connectionless()) {
+    if (!connectionless() && listen_queue_size) {
         if (::listen(sock, listen_queue_size) != 0) {
             saverr = ERRNO();
             if (saverr==JSE_ADDRINUSE)
@@ -1328,6 +1333,8 @@ bool CSocket::connect_timeout( unsigned timeout, bool noexception)
                 }
             }
         }
+        else if (err)
+            refused_sleep(tm, refuseddelay); // this stops becoming cpu bound
         if (err==0)
         {
             err = post_connect();
@@ -6299,6 +6306,87 @@ inline bool appendv4range(SocketEndpointArray *array,char *str,SocketEndpoint &e
     return true;
 }
 
+bool SocketEndpointArray::fromName(const char *name, unsigned defport)
+{
+    // Lookup a single name that may resolve to multiple IPs in a headless service scenario
+    StringArray portSplit;
+    portSplit.appendList(name, ":");
+    switch (portSplit.ordinality())
+    {
+    case 2:
+        defport = atoi(portSplit.item(1));
+        name = portSplit.item(0);
+        // fallthrough
+    case 1:
+        break;
+    default:
+        throw MakeStringException(-1, "Invalid name %s SocketEndpointArray::fromName", name);
+    }
+#if defined(__linux__) || defined (__APPLE__) || defined(getaddrinfo)
+    if (IP4only)
+#endif
+    {
+        CriticalBlock c(hostnamesect);
+        hostent * entry = gethostbyname(name);
+        if (entry && entry->h_addr_list[0])
+        {
+            unsigned ptr = 0;
+            for (;;)
+            {
+                ptr++;
+                if (entry->h_addr_list[ptr]==NULL)
+                    break;
+                SocketEndpoint ep;
+                ep.setNetAddress(sizeof(unsigned),entry->h_addr_list[ptr]);
+                ep.port = defport;
+                append(ep);
+            }
+        }
+        return ordinality()>0;
+    }
+#if defined(__linux__) || defined (__APPLE__) || defined(getaddrinfo)
+    struct addrinfo hints;
+    memset(&hints,0,sizeof(hints));
+    struct addrinfo  *addrInfo = NULL;
+    memset(&hints,0,sizeof(hints));
+    int ret = getaddrinfo(name, NULL , &hints, &addrInfo);
+    if (ret == 0)
+    {
+        struct addrinfo  *ai;
+        for (ai = addrInfo; ai; ai = ai->ai_next)
+        {
+            // DBGLOG("flags=%d, family=%d, socktype=%d, protocol=%d, addrlen=%d, canonname=%s",ai->ai_flags,ai->ai_family,ai->ai_socktype,ai->ai_protocol,ai->ai_addrlen,ai->ai_canonname?ai->ai_canonname:"NULL");
+            if (ai->ai_protocol == IPPROTO_IP)
+            {
+                switch (ai->ai_family)
+                {
+                    case AF_INET:
+                    {
+                        SocketEndpoint ep;
+                        ep.setNetAddress(sizeof(in_addr),&(((sockaddr_in *)ai->ai_addr)->sin_addr));
+                        ep.port = defport;
+                        append(ep);
+                        // StringBuffer s;
+                        // DBGLOG("Lookup %s found %s", name, ep.getUrlStr(s).str());
+                        break;
+                    }
+                case AF_INET6:
+                    {
+                        SocketEndpoint ep;
+                        ep.setNetAddress(sizeof(in_addr6),&(((sockaddr_in6 *)ai->ai_addr)->sin6_addr));
+                        ep.port = defport;
+                        append(ep);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    freeaddrinfo(addrInfo);
+#endif
+    return ordinality()>0;
+}
+
 void SocketEndpointArray::fromText(const char *text,unsigned defport) 
 {
     // this is quite complicated with (mixed) IPv4 and IPv6
@@ -6866,9 +6954,9 @@ bool isIPAddress(const char *ip)
 }
 
 
-class CWhiteListHandler : public CSimpleInterfaceOf<IWhiteListHandler>, implements IWhiteListWriter
+class CAllowListHandler : public CSimpleInterfaceOf<IAllowListHandler>, implements IAllowListWriter
 {
-    typedef CSimpleInterfaceOf<IWhiteListHandler> PARENT;
+    typedef CSimpleInterfaceOf<IAllowListHandler> PARENT;
 
     struct PairHasher
     {
@@ -6881,11 +6969,11 @@ class CWhiteListHandler : public CSimpleInterfaceOf<IWhiteListHandler>, implemen
         }
     };
 
-    using WhiteListHT = std::unordered_set<std::pair<std::string, unsigned __int64>, PairHasher>;
-    WhiteListPopulateFunction populateFunc;
-    WhiteListFormatFunction roleFormatFunc;
-    std::unordered_set<std::pair<std::string, unsigned __int64>, PairHasher> whiteList;
-    std::unordered_set<std::string> IPOnlyWhiteList;
+    using AllowListHT = std::unordered_set<std::pair<std::string, unsigned __int64>, PairHasher>;
+    AllowListPopulateFunction populateFunc;
+    AllowListFormatFunction roleFormatFunc;
+    std::unordered_set<std::pair<std::string, unsigned __int64>, PairHasher> allowList;
+    std::unordered_set<std::string> IPOnlyAllowList;
     bool allowAnonRoles = false;
     mutable CriticalSection populatedCrit;
     mutable bool populated = false;
@@ -6897,17 +6985,17 @@ class CWhiteListHandler : public CSimpleInterfaceOf<IWhiteListHandler>, implemen
         if (populated)
             return;
         // NB: want to keep this method const, as used by isXX functions that are const, but if need to refresh it's effectively mutable
-        enabled = populateFunc(* const_cast<IWhiteListWriter *>((const IWhiteListWriter *)this));
+        enabled = populateFunc(* const_cast<IAllowListWriter *>((const IAllowListWriter *)this));
         populated = true;
     }
 public:
     IMPLEMENT_IINTERFACE_O_USING(PARENT);
 
-    CWhiteListHandler(WhiteListPopulateFunction _populateFunc, WhiteListFormatFunction _roleFormatFunc) : populateFunc(_populateFunc), roleFormatFunc(_roleFormatFunc)
+    CAllowListHandler(AllowListPopulateFunction _populateFunc, AllowListFormatFunction _roleFormatFunc) : populateFunc(_populateFunc), roleFormatFunc(_roleFormatFunc)
     {
     }
-// IWhiteListHandler impl.
-    virtual bool isWhiteListed(const char *ip, unsigned __int64 role, StringBuffer *responseText) const override
+// IAllowListHandler impl.
+    virtual bool isAllowListed(const char *ip, unsigned __int64 role, StringBuffer *responseText) const override
     {
         CriticalBlock block(populatedCrit);
         ensurePopulated();
@@ -6915,15 +7003,15 @@ public:
         {
             if (allowAnonRoles)
             {
-                const auto &it = IPOnlyWhiteList.find(ip);
-                if (it != IPOnlyWhiteList.end())
+                const auto &it = IPOnlyAllowList.find(ip);
+                if (it != IPOnlyAllowList.end())
                     return true;
             }
         }
         else
         {
-            const auto &it = whiteList.find({ip, role});
-            if (it != whiteList.end())
+            const auto &it = allowList.find({ip, role});
+            if (it != allowList.end())
                 return true;
         }
 
@@ -6934,7 +7022,9 @@ public:
 
         if (responseText)
         {
-            responseText->append("Access denied! [client ip=");
+            responseText->append("Access denied! [server ip=");
+            queryHostIP().getIpText(*responseText);
+            responseText->append(", client ip=");
             responseText->append(ip);
             if (role)
             {
@@ -6944,22 +7034,22 @@ public:
                 else
                     responseText->append(role);
             }
-            responseText->append("] not whitelisted");
+            responseText->append("] not in allowlist");
         }
 
         if (enabled)
             return false;
         else
         {
-            OWARNLOG("WhiteListing is disabled, ignoring: %s", responseText->str());
+            OWARNLOG("Allowlist is disabled, ignoring: %s", responseText->str());
             return true;
         }
     }
-    virtual StringBuffer &getWhiteList(StringBuffer &out) const override
+    virtual StringBuffer &getAllowList(StringBuffer &out) const override
     {
         CriticalBlock block(populatedCrit);
         ensurePopulated();
-        for (const auto &it: whiteList)
+        for (const auto &it: allowList)
         {
             out.append(it.first.c_str()).append(", ");
             if (roleFormatFunc)
@@ -6968,6 +7058,7 @@ public:
                 out.append(it.second);
             out.newline();
         }
+        out.newline().appendf("Allowlist is currently: %s", enabled ? "enabled" : "disabled").newline();
         return out;
     }
     virtual void refresh() override
@@ -6977,17 +7068,17 @@ public:
          */
         CriticalBlock block(populatedCrit);
         enabled = true;
-        whiteList.clear();
-        IPOnlyWhiteList.clear();
+        allowList.clear();
+        IPOnlyAllowList.clear();
         populated = false;
     }
-// IWhiteListWriter impl.
+// IAllowListWriter impl.
     virtual void add(const char *ip, unsigned __int64 role) override
     {
         // NB: called via populateFunc, which is called whilst populatedCrit is locked.
-        whiteList.insert({ ip, role });
+        allowList.insert({ ip, role });
         if (allowAnonRoles)
-            IPOnlyWhiteList.insert(ip);
+            IPOnlyAllowList.insert(ip);
     }
     virtual void setAllowAnonRoles(bool tf) override
     {
@@ -6996,8 +7087,10 @@ public:
     }
 };
 
-IWhiteListHandler *createWhiteListHandler(WhiteListPopulateFunction populateFunc, WhiteListFormatFunction roleFormatFunc)
+IAllowListHandler *createAllowListHandler(AllowListPopulateFunction populateFunc, AllowListFormatFunction roleFormatFunc)
 {
-    return new CWhiteListHandler(populateFunc, roleFormatFunc);
+    return new CAllowListHandler(populateFunc, roleFormatFunc);
 }
 
+static_assert(sizeof(IpAddress) == 16, "check size of IpAddress");
+static_assert(sizeof(SocketEndpoint) == 20, "check size of SocketEndpoint");

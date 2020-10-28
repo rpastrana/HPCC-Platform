@@ -1,29 +1,28 @@
 define([
     "dojo/_base/declare",
     "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
     "dojo/_base/array",
     "dojo/store/Memory",
-    "dojo/dom",
     "dojo/dom-class",
     "dojo/dom-style",
     "dojo/has",
 
     "dijit/registry",
 
-    "dojox/treemap/TreeMap",
-
     "hpcc/_Widget",
     "src/ESPWorkunit",
 
-    "dojo/text!../templates/TimingTreeMapWidget.html"
+    "dojo/text!../templates/TimingTreeMapWidget.html",
+
+    "dojox/treemap/TreeMap"
 ],
-    function (declare, lang, i18n, nlsHPCC, arrayUtil, Memory, dom, domClass, domStyle, has,
+    function (declare, lang, nlsHPCCMod, arrayUtil, Memory, domClass, domStyle, has,
         registry,
-        TreeMap,
         _Widget, ESPWorkunit,
         template) {
+
+        var nlsHPCC = nlsHPCCMod.default;
         return declare("TimingTreeMapWidget", [_Widget], {
             templateString: template,
             baseClass: "TimingTreeMapWidget",

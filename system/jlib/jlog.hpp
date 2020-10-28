@@ -35,6 +35,13 @@
 #include "jptree.hpp"
 #include "jsocket.hpp"
 
+typedef enum
+{
+    LogMsgAttType_class          = 0x01,
+    LogMsgAttType_Audience       = 0x02,
+    LogMsgAttType_fields         = 0x04,
+} LogMsgAttType;
+
 /****************************************************************************************/
 /* LOG MESSAGE AUDIENCES:                                                               *
  * MSGAUD_operator - This should be used when the message may be normally monitored by, *
@@ -142,16 +149,30 @@ inline const char * LogMsgAudienceToFixString(LogMsgAudience audience)
     switch(audience)
     {
     case MSGAUD_operator:
-        return("Operator ");
+        return("OPR ");
     case MSGAUD_user:
-        return("User     ");
+        return("USR ");
     case MSGAUD_programmer:
-        return("Prog.    ");
+        return("PRG ");
     case MSGAUD_audit:
-        return("Audit    ");
+        return("AUD ");
     default:
-        return("UNKNOWN  ");
+        return("UNK ");
     }
+}
+inline unsigned LogMsgAudFromAbbrev(char const * abbrev)
+{
+    if(strnicmp(abbrev, "OPR", 3)==0)
+        return MSGAUD_operator;
+    if(strnicmp(abbrev, "USR", 3)==0)
+        return MSGAUD_user;
+    if(strnicmp(abbrev, "PRO", 3)==0)
+        return MSGAUD_programmer;
+    if(strnicmp(abbrev, "ADT", 3)==0)
+        return MSGAUD_audit;
+    if(strnicmp(abbrev, "ALL", 3)==0)
+        return MSGAUD_all;
+    return 0;
 }
 
 inline const char * LogMsgClassToVarString(LogMsgClass msgClass)
@@ -180,23 +201,55 @@ inline const char * LogMsgClassToFixString(LogMsgClass msgClass)
     switch(msgClass)
     {
     case MSGCLS_disaster:
-        return("Disaster ");
+        return("DIS ");
     case MSGCLS_error:
-        return("Error    ");
+        return("ERR ");
     case MSGCLS_warning:
-        return("Warning  ");
+        return("WRN ");
     case MSGCLS_information:
-        return("Inform.  ");
+        return("INF ");
     case MSGCLS_progress:
-        return("Progress ");
+        return("PRO ");
     default:
-        return("UNKNOWN  ");
+        return("UNK ");
     }
+}
+
+inline unsigned LogMsgClassFromAbbrev(char const * abbrev)
+{
+    if(strnicmp(abbrev, "DIS", 3)==0)
+        return MSGCLS_disaster;
+    if(strnicmp(abbrev, "ERR", 3)==0)
+        return MSGCLS_error;
+    if(strnicmp(abbrev, "WRN", 3)==0)
+        return MSGCLS_warning;
+    if(strnicmp(abbrev, "INF", 3)==0)
+        return MSGCLS_information;
+    if(strnicmp(abbrev, "PRO", 3)==0)
+        return MSGCLS_progress;
+    if(strnicmp(abbrev, "ALL", 3)==0)
+        return MSGCLS_all;
+    return 0;
 }
 
 typedef unsigned LogMsgDetail;
 #define DefaultDetail   100
 #define TopDetail (LogMsgDetail)-1
+
+/*
+ * Log message thresholds, assigned to log message category types.
+ * It represents the lowest logging level (detail) required to output
+ * messages of the given category.
+ */
+constexpr LogMsgDetail CriticalMsgThreshold    = 1;  //Use to declare categories reporting critical events (log level => 1)
+constexpr LogMsgDetail FatalMsgThreshold       = 1;  //Use to declare categories reporting Fatal events (log level => 1)
+constexpr LogMsgDetail ErrMsgThreshold         = 10; //Use to declare categories reporting Err messages (log level => 10)
+constexpr LogMsgDetail WarnMsgThreshold        = 20; //Use to declare categories reporting Warn messages (log level => 20)
+constexpr LogMsgDetail AudMsgThreshold         = 30; //Use to declare categories reporting Aud messages (log level => 30)
+constexpr LogMsgDetail ProgressMsgThreshold    = 50; //Use to declare categories reporting Progress messages (log level => 50)
+constexpr LogMsgDetail InfoMsgThreshold        = 60; //Use to declare categories reporting Info messages (log level => 60)
+constexpr LogMsgDetail DebugMsgThreshold       = 80; //Use to declare categories reporting Debug messages (log level => 80)
+constexpr LogMsgDetail ExtraneousMsgThreshold  = 90; //Use to declare categories reporting Extraneous messages (log level => 90)
 
 // Typedef for LogMsgSysInfo
 
@@ -347,39 +400,71 @@ inline unsigned LogMsgFieldFromAbbrev(char const * abbrev)
     return 0;
 }
 
-// This function parses strings such as "AUD+CLS+DET+COD" and "STD+MIT-PID", and is used for fields attribute in XML handler descriptions
-
-inline unsigned LogMsgFieldsFromAbbrevs(char const * abbrevs)
+inline unsigned processAbbrevsString(char const * abbrevs, LogMsgAttType type)
 {
-    unsigned fields = 0;
+    unsigned values = 0;
     bool negate = false;
     bool more = true;
     while(more)
     {
-        if(strlen(abbrevs)<3) break;
-        unsigned field = LogMsgFieldFromAbbrev(abbrevs);
-        if(field)
+        if(strlen(abbrevs) < 3)
+            break;
+        unsigned value = 0;
+        switch(type)
+        {
+            case LogMsgAttType_Audience:
+                value = LogMsgAudFromAbbrev(abbrevs);
+                break;
+            case LogMsgAttType_fields:
+                value = LogMsgFieldFromAbbrev(abbrevs);
+                break;
+            case LogMsgAttType_class:
+                value = LogMsgClassFromAbbrev(abbrevs);
+                break;
+            default:
+                throwUnexpected();
+        }
+
+        if(value)
         {
             if(negate)
-                fields &= ~field;
+                values &= ~value;
             else
-                fields |= field;
+                values |= value;
         }
         switch(abbrevs[3])
         {
-        case '+':
-            negate = false;
-            abbrevs += 4;
-            break;
-        case '-':
-            negate = true;
-            abbrevs += 4;
-            break;
-        default:
-            more = false;
+            case '+':
+                negate = false;
+                abbrevs += 4;
+                break;
+            case '-':
+                negate = true;
+                abbrevs += 4;
+                break;
+            default:
+                more = false;
         }
     }
-    return fields;
+    return values;
+}
+
+// This function parses strings such as "ADT+PRO+USR" and "ALL+ADT-PRO"
+inline unsigned logMsgAudsFromAbbrevs(const char * abbrevs)
+{
+    return processAbbrevsString(abbrevs, LogMsgAttType_Audience);
+}
+
+// This function parses strings such as "DIS+ERR+WRN+INF" and "ALL+PRO-INF"
+inline unsigned logMsgClassesFromAbbrevs(const char * abbrevs)
+{
+    return processAbbrevsString(abbrevs, LogMsgAttType_class);
+}
+
+// This function parses strings such as "AUD+CLS+DET+COD" and "STD+MIT-PID", and is used for fields attribute in XML handler descriptions
+inline unsigned logMsgFieldsFromAbbrevs(const char * abbrevs)
+{
+    return processAbbrevsString(abbrevs, LogMsgAttType_fields);
 }
 
 inline char const * msgPrefix(LogMsgClass msgClass)
@@ -500,7 +585,7 @@ protected:
     LogMsgSysInfo             sysInfo;
     LogMsgJobInfo             jobInfo;
     LogMsgCode                msgCode = NoLogMsgCode;
-    unsigned                  component;
+    unsigned                  component = 0;    // Not sure this is used
     StringBuffer              text;
     bool                      remoteFlag = false;
 };
@@ -704,7 +789,7 @@ extern jlib_decl ILogMsgFilter * getSwitchLogMsgFilterOwn(ILogMsgFilter * switch
 
 extern jlib_decl ILogMsgHandler * getHandleLogMsgHandler(FILE * handle = stderr, unsigned fields = MSGFIELD_all, bool writeXML = false);
 extern jlib_decl ILogMsgHandler * getFileLogMsgHandler(const char * filename, const char * headertext = 0, unsigned fields = MSGFIELD_all, bool writeXML = true, bool append = false, bool flushes = true);
-extern jlib_decl ILogMsgHandler * getRollingFileLogMsgHandler(const char * filebase, const char * fileextn, unsigned fields = MSGFIELD_all, bool append = false, bool flushes = true, const char *initialName = NULL, const char *alias = NULL, bool daily = false);
+extern jlib_decl ILogMsgHandler * getRollingFileLogMsgHandler(const char * filebase, const char * fileextn, unsigned fields = MSGFIELD_all, bool append = false, bool flushes = true, const char *initialName = NULL, const char *alias = NULL, bool daily = false, long maxLogSize = 0);
 extern jlib_decl ILogMsgHandler * getBinLogMsgHandler(const char * filename, bool append = false);
 
 // Function to install switch filter into a monitor, switch some messages to new filter whilst leaving rest to previous filter
@@ -726,25 +811,51 @@ extern jlib_decl ILogMsgHandler * attachLogMsgMonitorFromPTree(IPropertyTree * t
 extern jlib_decl void attachManyLogMsgMonitorsFromPTree(IPropertyTree * tree);            // Takes tree containing many <monitor> elements
 
 // Standard categories and unknown jobInfo
-constexpr LogMsgCategory MCdisaster(MSGAUD_all, MSGCLS_disaster);
-constexpr LogMsgCategory MCuserError(MSGAUD_user, MSGCLS_error);
-constexpr LogMsgCategory MCoperatorError(MSGAUD_operator, MSGCLS_error);
-constexpr LogMsgCategory MCinternalError(MSGAUD_programmer, MSGCLS_error, 1);
-constexpr LogMsgCategory MCauditError(MSGAUD_audit, MSGCLS_error);
-constexpr LogMsgCategory MCuserWarning(MSGAUD_user, MSGCLS_warning);
-constexpr LogMsgCategory MCoperatorWarning(MSGAUD_operator, MSGCLS_warning);
-constexpr LogMsgCategory MCinternalWarning(MSGAUD_programmer, MSGCLS_warning, 1);
-constexpr LogMsgCategory MCauditWarning(MSGAUD_audit, MSGCLS_warning);
-constexpr LogMsgCategory MCuserProgress(MSGAUD_user, MSGCLS_progress);
-constexpr LogMsgCategory MCoperatorProgress(MSGAUD_operator, MSGCLS_progress);
-constexpr LogMsgCategory MCdebugProgress(MSGAUD_programmer, MSGCLS_progress);
-constexpr LogMsgCategory MCuserInfo(MSGAUD_user, MSGCLS_information);
-constexpr LogMsgCategory MCdebugInfo(MSGAUD_programmer, MSGCLS_information);
-constexpr LogMsgCategory MCauditInfo(MSGAUD_audit, MSGCLS_information);
-constexpr LogMsgCategory MCstats(MSGAUD_operator, MSGCLS_progress);
-constexpr LogMsgCategory MCoperatorInfo(MSGAUD_operator, MSGCLS_information);
+constexpr LogMsgCategory MCdisaster(MSGAUD_all, MSGCLS_disaster, FatalMsgThreshold);
+constexpr LogMsgCategory MCuserError(MSGAUD_user, MSGCLS_error, ErrMsgThreshold);
+constexpr LogMsgCategory MCoperatorError(MSGAUD_operator, MSGCLS_error, ErrMsgThreshold);
+constexpr LogMsgCategory MCinternalError(MSGAUD_programmer, MSGCLS_error, ErrMsgThreshold);
+constexpr LogMsgCategory MCauditError(MSGAUD_audit, MSGCLS_error, ErrMsgThreshold);
+constexpr LogMsgCategory MCuserWarning(MSGAUD_user, MSGCLS_warning, WarnMsgThreshold);
+constexpr LogMsgCategory MCoperatorWarning(MSGAUD_operator, MSGCLS_warning, WarnMsgThreshold);
+constexpr LogMsgCategory MCinternalWarning(MSGAUD_programmer, MSGCLS_warning, WarnMsgThreshold);
+constexpr LogMsgCategory MCauditWarning(MSGAUD_audit, MSGCLS_warning, WarnMsgThreshold);
+constexpr LogMsgCategory MCuserProgress(MSGAUD_user, MSGCLS_progress, ProgressMsgThreshold);
+constexpr LogMsgCategory MCoperatorProgress(MSGAUD_operator, MSGCLS_progress, ProgressMsgThreshold);
+constexpr LogMsgCategory MCdebugProgress(MSGAUD_programmer, MSGCLS_progress, DebugMsgThreshold);
+constexpr LogMsgCategory MCuserInfo(MSGAUD_user, MSGCLS_information, InfoMsgThreshold);
+constexpr LogMsgCategory MCdebugInfo(MSGAUD_programmer, MSGCLS_information, DebugMsgThreshold);
+constexpr LogMsgCategory MCauditInfo(MSGAUD_audit, MSGCLS_information, AudMsgThreshold);
+constexpr LogMsgCategory MCstats(MSGAUD_operator, MSGCLS_progress, ProgressMsgThreshold);
+constexpr LogMsgCategory MCoperatorInfo(MSGAUD_operator, MSGCLS_information, InfoMsgThreshold);
 
-inline LogMsgCategory MCexception(IException * e, LogMsgClass cls = MSGCLS_error) { return LogMsgCategory((e)->errorAudience(),cls); }
+/*
+ * Function to determine log level (detail) for exceptions, based on log message class
+ */
+inline LogMsgDetail mapClassToDefaultDetailLevel(LogMsgClass cls)
+{
+    switch (cls)
+    {
+    case MSGCLS_disaster:
+    case MSGCLS_all:
+        return FatalMsgThreshold;
+    case MSGCLS_error:
+        return ErrMsgThreshold;
+    case MSGCLS_warning:
+        return WarnMsgThreshold;
+    case MSGCLS_information:
+        return InfoMsgThreshold;
+    case MSGCLS_progress:
+        return ProgressMsgThreshold;
+    default:
+        return DefaultDetail;
+    }
+}
+
+inline LogMsgCategory MCexception(IException * e, LogMsgClass cls = MSGCLS_error)
+{
+    return LogMsgCategory((e)->errorAudience(),cls, mapClassToDefaultDetailLevel(cls));
+}
 
 #define MCerror MCuserError
 #define MCwarning MCuserWarning
@@ -756,6 +867,9 @@ extern jlib_decl const LogMsgJobInfo unknownJob;
 
 extern jlib_decl ILogMsgManager * queryLogMsgManager();
 extern jlib_decl ILogMsgHandler * queryStderrLogMsgHandler();
+#ifdef _CONTAINERIZED
+extern jlib_decl void setupContainerizedLogMsgHandler();
+#endif
 extern jlib_decl LogMsgComponentReporter * queryLogMsgComponentReporter(unsigned compo);
 
 extern jlib_decl ILogMsgManager * createLogMsgManager(); // use with care! (needed by mplog listener facility)
@@ -991,22 +1105,19 @@ inline void IWARNLOG(LogMsgCode code, char const * format, ...)
     va_end(args);
 }
 
-inline IException *IWARNLOG(IException *except, const char *prefix=nullptr)
+inline void IWARNLOG(IException *except, const char *prefix=nullptr)
 {
     LOG(MCinternalWarning, except, prefix);
-    return except;
 }
 
-inline IException *UWARNLOG(IException *except, const char *prefix=nullptr)
+inline void UWARNLOG(IException *except, const char *prefix=nullptr)
 {
     LOG(MCuserWarning, except, prefix);
-    return except;
 }
 
-inline IException *OWARNLOG(IException *except, const char *prefix=nullptr)
+inline void OWARNLOG(IException *except, const char *prefix=nullptr)
 {
     LOG(MCoperatorWarning, except, prefix);
-    return except;
 }
 
 inline void OERRLOG(LogMsgCode code, char const * format, ...) __attribute__((format(printf, 2, 3)));
@@ -1045,34 +1156,29 @@ inline void PROGLOG(LogMsgCode code, char const * format, ...)
     va_end(args);
 }
 
-inline IException *DBGLOG(IException *except, const char *prefix=NULL)
+inline void DBGLOG(IException *except, const char *prefix=NULL)
 {
     LOG(MCdebugInfo, except, prefix);
-    return except;
 }
 
-inline IException *IERRLOG(IException *except, const char *prefix=NULL)
+inline void IERRLOG(IException *except, const char *prefix=NULL)
 {
     LOG(MCinternalError, except, prefix);
-    return except;
 }
 
-inline IException *UERRLOG(IException *except, const char *prefix=NULL)
+inline void UERRLOG(IException *except, const char *prefix=NULL)
 {
     LOG(MCuserError, except, prefix);
-    return except;
 }
 
-inline IException *OERRLOG(IException *except, const char *prefix=NULL)
+inline void OERRLOG(IException *except, const char *prefix=NULL)
 {
     LOG(MCoperatorError, except, prefix);
-    return except;
 }
 
-inline IException *DISLOG(IException *except, const char *prefix=NULL)
+inline void DISLOG(IException *except, const char *prefix=NULL)
 {
     LOG(MCdisaster, except, prefix);
-    return except;
 }
 
 #define EXCLOG FLLOG
@@ -1148,6 +1254,7 @@ interface IComponentLogFileCreator : extends IInterface
     virtual void setAliasName(const char * _aliasName) = 0; //alias file name, overrides default of component name
     virtual void setLogDirSubdir(const char * _subdir) = 0; //subdir be appended to config log dir (eg "server" or "audit")
     virtual void setRolling(const bool _rolls) = 0;         //daily rollover to new file
+    virtual void setMaxLogFileSize(const long _size) = 0;   //maximum log file size (files too large rolled over)
     virtual void setCompleteFilespec(const char * _fs) = 0; //Full filespec (path/fn.ext), overrides everything else
 
     //ILogMsgHandler fields

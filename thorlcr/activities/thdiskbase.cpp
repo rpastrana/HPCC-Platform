@@ -29,10 +29,11 @@
 #include "eclhelper.hpp" // tmp for IHThorArg interface
 #include "thdiskbase.ipp"
 
-CDiskReadMasterBase::CDiskReadMasterBase(CMasterGraphElement *info) : CMasterActivity(info), diskStats(info->queryJob(), diskReadRemoteStatistics)
+
+CDiskReadMasterBase::CDiskReadMasterBase(CMasterGraphElement *info) :
+    CMasterActivity(info, diskReadActivityStatistics)
 {
     hash = NULL;
-    inputProgress.setown(new ProgressInfo(queryJob()));
 }
 
 void CDiskReadMasterBase::init()
@@ -115,30 +116,6 @@ void CDiskReadMasterBase::serializeSlaveData(MemoryBuffer &dst, unsigned slave)
         CSlavePartMapping::serializeNullMap(dst);
 }
 
-void CDiskReadMasterBase::deserializeStats(unsigned node, MemoryBuffer &mb)
-{
-    CMasterActivity::deserializeStats(node, mb);
-    rowcount_t progress;
-    mb.read(progress);
-    inputProgress->set(node, progress);
-
-    diskStats.deserializeMerge(node, mb);
-}
-
-void CDiskReadMasterBase::getActivityStats(IStatisticGatherer & stats)
-{
-    CMasterActivity::getActivityStats(stats);
-    diskStats.getStats(stats);
-}
-
-void CDiskReadMasterBase::getEdgeStats(IStatisticGatherer & stats, unsigned idx)
-{
-    //This should be an activity stats
-    CMasterActivity::getEdgeStats(stats, idx);
-    inputProgress->processInfo();
-    stats.addStatistic(StNumDiskRowsRead, inputProgress->queryTotal());
-}
-
 /////////////////
 
 void CWriteMasterBase::init()
@@ -176,6 +153,14 @@ void CWriteMasterBase::init()
             clusters.append(cluster);
             idx++;
         }
+
+        if (idx == 0)
+        {
+            const char * defaultCluster = queryDefaultStoragePlane();
+            if (defaultCluster)
+                clusters.append(defaultCluster);
+        }
+
         IArrayOf<IGroup> groups;
         fillClusterArray(container.queryJob(), fileName, clusters, groups);
         fileDesc.setown(queryThorFileManager().create(container.queryJob(), fileName, clusters, groups, overwriteok, diskHelperBase->getFlags()));
@@ -254,7 +239,7 @@ void CWriteMasterBase::publish()
                 if (0 != (diskHelperBase->getFlags() & TDXgrouped))
                     recordSize += 1;
             }
-            unsigned compMethod = COMPRESS_METHOD_LZW;
+            unsigned compMethod = COMPRESS_METHOD_LZ4;
             // rowdiff used if recordSize > 0, else fallback to compMethod
             if (getOptBool(THOROPT_COMP_FORCELZW, false))
             {
@@ -265,13 +250,15 @@ void CWriteMasterBase::publish()
                 compMethod = COMPRESS_METHOD_FASTLZ;
             else if (getOptBool(THOROPT_COMP_FORCELZ4, false))
                 compMethod = COMPRESS_METHOD_LZ4;
+            else if (getOptBool(THOROPT_COMP_FORCELZ4HC, false))
+                compMethod = COMPRESS_METHOD_LZ4HC;
             bool blockCompressed;
             bool compressed = fileDesc->isCompressed(&blockCompressed);
             for (unsigned clusterIdx=0; clusterIdx<fileDesc->numClusters(); clusterIdx++)
             {
                 StringBuffer clusterName;
                 fileDesc->getClusterGroupName(clusterIdx, clusterName, &queryNamedGroupStore());
-                PROGLOG("Creating blank parts for file '%s', cluster '%s'", fileName.get(), clusterName.str());
+                LOG(MCthorDetailedDebugInfo, thorJob, "Creating blank parts for file '%s', cluster '%s'", fileName.get(), clusterName.str());
                 unsigned p=0;
                 while (p<fileDesc->numParts())
                 {
@@ -324,34 +311,11 @@ void CWriteMasterBase::publish()
     }
 }
 
-CWriteMasterBase::CWriteMasterBase(CMasterGraphElement *info) : CMasterActivity(info), diskStats(info->queryJob(), diskWriteRemoteStatistics)
+CWriteMasterBase::CWriteMasterBase(CMasterGraphElement *info)
+     : CMasterActivity(info, diskWriteActivityStatistics)
 {
-    publishReplicatedDone = !globals->getPropBool("@replicateAsync", true);
-    replicateProgress.setown(new ProgressInfo(queryJob()));
-
     diskHelperBase = (IHThorDiskWriteArg *)queryHelper();
     targetOffset = 0;
-}
-
-void CWriteMasterBase::deserializeStats(unsigned node, MemoryBuffer &mb)
-{
-    CMasterActivity::deserializeStats(node, mb);
-    unsigned repPerc;
-    mb.read(repPerc);
-    replicateProgress->set(node, repPerc);
-
-    diskStats.deserializeMerge(node, mb);
-}
-
-void CWriteMasterBase::getActivityStats(IStatisticGatherer & stats)
-{
-    CMasterActivity::getActivityStats(stats);
-    if (publishReplicatedDone)
-    {
-        replicateProgress->processInfo();
-        stats.addStatistic(StPerReplicated, replicateProgress->queryAverage() * 10000);
-    }
-    diskStats.getStats(stats);
 }
 
 void CWriteMasterBase::preStart(size32_t parentExtractSz, const byte *parentExtract)

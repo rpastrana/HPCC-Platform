@@ -78,7 +78,6 @@ protected:
     bool transferAndSignal();
 
 protected:
-    CachedPasswordProvider      passwordProvider;
     FileSprayer &               sprayer;
     SocketEndpoint              ep;
     PartitionPointArray         partition;
@@ -117,7 +116,7 @@ public:
     offset_t                offset;
     offset_t                size;               // expanded size
     offset_t                psize;              // physical (compressed) size
-    unsigned                headerSize;
+    offset_t                headerSize;
     offset_t                xmlHeaderLength;
     offset_t                xmlFooterLength;
     unsigned                crc;
@@ -306,6 +305,7 @@ protected:
     offset_t                totalSize;
     unsigned __int64        sizeToBeRead;
     bool                    replicate;
+    bool                    copySource;
     bool                    unknownSourceFormat;
     bool                    unknownTargetFormat;
     Owned<IException>       error;

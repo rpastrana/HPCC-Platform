@@ -197,7 +197,7 @@ EspHttpBinding::EspHttpBinding(IPropertyTree* tree, const char *bindname, const 
                 if (secMgrCfg)
                 {
                     //This is a Pluggable Security Manager
-                    m_secmgr.setown(SecLoader::loadPluggableSecManager(bindname, bnd_cfg, secMgrCfg));
+                    m_secmgr.setown(SecLoader::loadPluggableSecManager<ISecManager>(bindname, bnd_cfg, secMgrCfg));
                     m_authmap.setown(m_secmgr->createAuthMap(authcfg));
                     m_feature_authmap.setown(m_secmgr->createFeatureMap(authcfg));
                     m_setting_authmap.setown(m_secmgr->createSettingMap(authcfg));
@@ -264,6 +264,8 @@ EspHttpBinding::EspHttpBinding(IPropertyTree* tree, const char *bindname, const 
     if(m_challenge_realm.length() == 0)
         m_challenge_realm.append("ESP");
 
+    setUnrestrictedSSTypes();
+
     //Even for non-session based environment, the sessionIDCookieName may be used to
     //remove session related cookies cached in some browser page.
     sessionIDCookieName.setf("%s%d", SESSION_ID_COOKIE, m_port);
@@ -319,29 +321,12 @@ EspHttpBinding::EspHttpBinding(IPropertyTree* tree, const char *bindname, const 
 
     if ((domainAuthType == AuthPerSessionOnly) || (domainAuthType == AuthTypeMixed))
     {
-        setSDSSession();
+        espSessionSDSPath.setf("%s/%s[@name=\"%s\"]", PathSessionRoot, PathSessionProcess, processName.get());
+        sessionSDSPath.setf("%s/%s[@port=\"%d\"]/", espSessionSDSPath.str(), PathSessionApplication, m_port);
         checkSessionTimeoutSeconds = proc_cfg->getPropInt("@checkSessionTimeoutSeconds", ESP_CHECK_SESSION_TIMEOUT);
     }
 
     setABoolHash(proc_cfg->queryProp("@urlAlias"), serverAlias);
-}
-
-void EspHttpBinding::setSDSSession()
-{
-    espSessionSDSPath.setf("%s/%s[@name=\"%s\"]", PathSessionRoot, PathSessionProcess, processName.get());
-    Owned<IRemoteConnection> conn = querySDS().connect(espSessionSDSPath.str(), myProcessSession(), RTM_LOCK_WRITE, SESSION_SDS_LOCK_TIMEOUT);
-    if (!conn)
-        throw MakeStringException(-1, "Failed to connect SDS ESP Session.");
-
-    IPropertyTree* espSession = conn->queryRoot();
-    VStringBuffer appStr("%s[@port=\"%d\"]", PathSessionApplication, m_port);
-    IPropertyTree* appSessionTree = espSession->queryBranch(appStr.str());
-    if (!appSessionTree)
-    {
-        IPropertyTree* newAppSessionTree = espSession->addPropTree(PathSessionApplication);
-        newAppSessionTree->setPropInt("@port", m_port);
-    }
-    sessionSDSPath.setf("%s/%s/", espSessionSDSPath.str(), appStr.str());
 }
 
 static int compareLength(char const * const *l, char const * const *r) { return strlen(*l) - strlen(*r); }
@@ -434,6 +419,23 @@ void EspHttpBinding::readUnrestrictedResources(const char* resources)
         else
             domainAuthResources.setValue(resource, true);
     }
+}
+
+//Set the subservice types (wsdl, xsd, etc) which do not need user authentication.
+void EspHttpBinding::setUnrestrictedSSTypes()
+{
+    unrestrictedSSTypes.insert(sub_serv_wsdl);
+    unrestrictedSSTypes.insert(sub_serv_xsd);
+    unrestrictedSSTypes.insert(sub_serv_reqsamplexml);
+    unrestrictedSSTypes.insert(sub_serv_respsamplexml);
+    unrestrictedSSTypes.insert(sub_serv_reqsamplejson);
+    unrestrictedSSTypes.insert(sub_serv_respsamplejson);
+}
+
+bool EspHttpBinding::isUnrestrictedSSType(sub_service ss) const
+{
+    auto search = unrestrictedSSTypes.find(ss);
+    return (search != unrestrictedSSTypes.end()); 
 }
 
 //Check whether the url is valid or not for redirect after authentication.
@@ -646,7 +648,7 @@ void EspHttpBinding::populateRequest(CHttpRequest *request)
     }
 
 
-    ISecUser *user = m_secmgr->createUser(userid.str());
+    ISecUser *user = m_secmgr->createUser(userid.str(), ctx->querySecureContext());
     if(user == NULL)
     {
         UWARNLOG("Couldn't create ISecUser object for %s", userid.str());
@@ -751,14 +753,29 @@ bool EspHttpBinding::basicAuth(IEspContext* ctx)
     bool authenticated = m_secmgr->authorize(*user, rlist, ctx->querySecureContext());
     if(!authenticated)
     {
-        const char *desc = nullptr;
-        if (user->getAuthenticateStatus() == AS_PASSWORD_EXPIRED || user->getAuthenticateStatus() == AS_PASSWORD_VALID_BUT_EXPIRED)
-            desc = "ESP password is expired";
-        else
-            desc = "Access Denied: User or password invalid";
-        ctx->AuditMessage(AUDIT_TYPE_ACCESS_FAILURE, "Authentication", desc);
+        VStringBuffer err("User %s : ", user->getName());
+        switch (user->getAuthenticateStatus())
+        {
+        case AS_PASSWORD_EXPIRED :
+        case AS_PASSWORD_VALID_BUT_EXPIRED :
+            err.append("Password expired");
+            break;
+        case AS_ACCOUNT_DISABLED :
+            err.append("Account disabled");
+            break;
+        case AS_ACCOUNT_EXPIRED :
+            err.append("Account expired");
+            break;
+        case AS_ACCOUNT_LOCKED :
+            err.append("Account locked");
+            break;
+        case AS_INVALID_CREDENTIALS :
+        default:
+            err.append("Access Denied: User or password invalid");
+        }
+        ctx->AuditMessage(AUDIT_TYPE_ACCESS_FAILURE, "Authentication", err.str());
         ctx->setAuthError(EspAuthErrorNotAuthenticated);
-        ctx->setRespMsg(desc);
+        ctx->setRespMsg(err.str());
         return false;
     }
     bool authorized = true;
@@ -1423,7 +1440,10 @@ int EspHttpBinding::onGetJsonBuilder(IEspContext &context, CHttpRequest* request
     ISecUser* user = context.queryUser();
     bool inhouse = user && (user->getStatus()==SecUserStatus_Inhouse);
     xform->setParameter("inhouseUser", inhouse ? "true()" : "false()");
-    xform->setStringParameter("destination", methodQName.str());
+
+    StringBuffer destination;
+    destination.appendf("%s?%s", methodQName.str(), params.str());
+    xform->setStringParameter("destination", destination.str());
 
     StringBuffer page;
     xform->transform(page);
@@ -1534,6 +1554,20 @@ int EspHttpBinding::onGetConfig(IEspContext &context, CHttpRequest* request, CHt
     ISecUser* user = context.queryUser();
     if (m_viewConfig || (user && (user->getStatus()==SecUserStatus_Inhouse)))
     {
+        if (getESPContainer() && getESPContainer()->queryApplicationConfig())
+        {
+            ESPLOG(LogNormal, "Get config generated during application init");
+            StringBuffer content("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            if (context.queryRequestParameters()->hasProp("display"))
+                content.append("<?xml-stylesheet type=\"text/xsl\" href=\"/esp/xslt/xmlformatter.xsl\"?>");
+            toXML(getESPContainer()->queryApplicationConfig(), content);
+            response->setContent(content.str());
+            response->setContentType(HTTP_TYPE_APPLICATION_XML_UTF8);
+            response->setStatus(HTTP_STATUS_OK);
+            response->send();
+            return 0;
+        }
+
         ESPLOG(LogNormal, "Get config file: %s", m_configFile.get());
 
         StringBuffer content;
@@ -1949,30 +1983,41 @@ void EspHttpBinding::generateSampleXmlFromSchema(bool isRequest, IEspContext &co
     StringBuffer element, schemaXmlbuff(schemaxml);
     getXMLMessageTag(context, isRequest, methodQName.str(), element);
 
-    Owned<IXmlSchema> schema = createXmlSchema(schemaXmlbuff);
-    if (schema.get())
+    StringBuffer content("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+    if (context.queryRequestParameters()->hasProp("display"))
+        content.append("<?xml-stylesheet type=\"text/xsl\" href=\"/esp/xslt/xmlformatter.xsl\"?>");
+
+    if (!methodQName || !*methodQName)
     {
-        IXmlType* type = schema->queryElementType(element);
-        if (type)
+        StringBuffer label(isRequest ? "Requests" : "Responses");
+        content.appendf("<Examples><%s>", label.str());
+        MethodInfoArray methods;
+        getQualifiedNames(context, methods);
+        ForEachItemIn(i, methods)
         {
-            StringBuffer content;
-            StringStack parent;
-            StringBuffer nsdecl("xmlns=\"");
-
-            content.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            if (context.queryRequestParameters()->hasProp("display"))
-                content.append("<?xml-stylesheet type=\"text/xsl\" href=\"/esp/xslt/xmlformatter.xsl\"?>");
-
-            genSampleXml(parent,type, content, element, generateNamespace(context, request, serviceQName.str(), methodQName.str(), nsdecl).append('\"').str());
-            response->setContent(content.length(), content.str());
-            response->setContentType(HTTP_TYPE_APPLICATION_XML_UTF8);
-            response->setStatus(HTTP_STATUS_OK);
-            response->send();
-            return;
+            generateSampleXml(isRequest, context, request, content, serviceQName.str(), methods.item(i).m_label.str());
         }
+        content.appendf("</%s></Examples>", label.str());
+    }
+    else
+    {
+        Owned<IXmlSchema> schema = createXmlSchema(schemaXmlbuff);
+        if (!schema.get())
+            throw MakeStringException(-1, "Could not create XML Schema");
+
+        IXmlType* type = schema->queryElementType(element);
+        if (!type)
+            throw MakeStringException(-1, "Unknown type: %s", element.str());
+
+        StringStack parent;
+        StringBuffer nsdecl("xmlns=\"");
+        genSampleXml(parent,type, content, element, generateNamespace(context, request, serviceQName.str(), methodQName.str(), nsdecl).append('\"').str());
     }
 
-    throw MakeStringException(-1,"Unknown type: %s", element.str());
+    response->setContent(content.length(), content.str());
+    response->setContentType(HTTP_TYPE_APPLICATION_XML_UTF8);
+    response->setStatus(HTTP_STATUS_OK);
+    response->send();
 }
 
 int EspHttpBinding::onGetReqSampleXml(IEspContext &ctx, CHttpRequest* request, CHttpResponse* response, const char *serv, const char *method)

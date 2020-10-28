@@ -181,7 +181,6 @@ void CSVSplitter::init(unsigned _maxColumns, size32_t _maxCsvSize, const char *q
     lengths = new unsigned [maxColumns+1];      // NB: One larger to remove some tests in main loop...
     data = new const byte * [maxColumns+1];
 
-    unsigned idx;
     if (quotes)
         addActionList(matcher, quotes, QUOTE);
     if (separators)
@@ -381,7 +380,10 @@ size32_t CSVSplitter::splitLine(size32_t maxLength, const byte * start)
                 setFieldRange(firstGood, lastGood, curColumn, quoteToStrip, lastEscape);
                 lastEscape = false;
                 while (++curColumn < maxColumns)
+                {
+                    data[curColumn] = cur;
                     lengths[curColumn] = 0;
+                }
                 return (size32_t)(cur + matchLen - start);
             }
             lastGood = cur+matchLen;

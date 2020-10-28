@@ -134,7 +134,7 @@ const StringBuffer &CEspApplicationPort::getAppFrameHtml(time_t &modified, const
         if(user && secmgr)
         {
             passwordDaysRemaining = user->getPasswordDaysRemaining();//-1 if expired, -2 if never expires
-            int passwordExpirationDays = (int)secmgr->getPasswordExpirationWarningDays();
+            int passwordExpirationDays = (int)secmgr->getPasswordExpirationWarningDays(ctx->querySecureContext());
             if (passwordDaysRemaining == scPasswordNeverExpires || passwordDaysRemaining > passwordExpirationDays)
                 passwordDaysRemaining = scPasswordExpired;
         }
@@ -614,7 +614,7 @@ unsigned CEspApplicationPort::updatePassword(IEspContext &context, IHttpMessage*
         ISecCredentials& cred = user->credentials();
         if (isEmptyString(cred.getPassword()))
             cred.setPassword(oldpass);
-        returnFlag = secmgr->updateUserPassword(*user, newpass1, oldpass);//provide the entered current password, not the cached one
+        returnFlag = secmgr->updateUserPassword(*user, newpass1, oldpass, context.querySecureContext());//provide the entered current password, not the cached one
     }
     catch(IException* e)
     {
@@ -754,4 +754,25 @@ int CEspProtocol::countBindings(int port)
         return 0;
     else
         return apport->getBindingCount();
+}
+
+bool checkEspConnection(IEspContext& ctx)
+{
+    CHttpRequest* req = dynamic_cast<CHttpRequest*>(ctx.queryRequest());
+    if (!req)
+        return false;
+    ISocket* sock = req->getSocket();
+    if (!sock)
+        return false;
+    if (sock->OShandle() == INVALID_SOCKET)
+        return false;
+    int ret = sock->wait_read(0);
+    if (ret < 0)
+        return false;
+    else if (ret > 0)
+    {
+        if (sock->avail_read() == 0)
+            return false;
+    }
+    return true;
 }

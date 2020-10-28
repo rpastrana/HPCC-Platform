@@ -43,6 +43,13 @@
           </xs:appinfo>
         </xs:annotation>
       </xs:attribute>
+      <xs:attribute name="DecoupledLogging" type="xs:boolean" use="optional" default="false">
+        <xs:annotation>
+          <xs:appinfo>
+            <tooltip>Enable Decoupled Logging functionality.</tooltip>
+          </xs:appinfo>
+        </xs:annotation>
+      </xs:attribute>
       <xs:attribute name="FailSafe" type="xs:boolean" use="optional" default="true">
         <xs:annotation>
           <xs:appinfo>
@@ -61,6 +68,13 @@
         <xs:annotation>
           <xs:appinfo>
             <tooltip>The threshold at which a new tank file will be started: n for number of requests, nK, nM, nG, or nT for file size.</tooltip>
+          </xs:appinfo>
+        </xs:annotation>
+      </xs:attribute>
+      <xs:attribute name="FailSafeLogsMask" type="xs:string" use="optional">
+        <xs:annotation>
+          <xs:appinfo>
+            <tooltip>A pattern of characters and wildcards used to match Failsafe file names.</tooltip>
           </xs:appinfo>
         </xs:annotation>
       </xs:attribute>

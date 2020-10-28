@@ -516,7 +516,7 @@ bool CWsDfuEx::onDFUSpace(IEspContext &context, IEspDFUSpaceRequest & req, IEspD
         else
         {
             Owned<IEspSpaceItem> item64 = createSpaceItem();
-            if (stricmp(countby, COUNTBY_OWNER))
+            if (!strieq(countby, COUNTBY_OWNER))
             {
                 if (scopeName)
                     item64->setName(scopeName);
@@ -1241,159 +1241,16 @@ void setDeleteFileResults(const char* fileName, const char* nodeGroup, bool fail
     actionResults.append(*resultObj.getClear());
 }
 
-typedef enum {
-    DeleteActionSuccess,
-    DeleteActionFailure,
-    DeleteActionSkip
-} DeleteActionResult;
-
-
-DeleteActionResult doDeleteFile(const char *fn, IUserDescriptor *userdesc, StringArray &superFiles, StringArray &failedFiles,
-    const char *auditStr, StringBuffer& returnStr, IArrayOf<IEspDFUActionInfo>& actionResults, bool superFilesOnly, bool removeFromSuperfiles, bool deleteRecursively);
-
-bool doRemoveFileFromSuperfiles(const char *lfn, IUserDescriptor *userdesc, StringArray &superFiles, StringArray &failedFiles, bool deleteRecursively,
-    const char *auditStr, StringBuffer& returnStr, IArrayOf<IEspDFUActionInfo>& actionResults)
+void cleanLogicalFileNames(StringArray &fileNames, StringArray &uniqueFileNames)
 {
-    StringArray emptySuperFiles;
-    IDistributedFileDirectory &fdir = queryDistributedFileDirectory();
+    ForEachItemIn(i, fileNames)
     {
-        Owned<IDistributedFile> df = fdir.lookup(lfn, userdesc, true, false, false, nullptr, defaultPrivilegedUser);
-        if(!df)
-            return false;
-        Owned<IDistributedSuperFileIterator> supers = df->getOwningSuperFiles();
-        ForEach(*supers)
-        {
-            IDistributedSuperFile &super = supers->query();
-            try
-            {
-                super.removeSubFile(lfn, false, false, NULL);
-                VStringBuffer text("from superfile %s", super.queryLogicalName());
-                setDeleteFileResults(lfn, NULL, false, "Removed subfile", text, returnStr, actionResults);
-            }
-            catch(IException* e)
-            {
-                StringBuffer emsg;
-                VStringBuffer text("from superfile %s: %s", super.queryLogicalName(), e->errorMessage(emsg).str());
-                setDeleteFileResults(lfn, NULL, true, "Could not remove subfile ", text, returnStr, actionResults);
-                e->Release();
-                return false;
-            }
-            catch(...)
-            {
-                VStringBuffer text("from superfile %s", super.queryLogicalName());
-                setDeleteFileResults(lfn, NULL, true, "Could not remove subfile ", text, returnStr, actionResults);
-                return false;
-            }
-            if (deleteRecursively && super.numSubFiles(false)==0)
-                emptySuperFiles.appendUniq(super.queryLogicalName());
-        }
-    }
-    ForEachItemIn(i, emptySuperFiles)
-        doDeleteFile(emptySuperFiles.item(i), userdesc, superFiles, failedFiles, auditStr, returnStr, actionResults, false, true, deleteRecursively);
-
-    return true;
-}
-
-DeleteActionResult doDeleteFile(const char *fn, IUserDescriptor *userdesc, StringArray &superFiles, StringArray &failedFiles,
-    const char *auditStr, StringBuffer& returnStr, IArrayOf<IEspDFUActionInfo>& actionResults,
-    bool superFilesOnly, bool removeFromSuperfiles, bool deleteRecursively)
-{
-    StringArray parsed;
-    parsed.appendListUniq(fn, "@");
-    const char *lfn = parsed.item(0);
-    const char *group = NULL;
-    if (parsed.length() > 1)
-    {
-        group = parsed.item(1);
-        if (group && (!*group || strieq(group, "null"))) //null is used by new ECLWatch for a superfile
-            group = NULL;
-    }
-
-    bool isSuper = false;
-    if (superFiles.contains(fn) || failedFiles.contains(fn))
-        return DeleteActionSkip;
-    try
-    {
-        IDistributedFileDirectory &fdir = queryDistributedFileDirectory();
-        {
-            Owned<IDistributedFile> df = fdir.lookup(lfn, userdesc, true, false, false, nullptr, defaultPrivilegedUser);
-            if(!df)
-            {
-                PROGLOG("CWsDfuEx::DFUDeleteFiles: %s not found", lfn);
-                setDeleteFileResults(lfn, group, true, "File not found", NULL, returnStr, actionResults);
-                return DeleteActionFailure;
-            }
-            isSuper = df->querySuperFile()!=NULL;
-            if (superFilesOnly) // skip non-super files on 1st pass
-            {
-                if(!isSuper)
-                    return DeleteActionSkip;
-                superFiles.append(fn);
-            }
-        }
-        fdir.removeEntry(fn, userdesc, NULL, REMOVE_FILE_SDS_CONNECT_TIMEOUT, true);
-        LOG(MCauditInfo, "%s,%s", auditStr, fn);
-        setDeleteFileResults(lfn, group, false, isSuper ? "Deleted Superfile" : "Deleted File", NULL, returnStr, actionResults);
-    }
-    catch(IException* e)
-    {
-        StringBuffer emsg;
-        e->errorMessage(emsg);
-        if (removeFromSuperfiles && strstr(emsg, "owned by"))
-        {
-            if (!doRemoveFileFromSuperfiles(lfn, userdesc, superFiles, failedFiles, deleteRecursively, auditStr, returnStr, actionResults))
-                return DeleteActionFailure;
-            return doDeleteFile(fn, userdesc, superFiles, failedFiles, auditStr, returnStr, actionResults, superFilesOnly, false, false);
-        }
-        if (e->errorCode() == DFSERR_CreateAccessDenied)
-            emsg.replaceString("Create ", "Delete ");
-
-        setDeleteFileResults(lfn, group, true, "Could not delete", emsg.str(), returnStr, actionResults);
-        e->Release();
-        return DeleteActionFailure;
-    }
-    catch(...)
-    {
-        setDeleteFileResults(lfn, group, true, "Could not delete", "unknown exception", returnStr, actionResults);
-        return DeleteActionFailure;
-    }
-    return DeleteActionSuccess;
-}
-
-void doDeleteFiles(StringArray &files, IUserDescriptor *userdesc, StringArray &superFiles, StringArray &failedFiles,
-    const char *auditStr, StringBuffer &returnStr, IArrayOf<IEspDFUActionInfo> &actionResults,
-    bool superFilesOnly, bool removeFromSuperfiles, bool deleteRecursively)
-{
-    ForEachItemIn(i, files)
-    {
-        const char* fn = files.item(i);
-        if(!fn || !*fn)
+        const char *fn = fileNames.item(i);
+        if (isEmptyString(fn))
             continue;
 
-        PROGLOG("Deleting %s", fn);
-        if (DeleteActionFailure==doDeleteFile(fn, userdesc, superFiles, failedFiles, auditStr, returnStr, actionResults, superFilesOnly, removeFromSuperfiles, deleteRecursively))
-        {
-            failedFiles.appendUniq(fn);
-            PROGLOG("Delete %s failed", fn);
-        }
-        else
-            PROGLOG("Delete %s done", fn);
+        uniqueFileNames.appendUniq(fn);
     }
-
-}
-
-inline void doDeleteSuperFiles(StringArray &files, IUserDescriptor *userdesc, StringArray &superFiles,
-    StringArray &failedFiles, const char *auditStr, StringBuffer &returnStr, IArrayOf<IEspDFUActionInfo> &actionResults,
-    bool removeFromSuperfiles, bool deleteRecursively)
-{
-    doDeleteFiles(files, userdesc, superFiles, failedFiles, auditStr, returnStr, actionResults, true, removeFromSuperfiles, deleteRecursively);
-}
-
-inline void doDeleteSubFiles(StringArray &files, IUserDescriptor *userdesc, StringArray &superFiles,
-    StringArray &failedFiles, const char *auditStr, StringBuffer &returnStr, IArrayOf<IEspDFUActionInfo> &actionResults,
-    bool removeFromSuperfiles, bool deleteRecursively)
-{
-    doDeleteFiles(files, userdesc, superFiles, failedFiles, auditStr, returnStr, actionResults, false, removeFromSuperfiles, deleteRecursively);
 }
 
 bool CWsDfuEx::DFUDeleteFiles(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp)
@@ -1401,36 +1258,189 @@ bool CWsDfuEx::DFUDeleteFiles(IEspContext &context, IEspDFUArrayActionRequest &r
     if (isDetachedFromDali())
         throw MakeStringException(ECLWATCH_INVALID_INPUT, "ESP server is detached from Dali. Please try later.");
 
-    double version = context.getClientVersion();
-    Owned<IUserDescriptor> userdesc;
-    const char *username = context.queryUserId();
-    if(username && *username)
+    class CDFUDeleteFilesHelper
     {
-        userdesc.setown(createUserDescriptor());
-        userdesc->set(username, context.queryPassword(), context.querySignature());
-    }
+        IEspContext &context;
+        Owned<IUserDescriptor> userdesc;
+        IArrayOf<IEspDFUActionInfo> actionResults;
+        StringBuffer returnStr, auditStr;
+        StringAttr espProcess;
 
-    StringBuffer returnStr;
-    StringBuffer auditStr(",FileAccess,WsDfu,DELETED,");
-    IArrayOf<IEspDFUActionInfo> actionResults;
+        void deleteFile(const char *fn)
+        {
+            CDfsLogicalFileName dfsLFN;
+            dfsLFN.set(fn);
 
-    StringArray superFiles, failedFiles;
+            StringBuffer group;
+            dfsLFN.getCluster(group);
+            if (!group.isEmpty() && strieq(group.str(), "null")) //null is used by new ECLWatch for a superfile
+                group.clear();
 
-    auditStr.append(espProcess.get());
-    auditStr.append(',');
-    if (!isEmptyString(username))
-        auditStr.append(username).append('@');
-    context.getPeer(auditStr);
+            try
+            {
+                PROGLOG("Deleting %s", fn);
+                queryDistributedFileDirectory().removeEntry(fn, userdesc, nullptr, REMOVE_FILE_SDS_CONNECT_TIMEOUT, true);
 
-    doDeleteSuperFiles(req.getLogicalFiles(), userdesc, superFiles, failedFiles, auditStr.str(),
-        returnStr, actionResults, req.getRemoveFromSuperfiles(), req.getRemoveRecursively());
-    doDeleteSubFiles(req.getLogicalFiles(), userdesc, superFiles, failedFiles, auditStr.str(),
-        returnStr, actionResults, req.getRemoveFromSuperfiles(), req.getRemoveRecursively());
+                LOG(MCauditInfo, "%s,%s", auditStr.str(), fn);
+                VStringBuffer message("File %s deleted.", fn);
+                addResult(dfsLFN.get(), group, false, message);
+            }
+            catch(IException *e)
+            {
+                StringBuffer emsg;
+                e->errorMessage(emsg);
+                if (e->errorCode() == DFSERR_CreateAccessDenied)
+                    emsg.replaceString("Create ", "Delete ");
 
+                VStringBuffer message("Could not delete file %s: %s.", fn, emsg.str());
+                addResult(dfsLFN.get(), group, true, message);
+                e->Release();
+            }
+            catch(...)
+            {
+                VStringBuffer message("Could not delete file %s: unknown exception.", fn);
+                addResult(dfsLFN.get(), group, true, message);
+            }
+        }
+
+        void addResult(const char* fileName, const char* nodeGroup, bool failed, const char *message)
+        {
+            double version = context.getClientVersion();
+            if (version < 1.33)
+                returnStr.appendf("<Message><Value>%s</Value></Message>", message);
+
+            PROGLOG("%s", message);
+            if (version < 1.27)
+                return;
+
+            Owned<IEspDFUActionInfo> resultObj = createDFUActionInfo();
+            resultObj->setFileName(fileName);
+            resultObj->setFailed(failed);
+            if (!isEmptyString(nodeGroup))
+                resultObj->setNodeGroup(nodeGroup);
+            resultObj->setActionResult(message);
+            actionResults.append(*resultObj.getClear());
+        }
+    public:
+        CDFUDeleteFilesHelper(IEspContext &ctx, const char *process) : context(ctx), espProcess(process)
+        {
+            const char *user = context.queryUserId();
+            if (!isEmptyString(user))
+            {
+                userdesc.setown(createUserDescriptor());
+                userdesc->set(user, context.queryPassword(), context.querySignature());
+            }
+
+            auditStr.set(",FileAccess,WsDfu,DELETED,");
+            auditStr.append(espProcess.get());
+            auditStr.append(',');
+            if (!isEmptyString(user))
+                auditStr.append(user).append('@');
+            context.getPeer(auditStr);
+        }
+
+        const char *getReturnStr() const { return returnStr.str(); }
+        IArrayOf<IEspDFUActionInfo> &getActionResults() { return actionResults; }
+
+        void deleteFiles(StringArray &logicalFileNames, bool removeFromSuperFiles, bool removeEmptyOwningSuperFiles)
+        {
+            StringArray emptyOwningSuperFiles;
+            IDistributedFileDirectory &fdir = queryDistributedFileDirectory();
+            ForEachItemIn(i, logicalFileNames)
+            {
+                CDfsLogicalFileName dfsLFN;
+                dfsLFN.set(logicalFileNames.item(i));
+
+                StringBuffer group;
+                dfsLFN.getCluster(group);
+                if (!group.isEmpty() && strieq(group.str(), "null")) //null is used by new ECLWatch for a superfile
+                    group.clear();
+
+                StringBuffer normalizeLFN;
+                normalizeLFN.append(dfsLFN.get());
+                if (group.length())
+                {
+                    normalizeLFN.append("@");
+                    dfsLFN.getCluster(normalizeLFN);
+                }
+                const char *lfn = normalizeLFN;
+                if (emptyOwningSuperFiles.contains(lfn))
+                    continue;
+
+                Owned<IDistributedFile> df = fdir.lookup(lfn, userdesc, true, false, false, nullptr, defaultPrivilegedUser, 30000); // 30 sec timeout
+                if (!df)
+                {
+                    VStringBuffer message("Could not delete file %s: file not found.", lfn);
+                    addResult(dfsLFN.get(), group, true, message);
+                    continue;
+                }
+
+                Owned<IDistributedSuperFileIterator> superOwners = df->getOwningSuperFiles();
+                if (!removeFromSuperFiles && superOwners->first())
+                {
+                    VStringBuffer message("The file %s can not be deleted because it is owned by one or more superfiles.", lfn);
+                    addResult(dfsLFN.get(), group, true, message);
+                    continue;
+                }
+
+                bool fileCanBeDeleted = true;
+                ForEach(*superOwners)
+                {
+                    IDistributedSuperFile &superOwner = superOwners->query();
+                    try
+                    {
+                        superOwner.removeSubFile(lfn, false, false, nullptr);
+                        PROGLOG("File %s is removed from superfile %s", lfn, superOwner.queryLogicalName());
+                    }
+                    catch(IException *e)
+                    {
+                        VStringBuffer message("Could not delete file %s from superfile %s: ", lfn, superOwner.queryLogicalName());
+                        e->errorMessage(message);
+                        addResult(dfsLFN.get(), group, true, message);
+                        e->Release();
+                        fileCanBeDeleted = false;
+                        break;
+                    }
+                    catch(...)
+                    {
+                        VStringBuffer message("Could not delete file %s from superfile %s: unknown exception", lfn, superOwner.queryLogicalName());
+                        addResult(dfsLFN.get(), group, true, message);
+                        fileCanBeDeleted = false;
+                        break;
+                    }
+
+                    if (removeEmptyOwningSuperFiles && (superOwner.numSubFiles(false)==0))
+                        emptyOwningSuperFiles.appendUniq(superOwner.queryLogicalName());
+                }
+
+                if (fileCanBeDeleted)
+                {
+                    superOwners.clear();
+                    df.clear();
+                    deleteFile(lfn);
+                }
+            }
+
+            ForEachItemIn(j, emptyOwningSuperFiles)
+            {
+                deleteFile(emptyOwningSuperFiles.item(j));
+            }
+        }
+    };
+
+    StringArray logicalFileNames;
+    cleanLogicalFileNames(req.getLogicalFiles(), logicalFileNames);
+    if (!logicalFileNames.length())
+        return true;
+
+    CDFUDeleteFilesHelper helper(context, espProcess);
+    helper.deleteFiles(logicalFileNames, req.getRemoveFromSuperfiles(), req.getRemoveRecursively());
+
+    double version = context.getClientVersion();
     if (version >= 1.27)
-        resp.setActionResults(actionResults);
+        resp.setActionResults(helper.getActionResults());
     if (version < 1.33)
-        resp.setDFUArrayActionResult(returnStr.str());
+        resp.setDFUArrayActionResult(helper.getReturnStr());
     return true;
 }
 
@@ -1438,11 +1448,17 @@ bool CWsDfuEx::onDFUArrayAction(IEspContext &context, IEspDFUArrayActionRequest 
 {
     try
     {
-        context.ensureFeatureAccess(FEATURE_URL, SecAccess_Write, ECLWATCH_DFU_ACCESS_DENIED, "WsDfu::DFUArrayAction: Permission denied.");
-
         CDFUArrayActions action = req.getType();
         if (action == DFUArrayActions_Undefined)
             throw MakeStringException(ECLWATCH_INVALID_INPUT,"Action not defined.");
+
+        if (action == CDFUArrayActions_ChangeRestriction)
+            return  changeFileRestrictions(context, req, resp);
+
+        if (action == CDFUArrayActions_ChangeProtection)
+            return  changeFileProtections(context, req, resp);
+
+        context.ensureFeatureAccess(FEATURE_URL, SecAccess_Write, ECLWATCH_DFU_ACCESS_DENIED, "WsDfu::DFUArrayAction: Permission denied.");
 
         double version = context.getClientVersion();
         if (version > 1.03)
@@ -1540,6 +1556,124 @@ bool CWsDfuEx::onDFUArrayAction(IEspContext &context, IEspDFUArrayActionRequest 
     {
         FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
     }
+    return true;
+}
+
+void CWsDfuEx::addFileActionResult(const char* fileName, const char* nodeGroup, bool failed, const  char* msg,
+    IArrayOf<IEspDFUActionInfo>& actionResults)
+{
+    Owned<IEspDFUActionInfo> result = createDFUActionInfo();
+    result->setFileName(fileName);
+    if (!isEmptyString(nodeGroup))
+        result->setNodeGroup(nodeGroup);
+    result->setFailed(failed);
+    result->setActionResult(msg);
+    actionResults.append(*result.getClear());
+}
+
+bool CWsDfuEx::changeFileProtections(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp)
+{
+    CDFUChangeProtection protect = req.getProtect();
+    if (protect == CDFUChangeProtection_NoChange)
+        return true;
+
+#ifdef _USE_OPENLDAP
+    if (protect == CDFUChangeProtection_UnprotectAll)
+        context.ensureSuperUser(ECLWATCH_SUPER_USER_ACCESS_DENIED, "Access denied, administrators only.");
+#endif
+
+    if (isDetachedFromDali())
+        throw makeStringException(ECLWATCH_INVALID_INPUT, "ESP server is detached from Dali. Please try later.");
+
+    StringBuffer userID;
+    context.getUserID(userID);
+    Owned<IUserDescriptor> userDesc;
+    if (userID.isEmpty())
+        userID.set("hpcc"); //The userID is needed for setProtect().
+    else
+    {
+        userDesc.setown(createUserDescriptor());
+        userDesc->set(userID, context.queryPassword(), context.querySignature());
+    }
+
+    IArrayOf<IEspDFUActionInfo> actionResults;
+    for (unsigned i = 0; i < req.getLogicalFiles().length(); i++)
+    {
+        const char *file = req.getLogicalFiles().item(i);
+        if (isEmptyString(file))
+            continue;
+
+        Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(file, userDesc, false, false, true, nullptr, defaultPrivilegedUser); // lock super-owners
+        if (!df)
+        {
+            addFileActionResult(file, nullptr, true, "Cannot find file.", actionResults);
+            continue;
+        }
+
+        if (protect != CDFUChangeProtection_UnprotectAll)
+            df->setProtect(userID, protect == CDFUChangeProtection_Protect ? true : false);
+        else
+            clearFileProtections(df);
+        addFileActionResult(file, nullptr, false, protect == CDFUChangeProtection_Protect ? "File protected" : "File unprotected", actionResults);
+    }
+    resp.setActionResults(actionResults);
+    return true;
+}
+
+void CWsDfuEx::clearFileProtections(IDistributedFile *df)
+{
+    StringArray owners;
+    Owned<IPropertyTreeIterator> itr = df->queryAttributes().getElements("Protect");
+    ForEach(*itr)
+    {
+        const char *owner = itr->query().queryProp("@name");
+        if (!isEmptyString(owner))
+            owners.append(owner);
+    }
+
+    ForEachItemIn(i, owners)
+        df->setProtect(owners.item(i), false);
+}
+
+bool CWsDfuEx::changeFileRestrictions(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp)
+{
+    CDFUChangeRestriction changeRestriction = req.getRestrict();
+    if (changeRestriction == CDFUChangeRestriction_NoChange)
+        return true;
+
+    if (changeRestriction == CDFUChangeRestriction_NotRestricted)
+        context.ensureFeatureAccess("CodeSignAccess", SecAccess_Full, ECLWATCH_DFU_ACCESS_DENIED, "CodeSignAccess: Permission denied.");
+
+    if (isDetachedFromDali())
+        throw makeStringException(ECLWATCH_INVALID_INPUT, "ESP server is detached from Dali. Please try later.");
+
+    StringBuffer userID;
+    context.getUserID(userID);
+    Owned<IUserDescriptor> userDesc;
+    if (!userID.isEmpty())
+    {
+        userDesc.setown(createUserDescriptor());
+        userDesc->set(userID, context.queryPassword(), context.querySignature());
+    }
+
+    IArrayOf<IEspDFUActionInfo> actionResults;
+    for (unsigned i = 0; i < req.getLogicalFiles().length();i++)
+    {
+        const char *file = req.getLogicalFiles().item(i);
+        if (isEmptyString(file))
+            continue;
+
+        Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(file, userDesc, false, false, true, nullptr, defaultPrivilegedUser); // lock super-owners
+        if (!df)
+        {
+            addFileActionResult(file, nullptr, true, "Cannot find file.", actionResults);
+            continue;
+        }
+
+        df->setRestrictedAccess(changeRestriction==CDFUChangeRestriction_Restrict);
+        addFileActionResult(file, nullptr, false, changeRestriction == CDFUChangeRestriction_Restrict ? "Changed to restricted" : "Changed to unrestricted", actionResults);
+    }
+    resp.setActionResults(actionResults);
     return true;
 }
 
@@ -1689,14 +1823,7 @@ bool CWsDfuEx::onDFURecordTypeInfo(IEspContext &context, IEspDFURecordTypeInfoRe
             throw MakeStringException(ECLWATCH_MISSING_PARAMS, "File name required");
         PROGLOG("DFURecordTypeInfo file: %s", fileName);
 
-        const char* userId = context.queryUserId();
-        Owned<IUserDescriptor> userdesc;
-        if (userId && *userId)
-        {
-            userdesc.setown(createUserDescriptor());
-            userdesc->set(userId, context.queryPassword(), context.querySignature());
-        }
-        Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(fileName, userdesc, false, false, false, nullptr, defaultPrivilegedUser);
+        Owned<IDistributedFile> df = lookupLogicalName(context, fileName, false, false, false, nullptr, defaultPrivilegedUser);
         if (!df)
             throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file %s.",fileName);
 
@@ -1911,6 +2038,83 @@ bool CWsDfuEx::getUserFilePermission(IEspContext &context, IUserDescriptor* udes
     return true;
 }
 
+void CWsDfuEx::getFilePartsOnClusters(IEspContext &context, const char *clusterReq, StringArray &clusters,
+    IDistributedFile *df, IEspDFUFileDetail &fileDetails)
+{
+    double version = context.getClientVersion();
+    IArrayOf<IConstDFUFilePartsOnCluster>& partsOnClusters = fileDetails.getDFUFilePartsOnClusters();
+    ForEachItemIn(i, clusters)
+    {
+        const char* clusterName = clusters.item(i);
+        if (isEmptyString(clusterName) || (!isEmptyString(clusterReq) && !strieq(clusterReq, clusterName)))
+            continue;
+
+        Owned<IEspDFUFilePartsOnCluster> partsOnCluster = createDFUFilePartsOnCluster();
+        partsOnCluster->setCluster(clusterName);
+
+        IArrayOf<IConstDFUPart> &filePartList = partsOnCluster->getDFUFileParts();
+
+        Owned<IFileDescriptor> fdesc = df->getFileDescriptor(clusterName);
+        Owned<IPartDescriptorIterator> pi = fdesc->getIterator();
+        ForEach(*pi)
+        {
+            IPartDescriptor &part = pi->query();
+            unsigned partIndex = part.queryPartIndex();
+
+            __int64 size = -1;
+            StringBuffer partSizeStr;
+            IPropertyTree *partPropertyTree = &part.queryProperties();
+            if (!partPropertyTree)
+                partSizeStr.set("<N/A>");
+            else
+            {
+                size = partPropertyTree->getPropInt64("@size", -1);
+                comma c4(size);
+                partSizeStr<<c4;
+            }
+
+            for (unsigned i=0; i<part.numCopies(); i++)
+            {
+                StringBuffer url;
+                part.queryNode(i)->endpoint().getUrlStr(url);
+
+                Owned<IEspDFUPart> FilePart = createDFUPart();
+                FilePart->setId(partIndex+1);
+                FilePart->setPartsize(partSizeStr.str());
+                if (version >= 1.38)
+                    FilePart->setPartSizeInt64(size);
+                FilePart->setIp(url.str());
+                FilePart->setCopy(i+1);
+
+                filePartList.append(*FilePart.getClear());
+            }
+        }
+
+        if (version >= 1.31)
+        {
+            IClusterInfo *clusterInfo = fdesc->queryCluster(clusterName);
+            if (clusterInfo) //Should be valid. But, check it just in case.
+            {
+                partsOnCluster->setReplicate(clusterInfo->queryPartDiskMapping().isReplicated());
+                Owned<CThorNodeGroup> nodeGroup = thorNodeGroupCache->lookup(clusterName, nodeGroupCacheTimeout);
+                if (nodeGroup)
+                    partsOnCluster->setCanReplicate(nodeGroup->queryCanReplicate());
+                const char *defaultDir = fdesc->queryDefaultDir();
+                if (!isEmptyString(defaultDir))
+                {
+                    DFD_OS os = SepCharBaseOs(getPathSepChar(defaultDir));
+                    StringBuffer baseDir, repDir;
+                    clusterInfo->getBaseDir(baseDir, os);
+                    clusterInfo->getReplicateDir(repDir, os);
+                    partsOnCluster->setBaseDir(baseDir.str());
+                    partsOnCluster->setReplicateDir(baseDir.str());
+                }
+            }
+        }
+        partsOnClusters.append(*partsOnCluster.getClear());
+    }
+}
+
 void CWsDfuEx::parseFieldMask(unsigned __int64 fieldMask, unsigned &fieldCount, IntArray &fieldIndexArray)
 {
     while (fieldMask > 0)
@@ -1982,15 +2186,26 @@ void CWsDfuEx::doGetFileDetails(IEspContext &context, IUserDescriptor *udesc, co
 
     if (protect != CDFUChangeProtection_NoChange)
     {
-        StringBuffer protectBy;
-        context.getUserID(protectBy);
-        if (protectBy.isEmpty())
-            protectBy.set("hpcc");
-        df->setProtect(protectBy.str(), protect == CDFUChangeProtection_Protect ? true : false);
+#ifdef _USE_OPENLDAP
+        if (protect == CDFUChangeProtection_UnprotectAll)
+            context.ensureSuperUser(ECLWATCH_SUPER_USER_ACCESS_DENIED, "Access denied, administrators only.");
+#endif
+
+        if (protect == CDFUChangeProtection_UnprotectAll)
+            clearFileProtections(df);
+        else
+        {
+            StringBuffer userID;
+            context.getUserID(userID);
+            if (userID.isEmpty())
+                userID.set("hpcc");
+            df->setProtect(userID.str(), protect == CDFUChangeProtection_Protect ? true : false);
+        }
     }
     if (changeRestriction != CDFUChangeRestriction_NoChange)
     {
-        context.ensureFeatureAccess("DFURestrictedAccess", SecAccess_Write, ECLWATCH_DFU_ACCESS_DENIED, "DFURestrictedAccess: Permission denied.");
+        if (changeRestriction == CDFUChangeRestriction_NotRestricted)
+            context.ensureFeatureAccess("CodeSignAccess", SecAccess_Full, ECLWATCH_DFU_ACCESS_DENIED, "CodeSignAccess: Permission denied.");
         df->setRestrictedAccess(changeRestriction==CDFUChangeRestriction_Restrict);
     }
 
@@ -2006,7 +2221,7 @@ void CWsDfuEx::doGetFileDetails(IEspContext &context, IUserDescriptor *udesc, co
     if (version >= 1.28)
     {
         StringBuffer buf;
-        FileDetails.setPrefix(getPrefixFromLogicalName(lname, buf));
+        FileDetails.setPrefix(WsDFUHelpers::getPrefixFromLogicalName(lname, buf));
         if (cluster && *cluster)
             FileDetails.setNodeGroup(cluster);
         else if (clusters.length() == 1)
@@ -2019,13 +2234,13 @@ void CWsDfuEx::doGetFileDetails(IEspContext &context, IUserDescriptor *udesc, co
             IPropertyTree &tree = itr->query();
             const char *owner = tree.queryProp("@name");
             const char *modified = tree.queryProp("@modified");
-            int count = tree.getPropInt("@count", 0);
             Owned<IEspDFUFileProtect> protect= createDFUFileProtect();
             if(owner && *owner)
                 protect->setOwner(owner);
             if(modified && *modified)
                 protect->setModified(modified);
-            protect->setCount(count);
+            if (version < 1.54)
+                protect->setCount(1);
             protectList.append(*protect.getLink());
         }
         FileDetails.setProtectList(protectList);
@@ -2275,6 +2490,56 @@ void CWsDfuEx::doGetFileDetails(IEspContext &context, IUserDescriptor *udesc, co
         }
     }
 
+    if (version >= 1.25)
+        getFilePartsOnClusters(context, cluster, clusters, df, FileDetails);
+    else
+    {
+        FileDetails.setCluster(clusters.item(0));
+        IArrayOf<IConstDFUPart>& PartList = FileDetails.getDFUFileParts();
+
+        Owned<IDistributedFilePartIterator> pi = df->getIterator();
+        ForEach(*pi)
+        {
+            Owned<IDistributedFilePart> part = &pi->get();
+            for (unsigned int i=0; i<part->numCopies(); i++)
+            {
+                Owned<IEspDFUPart> FilePart = createDFUPart();
+
+                StringBuffer url;
+                part->queryNode(i)->endpoint().getUrlStr(url);
+
+                FilePart->setId(part->getPartIndex()+1);
+                FilePart->setCopy(i+1);
+                FilePart->setIp(url.str());
+                FilePart->setPartsize("<N/A>");
+
+                try
+                {
+                    offset_t size = queryDistributedFileSystem().getSize(part);
+                    if (version >= 1.38)
+                        FilePart->setPartSizeInt64(size);
+
+                    comma c4(size);
+                    tmpstr.clear();
+                    tmpstr<<c4;
+                    FilePart->setPartsize(tmpstr.str());
+                }
+                catch(IException *e)
+                {
+                    StringBuffer msg;
+                    IERRLOG("Exception %d:%s in WS_DFU queryDistributedFileSystem().getSize()", e->errorCode(), e->errorMessage(msg).str());
+                    e->Release();
+                }
+                catch(...)
+                {
+                    IERRLOG("Unknown exception in WS_DFU queryDistributedFileSystem().getSize()");
+                }
+
+                PartList.append(*FilePart.getClear());
+            }
+        }
+    }
+
     unsigned maxSkew, minSkew, maxSkewPart, minSkewPart;
     if (df->getSkewInfo(maxSkew, minSkew, maxSkewPart, minSkewPart, true))
     {
@@ -2451,7 +2716,7 @@ void CWsDfuEx::getLogicalFileAndDirectory(IEspContext &context, IUserDescriptor*
             throw MakeStringException(ECLWATCH_CANNOT_GET_FILE_ITERATOR,"Cannot get LogicalFile information from file system.");
 
         ForEach(*it)
-            addToLogicalFileList(it->query(), NULL, version, logicalFiles);
+            WsDFUHelpers::addToLogicalFileList(it->query(), NULL, version, logicalFiles);
         numFiles = totalFiles;
     }
 
@@ -3261,30 +3526,6 @@ void CWsDfuEx::getAPageOfSortedLogicalFile(IEspContext &context, IUserDescriptor
     return;
 }
 
-bool CWsDfuEx::addDFUQueryFilter(DFUQResultField *filters, unsigned short &count, MemoryBuffer &buff, const char* value, DFUQResultField name)
-{
-    if (!value || !*value)
-        return false;
-    filters[count++] = name;
-    buff.append(value);
-    return true;
-}
-
-void CWsDfuEx::appendDFUQueryFilter(const char *name, DFUQFilterType type, const char *value, StringBuffer& filterBuf)
-{
-    if (!name || !*name || !value || !*value)
-        return;
-    filterBuf.append(type).append(DFUQFilterSeparator).append(name).append(DFUQFilterSeparator).append(value).append(DFUQFilterSeparator);
-}
-
-void CWsDfuEx::appendDFUQueryFilter(const char *name, DFUQFilterType type, const char *value, const char *valueHigh, StringBuffer& filterBuf)
-{
-    if (!name || !*name || !value || !*value)
-        return;
-    filterBuf.append(type).append(DFUQFilterSeparator).append(name).append(DFUQFilterSeparator).append(value).append(DFUQFilterSeparator);
-    filterBuf.append(valueHigh).append(DFUQFilterSeparator);
-}
-
 void CWsDfuEx::setFileTypeFilter(const char* fileType, StringBuffer& filterBuf)
 {
     DFUQFileTypeFilter fileTypeFilter = DFUQFFTall;
@@ -3304,7 +3545,7 @@ void CWsDfuEx::setFileTypeFilter(const char* fileType, StringBuffer& filterBuf)
         fileTypeFilter = DFUQFFTall;
     filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(fileTypeFilter).append(DFUQFilterSeparator);
     if (notInSuperfile)
-        appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFsuperowner), DFUQFThasProp, "0", filterBuf);
+        WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFsuperowner), DFUQFThasProp, "0", filterBuf);
 }
 
 void CWsDfuEx::setFileNameFilter(const char* fname, const char* prefix, StringBuffer &filterBuf)
@@ -3335,9 +3576,9 @@ void CWsDfuEx::setDFUQueryFilters(IEspDFUQueryRequest& req, StringBuffer& filter
 {
     setFileNameFilter(req.getLogicalName(), req.getPrefix(), filterBuf);
     setFileTypeFilter(req.getFileType(), filterBuf);
-    appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFattrowner), DFUQFTwildcardMatch, req.getOwner(), filterBuf);
-    appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFkind), DFUQFTwildcardMatch, req.getContentType(), filterBuf);
-    appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFgroup), DFUQFTcontainString, req.getNodeGroup(), ",", filterBuf);
+    WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFattrowner), DFUQFTwildcardMatch, req.getOwner(), filterBuf);
+    WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFkind), DFUQFTwildcardMatch, req.getContentType(), filterBuf);
+    WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFgroup), DFUQFTcontainString, req.getNodeGroup(), ",", filterBuf);
     if (!req.getIncludeSuperOwner_isNull() && req.getIncludeSuperOwner())
         filterBuf.append(DFUQFTincludeFileAttr).append(DFUQFilterSeparator).append(DFUQSFAOincludeSuperOwner).append(DFUQFilterSeparator);
 
@@ -3348,35 +3589,38 @@ void CWsDfuEx::setDFUQueryFilters(IEspDFUQueryRequest& req, StringBuffer& filter
         StringBuffer buf;
         if (sizeFrom > 0)
             buf.append(sizeFrom);
-        buf.append("|");
+        buf.append(DFUQFilterSeparator);
         if (sizeTo > 0)
             buf.append(sizeTo);
         filterBuf.append(DFUQFTinteger64Range).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFattrsize));
         filterBuf.append(DFUQFilterSeparator).append(buf.str()).append(DFUQFilterSeparator);
     }
-    const char* startDate = req.getStartDate();
-    const char* endDate = req.getEndDate();
-    if((startDate && *startDate) || (endDate && *endDate))
-    {
-        StringBuffer buf;
-        if(startDate && *startDate)
-        {
-            StringBuffer wuFrom;
-            CDateTime wuTime;
-            wuTime.setString(startDate,NULL);
-            buf.append(wuTime.getString(wuFrom).str());
-        }
-        buf.append("|");
-        if(endDate && *endDate)
-        {
-            StringBuffer wuTo;
-            CDateTime wuTime;
-            wuTime.setString(endDate,NULL);
-            buf.append(wuTime.getString(wuTo).str());
-        }
-        filterBuf.append(DFUQFTstringRange).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFtimemodified));
-        filterBuf.append(DFUQFilterSeparator).append(buf.str()).append(DFUQFilterSeparator);
-    }
+
+    setTimeRangeFilter(req.getStartDate(), req.getEndDate(), DFUQFFtimemodified, filterBuf);
+    setTimeRangeFilter(req.getStartAccessedTime(), req.getEndAccessedTime(), DFUQFFaccessed, filterBuf);
+}
+
+void CWsDfuEx::setTimeRangeFilter(const char *from, const char *to, DFUQFilterField filterID, StringBuffer &filterBuf)
+{
+    if (isEmptyString(from) && isEmptyString(to))
+        return;
+
+    StringBuffer filterValue;
+    if (!isEmptyString(from))
+        appendTimeString(from, filterValue);
+    filterValue.append(DFUQFilterSeparator);
+    if (!isEmptyString(to))
+        appendTimeString(to, filterValue);
+
+    filterBuf.append(DFUQFTstringRange).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(filterID));
+    filterBuf.append(DFUQFilterSeparator).append(filterValue).append(DFUQFilterSeparator);
+}
+
+void CWsDfuEx::appendTimeString(const char *in, StringBuffer &out)
+{
+    CDateTime wuTime;
+    wuTime.setString(in, nullptr);
+    wuTime.getString(out);
 }
 
 void CWsDfuEx::setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sortBy, bool& descending, DFUQResultField* sortOrder)
@@ -3406,6 +3650,8 @@ void CWsDfuEx::setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sort
         sortOrder[0] = DFUQRFnodegroup;
     else if (strieq(sortByPtr, "Modified"))
         sortOrder[0] = DFUQRFtimemodified;
+    else if (strieq(sortByPtr, "Accessed"))
+        sortOrder[0] = DFUQRFaccessed;
     else if (strieq(sortByPtr, "ContentType"))
         sortOrder[0] = DFUQRFkind;
     else
@@ -3415,151 +3661,6 @@ void CWsDfuEx::setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sort
     if (descending)
         sortOrder[0] = (DFUQResultField) (sortOrder[0] | DFUQRFreverse);
     return;
-}
-
-const char* CWsDfuEx::getPrefixFromLogicalName(const char* logicalName, StringBuffer& prefix)
-{
-    if (!logicalName || !*logicalName)
-        return NULL;
-
-    const char *c=strstr(logicalName, "::");
-    if (c)
-        prefix.append(c-logicalName, logicalName);
-    else
-        prefix.append(logicalName);
-    return prefix.str();
-}
-
-bool CWsDfuEx::addToLogicalFileList(IPropertyTree& file, const char* nodeGroup, double version, IArrayOf<IEspDFULogicalFile>& logicalFiles)
-{
-    const char* logicalName = file.queryProp(getDFUQResultFieldName(DFUQRFname));
-    if (!logicalName || !*logicalName)
-        return false;
-
-    try
-    {
-        Owned<IEspDFULogicalFile> lFile = createDFULogicalFile("","");
-        lFile->setName(logicalName);
-        lFile->setOwner(file.queryProp(getDFUQResultFieldName(DFUQRFowner)));
-
-        StringBuffer buf(file.queryProp(getDFUQResultFieldName(DFUQRFtimemodified)));
-        lFile->setModified(buf.replace('T', ' ').str());
-        lFile->setPrefix(getPrefixFromLogicalName(logicalName, buf.clear()));
-        lFile->setDescription(file.queryProp(getDFUQResultFieldName(DFUQRFdescription)));
-
-        if (!nodeGroup || !*nodeGroup)
-                nodeGroup = file.queryProp(getDFUQResultFieldName(DFUQRFnodegroup));
-        if (nodeGroup && *nodeGroup)
-        {
-            if (version < 1.26)
-                lFile->setClusterName(nodeGroup);
-            else
-                lFile->setNodeGroup(nodeGroup);
-        }
-
-        int numSubFiles = file.hasProp(getDFUQResultFieldName(DFUQRFnumsubfiles));
-        if(numSubFiles)
-        {
-            lFile->setIsSuperfile(true);
-            if (version >= 1.52)
-            {
-                numSubFiles = file.getPropInt(getDFUQResultFieldName(DFUQRFnumsubfiles));
-                lFile->setNumOfSubfiles(numSubFiles);
-            }
-        }
-        else
-        {
-            lFile->setIsSuperfile(false);
-            lFile->setDirectory(file.queryProp(getDFUQResultFieldName(DFUQRFdirectory)));
-            lFile->setParts(file.queryProp(getDFUQResultFieldName(DFUQRFnumparts)));
-        }
-        lFile->setBrowseData(numSubFiles > 1 ? false : true); ////Bug 41379 - ViewKeyFile Cannot handle superfile with multiple subfiles
-
-        if (version >= 1.30)
-        {
-            bool persistent = file.getPropBool(getDFUQResultFieldName(DFUQRFpersistent), false);
-            if (persistent)
-                lFile->setPersistent(true);
-            if (file.hasProp(getDFUQResultFieldName(DFUQRFsuperowners)))
-                lFile->setSuperOwners(file.queryProp(getDFUQResultFieldName(DFUQRFsuperowners)));
-            if (file.hasProp(getDFUQResultFieldName(DFUQRFprotect)))
-                lFile->setIsProtected(true);
-        }
-
-        __int64 size = file.getPropInt64(getDFUQResultFieldName(DFUQRForigsize),0);
-        if (size > 0)
-        {
-            lFile->setIntSize(size);
-            lFile->setTotalsize((buf.clear()<<comma(size)).str());
-        }
-
-        __int64 records = file.getPropInt64(getDFUQResultFieldName(DFUQRFrecordcount),0);
-        if (!records)
-            records = file.getPropInt64(getDFUQResultFieldName(DFUQRForigrecordcount),0);
-        if (!records)
-        {
-            __int64 recordSize=file.getPropInt64(getDFUQResultFieldName(DFUQRFrecordsize),0);
-            if(recordSize > 0)
-                records = size/recordSize;
-        }
-        if (records > 0)
-        {
-            lFile->setIntRecordCount(records);
-            lFile->setRecordCount((buf.clear()<<comma(records)).str());
-        }
-
-        bool isKeyFile = false;
-        if (version > 1.13)
-        {
-            const char * kind = file.queryProp(getDFUQResultFieldName(DFUQRFkind));
-            if (kind && *kind)
-            {
-                if (strieq(kind, "key"))
-                    isKeyFile = true;
-                if (version >= 1.24)
-                    lFile->setContentType(kind);
-                else
-                    lFile->setIsKeyFile(isKeyFile);
-            }
-        }
-
-        if (isKeyFile && (version >= 1.41))
-        {
-            if (isFilePartitionKey(file))
-                lFile->setKeyType("Partitioned");
-            else if (isFileLocalKey(file))
-                lFile->setKeyType("Local");
-            else
-                lFile->setKeyType("Distributed");
-        }
-
-        bool isFileCompressed = file.getPropBool(getDFUQResultFieldName(DFUQRFiscompressed));
-        if (isFileCompressed)
-        {
-            if (version >= 1.22)
-            {
-                if (file.hasProp(getDFUQResultFieldName(DFUQRFcompressedsize)))
-                    lFile->setCompressedFileSize(file.getPropInt64(getDFUQResultFieldName(DFUQRFcompressedsize)));
-                else if (isKeyFile)
-                    lFile->setCompressedFileSize(size);
-            }
-        }
-        if (version < 1.22)
-            lFile->setIsZipfile(isFileCompressed);
-        else
-            lFile->setIsCompressed(isFileCompressed);
-
-        logicalFiles.append(*lFile.getClear());
-    }
-    catch(IException* e)
-    {
-        VStringBuffer msg("Failed to retrieve data for logical file %s: ", logicalName);
-        int code = e->errorCode();
-        e->errorMessage(msg);
-        e->Release();
-        throw MakeStringException(code, "%s", msg.str());
-    }
-    return true;
 }
 
 void CWsDfuEx::setDFUQueryResponse(IEspContext &context, unsigned totalFiles, StringBuffer& sortBy, bool descending, unsigned pageStart, unsigned pageSize,
@@ -3682,7 +3783,7 @@ bool CWsDfuEx::doLogicalFileSearch(IEspContext &context, IUserDescriptor* udesc,
     unsigned short localFilterCount = 0;
     DFUQResultField localFilters[8];
     MemoryBuffer localFilterBuf;
-    addDFUQueryFilter(localFilters, localFilterCount, localFilterBuf, req.getNodeGroup(), DFUQRFnodegroup);
+    WsDFUHelpers::addDFUQueryFilter(localFilters, localFilterCount, localFilterBuf, req.getNodeGroup(), DFUQRFnodegroup);
     localFilters[localFilterCount] = DFUQRFterm;
 
     StringBuffer sortBy;
@@ -3726,7 +3827,7 @@ bool CWsDfuEx::doLogicalFileSearch(IEspContext &context, IUserDescriptor* udesc,
 
     IArrayOf<IEspDFULogicalFile> logicalFiles;
     ForEach(*it)
-        addToLogicalFileList(it->query(), NULL, version, logicalFiles);
+        WsDFUHelpers::addToLogicalFileList(it->query(), NULL, version, logicalFiles);
 
     if (!allMatchingFilesReceived)
     {
@@ -4927,22 +5028,13 @@ bool CWsDfuEx::onListHistory(IEspContext &context, IEspListHistoryRequest &req, 
 {
     try
     {
-        StringBuffer username;
-        context.getUserID(username);
-        Owned<IUserDescriptor> userdesc;
-        if (username.length() > 0)
-        {
-            userdesc.setown(createUserDescriptor());
-            userdesc->set(username.str(), context.queryPassword(), context.querySignature());
-        }
-
         if (!req.getName() || !*req.getName())
             throw MakeStringException(ECLWATCH_MISSING_PARAMS, "Name required");
         PROGLOG("onListHistory: %s", req.getName());
 
         MemoryBuffer xmlmap;
         IArrayOf<IEspHistory> arrHistory;
-        Owned<IDistributedFile> file = queryDistributedFileDirectory().lookup(req.getName(),userdesc.get(), false, false, false, nullptr, defaultPrivilegedUser);
+        Owned<IDistributedFile> file = lookupLogicalName(context, req.getName(), false, false, false, nullptr, defaultPrivilegedUser);
         if (file)
         {
             IPropertyTree *history = file->queryHistory();
@@ -4975,22 +5067,13 @@ bool CWsDfuEx::onEraseHistory(IEspContext &context, IEspEraseHistoryRequest &req
     {
         context.ensureFeatureAccess(FEATURE_URL, SecAccess_Full, ECLWATCH_DFU_ACCESS_DENIED, "WsDfu::EraseHistory: Permission denied.");
 
-        StringBuffer username;
-        context.getUserID(username);
-        Owned<IUserDescriptor> userdesc;
-        if (username.length() > 0)
-        {
-            userdesc.setown(createUserDescriptor());
-            userdesc->set(username.str(), context.queryPassword(), context.querySignature());
-        }
-
         if (!req.getName() || !*req.getName())
             throw MakeStringException(ECLWATCH_MISSING_PARAMS, "Name required");
         PROGLOG("onEraseHistory: %s", req.getName());
 
         MemoryBuffer xmlmap;
         IArrayOf<IEspHistory> arrHistory;
-        Owned<IDistributedFile> file = queryDistributedFileDirectory().lookup(req.getName(),userdesc.get(),false,false,false,nullptr,defaultPrivilegedUser);
+        Owned<IDistributedFile> file = lookupLogicalName(context, req.getName(), false, false, false, nullptr, defaultPrivilegedUser);
         if (file)
         {
             IPropertyTree *history = file->queryHistory();
@@ -5586,18 +5669,12 @@ int CWsDfuEx::GetIndexData(IEspContext &context, bool bSchemaOnly, const char* i
 
     double version = context.getClientVersion();
 
-    StringBuffer username;
-    context.getUserID(username);
-
     StringBuffer cluster;
-    Owned<IUserDescriptor> userdesc;
     bool disableUppercaseTranslation = false;
     Owned<IDistributedFile> df;
     try
     {
-        userdesc.setown(createUserDescriptor());
-        userdesc->set(username.str(), context.queryPassword(), context.querySignature());
-        df.setown(queryDistributedFileDirectory().lookup(indexName, userdesc, false, false, false, nullptr, defaultPrivilegedUser));
+        df.setown(lookupLogicalName(context, indexName, false, false, false, nullptr, defaultPrivilegedUser));
         if(!df)
             throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Could not find file %s.", indexName);
 
@@ -5766,6 +5843,8 @@ int CWsDfuEx::GetIndexData(IEspContext &context, bool bSchemaOnly, const char* i
 
 void CWsDfuEx::getFilePartsInfo(IEspContext &context, IFileDescriptor &fileDesc, bool forFileCreate, IEspDFUFileAccessInfo &accessInfo)
 {
+    double version = context.getClientVersion();
+
     IArrayOf<IEspDFUFilePart> dfuParts;
     IArrayOf<IEspDFUPartLocation> dfuPartLocations;
 
@@ -5776,7 +5855,9 @@ void CWsDfuEx::getFilePartsInfo(IEspContext &context, IFileDescriptor &fileDesc,
     ForEach(*pi)
     {
         IPartDescriptor& part = pi->query();
-        if (isPartTLK(&part))
+
+        bool isTLKPart = isPartTLK(&part);
+        if (version <= 1.55 && isTLKPart)
             continue;
 
         IArrayOf<IEspDFUFileCopy> fileCopies;
@@ -5811,6 +5892,10 @@ void CWsDfuEx::getFilePartsInfo(IEspContext &context, IFileDescriptor &fileDesc,
         Owned<IEspDFUFilePart> filePart = createDFUFilePart();
         filePart->setPartIndex(part.queryPartIndex() + 1);
         filePart->setCopies(fileCopies);
+
+        if (version > 1.55)
+            filePart->setTopLevelKey(isTLKPart);
+
         dfuParts.append(*filePart.getClear());
     }
 
@@ -5892,6 +5977,7 @@ SecAccessFlags translateToSecAccessFlags(CSecAccessType from)
 
 void CWsDfuEx::dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileName &lfn, SessionId clientSessionId, const char *requestId, unsigned expirySecs, bool returnTextResponse, unsigned lockTimeoutMs, IEspDFUFileAccessResponse &resp)
 {
+    double version = context.getClientVersion();
     StringBuffer fileName;
     lfn.get(fileName, false, true);
     if (0 == fileName.length())
@@ -5951,7 +6037,16 @@ void CWsDfuEx::dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileNa
         accessInfo.setFileAccessSSL(metaInfo->getPropBool("secure"));
 
         if (isFileKey(fileDesc))
+        {
             kind = CDFUFileType_Index;
+            if (version > 1.55)
+            {
+                if (isFileLocalKey(fileDesc))
+                    kind = CDFUFileType_IndexLocal;
+                else if (isFilePartitionKey(fileDesc))
+                    kind = CDFUFileType_IndexPartitioned;
+            }
+        }
         else
         {
             const char *kindStr = queryFileKind(fileDesc);

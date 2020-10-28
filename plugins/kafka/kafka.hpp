@@ -262,24 +262,10 @@ extern "C++"
                 RdKafka::Message* getOneMessage();
 
                 /**
-                 * Retrieves many messages from the inbound Kafka topic and
-                 * returns them as a streamed dataset.  Note that this is a
-                 * per-brokers/per-topic/per-partition retrieval.
-                 *
-                 * @param   allocator       The allocator to use with RowBuilder
-                 * @param   maxRecords      The maximum number of records
-                 *                          to retrieved
-                 *
-                 * @return  An IRowStream streamed dataset object pointer
+                 * Initializes the object and prepares it to receive
+                 * messages from a specific broker/topic/partition.
                  */
-                KafkaStreamedDataset* getMessageDataset(IEngineRowAllocator* allocator, __int64 maxRecords = 1);
-
-                /**
-                 * @param offsetPath  StringBuffer object to contain the path to this
-                 *                    consumer's offset file
-                 * @return            Reference to pass-in buffer
-                 */
-                StringBuffer &offsetFilePath(StringBuffer &offsetPath) const;
+                void prepForMessageFetch();
 
                 /**
                  * Commits the given offset to storage so we can pick up
@@ -309,11 +295,11 @@ extern "C++"
                 std::string                     brokers;        //!< One or more Kafka bootstrap brokers; comma-delimited; NameOrIP[:port]
                 std::string                     topic;          //!< The name of the topic to consume from
                 std::string                     consumerGroup;  //!< The name of the consumer group for this consumer object
+                StringBuffer                    offsetPath;     //!< Full path to the Kafka topic offset file
                 RdKafka::Consumer*              consumerPtr;    //!< Pointer to librdkafka consumer object
                 std::atomic<RdKafka::Topic*>    topicPtr;       //!< Pointer to librdkafka topic object
                 CriticalSection                 lock;           //!< Mutex to ensure that only one thread creates the librdkafka object pointers or starts/stops the queue
                 __int32                         partitionNum;   //!< The partition within the topic from which we will be pulling messages
-                bool                            queueStarted;   //!< If true, we have started the process of reading from the queue
                 int                             traceLevel;     //!< The current logging level
         };
 
@@ -364,6 +350,7 @@ extern "C++"
         /**
          * Queues the message for publishing to a topic on a Kafka cluster.
          *
+         * @param   ctx                 The execution context
          * @param   brokers             One or more Kafka brokers, in the
          *                              format 'name[:port]' where 'name'
          *                              is either a host name or IP address;
@@ -375,7 +362,30 @@ extern "C++"
          *
          * @return  true if the message was cached successfully
          */
-        ECL_KAFKA_API bool ECL_KAFKA_CALL publishMessage(const char* brokers, const char* topic, const char* message, const char* key);
+        ECL_KAFKA_API bool ECL_KAFKA_CALL publishMessage(ICodeContext* ctx, const char* brokers, const char* topic, const char* message, const char* key);
+
+        //----------------------------------------------------------------------
+
+        /**
+         * Queues the message for publishing to a topic on a Kafka cluster.
+         *
+         * @param   ctx                 The execution context
+         * @param   brokers             One or more Kafka brokers, in the
+         *                              format 'name[:port]' where 'name'
+         *                              is either a host name or IP address;
+         *                              multiple brokers can be delimited
+         *                              with commas
+         * @param   topic               The name of the topic
+         * @param   lenMessage          Length (in characters, not bytes)
+         *                              of message
+         * @param   message             The UTF-8 message to send
+         * @param   lenKey              Length (in characters, not bytes)
+         *                              of key
+         * @param   key                 The UTF-8 key to use for the message
+         *
+         * @return  true if the message was cached successfully
+         */
+        ECL_KAFKA_API bool ECL_KAFKA_CALL publishMessage(ICodeContext* ctx, const char* brokers, const char* topic, size32_t lenMessage, const char* message, size32_t lenKey, const char* key);
 
         /**
          * Get the number of partitions currently set up for a topic on a cluster.

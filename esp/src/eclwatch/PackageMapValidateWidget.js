@@ -2,255 +2,269 @@ define([
     "dojo/_base/declare",
     "dojo/_base/lang",
     "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
-    "dojo/dom",
-    "dojo/query",
+    "src/nlsHPCC",
     "dojo/topic",
     "dijit/registry",
 
     "hpcc/_TabContainerWidget",
-    "hpcc/DelayLoadWidget",
-    "hpcc/ECLSourceWidget",
     "src/WsPackageMaps",
 
     "dojo/text!../templates/PackageMapValidateWidget.html",
 
+    "hpcc/DelayLoadWidget",
+    "hpcc/ECLSourceWidget",
     "dijit/layout/BorderContainer",
     "dijit/layout/TabContainer",
     "dijit/layout/ContentPane",
     "dijit/form/Button",
     "dijit/form/ToggleButton",
     "dijit/form/Select"
-], function (declare, lang, i18n, nlsHPCC, dom, query, topic, registry,
-    _TabContainerWidget, DelayLoadWidget, EclSourceWidget, WsPackageMaps, template) {
-        return declare("PackageMapValidateWidget", [_TabContainerWidget], {
-            templateString: template,
-            baseClass: "PackageMapValidateWidget",
-            i18n: nlsHPCC,
+], function (declare, lang, i18n, nlsHPCCMod, topic, registry,
+    _TabContainerWidget, WsPackageMaps, template) {
 
-            targets: null,
+    var nlsHPCC = nlsHPCCMod.default;
+    return declare("PackageMapValidateWidget", [_TabContainerWidget], {
+        templateString: template,
+        baseClass: "PackageMapValidateWidget",
+        i18n: nlsHPCC,
 
-            targetSelectControl: null,
-            processSelectControl: null,
-            validateButton: null,
-            editorControl: null,
-            resultControl: null,
+        targets: null,
 
-            validatePackageMapContentWidget: null,
-            validatePackageMapContentWidgetLoaded: false,
+        targetSelectControl: null,
+        processSelectControl: null,
+        validateButton: null,
+        editorControl: null,
+        resultControl: null,
 
-            constructor: function () {
-                this.processes = [];
-                this.targets = [];
-            },
+        validatePackageMapContentWidget: null,
+        validatePackageMapContentWidgetLoaded: false,
 
-            buildRendering: function (args) {
-                this.inherited(arguments);
-            },
+        constructor: function () {
+            this.processes = [];
+            this.targets = [];
+        },
 
-            startup: function (args) {
-                this.inherited(arguments);
-            },
+        buildRendering: function (args) {
+            this.inherited(arguments);
+        },
 
-            destroy: function (args) {
-                this.inherited(arguments);
-            },
+        startup: function (args) {
+            this.inherited(arguments);
+        },
 
-            getTitle: function () {
-                return this.i18n.ValidateActivePackageMap;
-            },
+        destroy: function (args) {
+            this.inherited(arguments);
+        },
 
-            postCreate: function (args) {
-                this.inherited(arguments);
-                this.targetSelectControl = registry.byId(this.id + "TargetSelect");
-                this.processSelectControl = registry.byId(this.id + "ProcessSelect");
-                this.validateButton = registry.byId(this.id + "ValidateBtn");
-                this.validatePackageMapContentWidget = registry.byId(this.id + "_ValidatePackageMapContent");
-            },
+        getTitle: function () {
+            return this.i18n.ValidateActivePackageMap;
+        },
 
-            getSelections: function () {
-                var context = this;
-                WsPackageMaps.GetPackageMapSelectOptions({
-                    includeTargets: true,
-                    IncludeProcesses: true,
-                    IncludeProcessFilters: true
-                }).then(function (response) {
-                    if (lang.exists("Targets.TargetData", response.GetPackageMapSelectOptionsResponse)) {
-                        context.targets = response.GetPackageMapSelectOptionsResponse.Targets.TargetData;
-                        context.initSelections(context.targets);
+        postCreate: function (args) {
+            this.inherited(arguments);
+            this.targetSelectControl = registry.byId(this.id + "TargetSelect");
+            this.processSelectControl = registry.byId(this.id + "ProcessSelect");
+            this.validateButton = registry.byId(this.id + "ValidateBtn");
+            this.validatePackageMapContentWidget = registry.byId(this.id + "_ValidatePackageMapContent");
+        },
+
+        getSelections: function () {
+            var context = this;
+            WsPackageMaps.GetPackageMapSelectOptions({
+                IncludeTargets: true,
+                IncludeProcesses: true,
+                IncludeProcessFilters: true
+            }).then(function (response) {
+                if (lang.exists("Targets.TargetData", response.GetPackageMapSelectOptionsResponse)) {
+                    context.targets = response.GetPackageMapSelectOptionsResponse.Targets.TargetData;
+                    context.initSelections(context.targets);
+                }
+                return response;
+            }, function (err) {
+                context.showErrors(err);
+                return err;
+            });
+        },
+
+        //  init this page
+        init: function (params) {
+            if (this.inherited(arguments))
+                return;
+
+            if (params.targets !== undefined) {
+                this.initSelections(params.targets);
+            } else {
+                this.getSelections();
+            }
+
+            this.editorControl = registry.byId(this.id + "Source");
+            this.editorControl.init(params);
+            this.initResultDisplay();
+        },
+
+        initSelections: function (targets) {
+            this.targets = targets;
+            if (this.targets.length > 0) {
+                var defaultTarget = 0;
+                for (var i = 0; i < this.targets.length; ++i) {
+                    if ((defaultTarget === 0) && (this.targets[i].type === 'roxie'))
+                        defaultTarget = i; //first roxie
+                    this.targetSelectControl.options.push({ label: this.targets[i].label, value: this.targets[i].value });
+                }
+                this.targetSelectControl.set("value", this.targets[defaultTarget].label);
+                if (this.targets[defaultTarget].processes !== undefined)
+                    this.updateProcessSelections(this.targets[defaultTarget], '');
+            }
+        },
+
+        updateProcessSelections: function (target, targetName) {
+            this.processSelectControl.removeOption(this.processSelectControl.getOptions());
+            if (target !== null) {
+                this.addProcessSelections(target.processes.Item);
+            } else {
+                for (var i = 0; i < this.targets.length; ++i) {
+                    var target = this.targets[i];
+                    if ((target.processes !== undefined) && (targetName === target.label)) {
+                        this.addProcessSelections(target.processes.Item);
+                        break;
                     }
-                    return response;
-                }, function (err) {
-                    context.showErrors(err);
-                    return err;
+                }
+            }
+            this.processSelectControl.options.push({ label: this.i18n.ANY, value: 'ANY' });
+            this.processSelectControl.set("value", '');
+        },
+
+        addProcessSelections: function (processes) {
+            this.processes.length = 0;
+            for (var i = 0; i < processes.length; ++i) {
+                var process = processes[i];
+                if ((this.processes !== null) && (this.processes.indexOf(process) !== -1)) {
+                    continue;
+                }
+                this.processes.push(process);
+                this.processSelectControl.options.push({ label: process, value: process });
+            }
+        },
+
+        initResultDisplay: function () {
+            this.resultControl = registry.byId(this.id + "Result");
+            this.resultControl.init({ sourceMode: 'text/plain', readOnly: true });
+            this.resultControl.setText(this.i18n.ValidateResultHere);
+        },
+
+        //  init tab
+        initTab: function () {
+            var currSel = this.getSelectedChild();
+            if (!this.validatePackageMapContentWidgetLoaded && (currSel.id === this.validatePackageMapContentWidget.id)) {
+                this.validatePackageMapContentWidgetLoaded = true;
+                this.validatePackageMapContentWidget.init({
+                    targets: this.targets
                 });
-            },
+            }
+        },
 
-            //  init this page
-            init: function (params) {
-                if (this.inherited(arguments))
-                    return;
+        //  action
+        _onChangeTarget: function (event) {
+            this.targetSelected = this.targetSelectControl.getValue();
+            this.updateProcessSelections(null, this.targetSelected);
+        },
 
-                if (params.params.targets !== undefined)
-                    this.initSelections(params.params.targets);
+        _onChangeProcess: function (event) {
+            var context = this;
+            var process = this.processSelectControl.getValue();
+
+            if (process === 'ANY') {
+                process = '*';
+            }
+
+            this.editorControl.setText('');
+            WsPackageMaps.getPackage({
+                target: this.targetSelectControl.getValue(),
+                process: process
+            }).then(function (response) {
+                if (!lang.exists("GetPackageResponse.Info", response))
+                    context.editorControl.setText(i18n.NoContent);
                 else
-                    this.getSelections();
+                    context.editorControl.setText(response.GetPackageResponse.Info);
+                return response;
+            }, function (err) {
+                context.showErrors(err);
+                return err;
+            });
+        },
 
-                this.editorControl = registry.byId(this.id + "Source");
-                this.editorControl.init(params);
-                this.initResultDisplay();
-            },
+        _onValidate: function (evt) {
+            var context = this;
+            var content = this.editorControl.getText();
 
-            initSelections: function (targets) {
-                this.targets = targets;
-                if (this.targets.length > 0) {
-                    var defaultTarget = 0;
-                    for (var i = 0; i < this.targets.length; ++i) {
-                        if ((defaultTarget === 0) && (this.targets[i].Type === 'roxie'))
-                            defaultTarget = i; //first roxie
-                        this.targetSelectControl.options.push({ label: this.targets[i].Name, value: this.targets[i].Name });
-                    }
-                    this.targetSelectControl.set("value", this.targets[defaultTarget].Name);
-                    if (this.targets[defaultTarget].Processes !== undefined)
-                        this.updateProcessSelections(this.targets[defaultTarget], '');
+            if (content === '') {
+                alert(this.i18n.PackageContentNotSet);
+                return;
+            }
+
+            this.resultControl.setText(this.i18n.Validating);
+            this.validateButton.set("disabled", true);
+            WsPackageMaps.validatePackage({
+                request: {
+                    Target: context.targetSelectControl.getValue(),
+                    Info: content
                 }
-            },
-
-            updateProcessSelections: function (target, targetName) {
-                this.processSelectControl.removeOption(this.processSelectControl.getOptions());
-                if (target !== null)
-                    this.addProcessSelections(target.Processes.Item);
-                else {
-                    for (var i = 0; i < this.targets.length; ++i) {
-                        var target = this.targets[i];
-                        if ((target.Processes !== undefined) && (targetName === target.Name)) {
-                            this.addProcessSelections(target.Processes.Item);
-                            break;
-                        }
-                    }
-                }
-                this.processSelectControl.options.push({ label: this.i18n.ANY, value: 'ANY' });
-                this.processSelectControl.set("value", '');
-            },
-
-            addProcessSelections: function (processes) {
-                this.processes.length = 0;
-                for (var i = 0; i < processes.length; ++i) {
-                    var process = processes[i];
-                    if ((this.processes !== null) && (this.processes.indexOf(process) !== -1))
-                        continue;
-                    this.processes.push(process);
-                    this.processSelectControl.options.push({ label: process, value: process });
-                }
-            },
-
-            initResultDisplay: function () {
-                this.resultControl = registry.byId(this.id + "Result");
-                this.resultControl.init({ sourceMode: 'text/plain', readOnly: true });
-                this.resultControl.setText(this.i18n.ValidateResultHere);
-            },
-
-            //  init tab
-            initTab: function () {
-                var currSel = this.getSelectedChild();
-                if (!this.validatePackageMapContentWidgetLoaded && (currSel.id === this.validatePackageMapContentWidget.id)) {
-                    this.validatePackageMapContentWidgetLoaded = true;
-                    this.validatePackageMapContentWidget.init({
-                        targets: this.targets
-                    });
-                }
-            },
-
-            //  action
-            _onChangeTarget: function (event) {
-                this.targetSelected = this.targetSelectControl.getValue();
-                this.updateProcessSelections(null, this.targetSelected);
-            },
-
-            _onChangeProcess: function (event) {
-                var process = this.processSelectControl.getValue();
-                if (process === 'ANY')
-                    process = '*';
-
-                var context = this;
-                this.editorControl.setText('');
-                WsPackageMaps.getPackage({
-                    target: this.targetSelectControl.getValue(),
-                    process: process
-                }).then(function (response) {
-                    if (!lang.exists("GetPackageResponse.Info", response))
-                        context.editorControl.setText(i18n.NoContent);
-                    else
-                        context.editorControl.setText(response.GetPackageResponse.Info);
-                    return response;
-                }, function (err) {
-                    context.showErrors(err);
-                    return err;
-                });
-            },
-
-            _onValidate: function (evt) {
-                var content = this.editorControl.getText();
-                if (content === '') {
-                    alert(this.i18n.PackageContentNotSet);
-                    return;
-                }
-                var request = { target: this.targetSelectControl.getValue() };
-                request['content'] = content;
-
-                var context = this;
-                this.resultControl.setText("");
-                this.validateButton.set("disabled", true);
-                WsPackageMaps.validatePackage(request).then(function (response) {
+            }).then(function (response) {
+                if (lang.exists("ValidatePackageResponse", response)) {
                     var responseText = context.validateResponseToText(response.ValidatePackageResponse);
-                    if (responseText === '')
+                    if (responseText === '') {
                         context.resultControl.setText(context.i18n.Empty);
-                    else {
+                    } else {
                         responseText = context.i18n.ValidateResult + responseText;
                         context.resultControl.setText(responseText);
                     }
                     context.validateButton.set("disabled", false);
                     return response;
-                }, function (err) {
-                    context.showErrors(err);
-                    return err;
-                });
-            },
-
-            validateResponseToText: function (response) {
-                var text = "";
-                if (!lang.exists("Errors", response) || (response.Errors.length < 1))
-                    text += this.i18n.NoErrorFound;
-                else
-                    text = this.addArrayToText(this.i18n.Errors, response.Errors, text);
-                if (!lang.exists("Warnings", response) || (response.Warnings.length < 1))
-                    text += this.i18n.NoWarningFound;
-                else
-                    text = this.addArrayToText(this.i18n.Warnings, response.Warnings, text);
-
-                text += "\n";
-                text = this.addArrayToText(this.i18n.QueriesNoPackage, response.queries.Unmatched, text);
-                text = this.addArrayToText(this.i18n.PackagesNoQuery, response.packages.Unmatched, text);
-                text = this.addArrayToText(this.i18n.FilesNoPackage, response.files.Unmatched, text);
-                return text;
-            },
-
-            addArrayToText: function (arrayTitle, arrayItems, text) {
-                if ((arrayItems.Item !== undefined) && (arrayItems.Item.length > 0)) {
-                    text += arrayTitle + ":\n";
-                    for (var i = 0; i < arrayItems.Item.length; i++)
-                        text += "  " + arrayItems.Item[i] + "\n";
-                    text += "\n";
+                } else {
+                    context.validateButton.set("disabled", false);
                 }
-                return text;
-            },
+            }, function (err) {
+                context.showErrors(err);
+                return err;
+            });
+        },
 
-            showErrors: function (err) {
-                topic.publish("hpcc/brToaster", {
-                    Severity: "Error",
-                    Source: err.message,
-                    Exceptions: [{ Message: err.stack }]
-                });
+        validateResponseToText: function (response) {
+            var text = "";
+            if (!lang.exists("Errors", response) || (response.Errors.length < 1)) {
+                text += this.i18n.NoErrorFound;
+            } else {
+                text = this.addArrayToText(this.i18n.Errors, response.Errors, text);
             }
-        });
+            if (!lang.exists("Warnings", response) || (response.Warnings.length < 1)) {
+                text += this.i18n.NoWarningFound;
+            }
+            else {
+                text = this.addArrayToText(this.i18n.Warnings, response.Warnings, text);
+            }
+            text += "\n";
+            text = this.addArrayToText(this.i18n.QueriesNoPackage, response.queries.Unmatched, text);
+            text = this.addArrayToText(this.i18n.PackagesNoQuery, response.packages.Unmatched, text);
+            text = this.addArrayToText(this.i18n.FilesNoPackage, response.files.Unmatched, text);
+            return text;
+        },
+
+        addArrayToText: function (arrayTitle, arrayItems, text) {
+            if ((arrayItems.Item !== undefined) && (arrayItems.Item.length > 0)) {
+                text += arrayTitle + ":\n";
+                for (var i = 0; i < arrayItems.Item.length; i++)
+                    text += "  " + arrayItems.Item[i] + "\n";
+                text += "\n";
+            }
+            return text;
+        },
+
+        showErrors: function (err) {
+            topic.publish("hpcc/brToaster", {
+                Severity: "Error",
+                Source: err.message,
+                Exceptions: [{ Message: err.stack }]
+            });
+        }
     });
+});

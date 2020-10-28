@@ -179,7 +179,11 @@ typedef memsize_t rowsize_t;
 
 typedef unsigned __int64 off64_t;
 typedef int socklen_t;
+#ifdef _WIN64
+typedef __int64 ssize_t; // correct return to type for unix read/write/pread etc.
+#else
 typedef int ssize_t; // correct return to type for unix read/write/pread etc.
+#endif
 #define fpos_ht fpos_t
 
 typedef long double LDouble;
@@ -540,6 +544,10 @@ typedef unsigned __int64 timestamp_type;
  #define NO_SANITIZE_FUNCTION
 #endif
 
-
+//Versions of memcpy etc which are safe to use with null parameters if the size is 0
+inline void * memcpy_iflen(void * dest, const void * src, size_t n)   { return (likely(n)) ? memcpy(dest, src, n) : dest; }
+inline void * memmove_iflen(void * dest, const void * src, size_t n)  { return (likely(n)) ? memmove(dest, src, n) : dest; }
+inline void * memset_iflen(void * dest, int c, size_t n)              { return (likely(n)) ? memset(dest, c, n) : dest; }
+inline int memcmp_iflen(const void * l, const void * r, size_t n)     { return likely(n) ? memcmp(l, r, n) : 0; }
 
 #endif

@@ -49,12 +49,14 @@ include_directories (
          ./../../../common/remote 
          ./../../clients 
          ./../../../tools/swapnode 
-         ./../../../dali/base 
+         ./../../../dali/base
+         ./../../../dali/sasha
          ./../ws_workunits 
          ./../../bindings 
          ./../../smc/SMCLib 
          ./../../bindings/SOAP/xpp 
          ./../..//esplib
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DWS_TOPOLOGY_EXPORTS )

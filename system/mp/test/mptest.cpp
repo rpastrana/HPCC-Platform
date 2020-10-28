@@ -1230,7 +1230,6 @@ void MPNxN(ICommunicator *comm, unsigned numStreams, size32_t perStreamMBSize, s
                     }
                     if (!async)
                     {
-                        rank_t sender;
                         for (int t: tgtRanks)
                         {
                             rank_t sender;
@@ -1496,7 +1495,7 @@ void printHelp(char* executableName)
 int main(int argc, char* argv[])
 {
     int mpi_debug = 0;
-    char testname[256] = { "" };
+    const char * testname = "";
     rank_t max_ranks = 0;
     unsigned startupDelay = 0;
 
@@ -1581,7 +1580,7 @@ int main(int argc, char* argv[])
                 {
                     if ((j+1) < argSize)
                     {
-                        strcpy(testname, argL[j+1]);
+                        testname = argL[j+1];
                         j++;
                     }
                 }

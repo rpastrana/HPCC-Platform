@@ -258,7 +258,7 @@ public:
     void serializeCursorPos(MemoryBuffer &mb) const
     {
         // We are saving a unique signature of this index that can be used to ensure that any continuation will identify the same index
-        // Note that the continuation may be executed by a different slave
+        // Note that the continuation may be executed by a different agent
         // This code is not great but is probably ok.
         StringBuffer b;
         toString(b);
@@ -471,7 +471,7 @@ protected:
             buf.setLength(0);
             MemoryBufferBuilder aBuilder(buf, 0);
             translator->translate(aBuilder, *this, row);
-            return reinterpret_cast<const byte *>(buf.toByteArray());
+            return aBuilder.getSelf();
         }
         else
             return row.queryRow();
@@ -1153,7 +1153,7 @@ public:
                     buf.setLength(0);
                     MemoryBufferBuilder aBuilder(buf, 0);
                     translator->translate(aBuilder, unexpectedVirtualFieldCallback, keySearcher->queryRow().queryRow()); // MORE - could pass in partially-resolved RtlRow
-                    return (const byte *) buf.toByteArray();
+                    return aBuilder.getSelf();
                 }
                 else
                     return keySearcher->queryRow().queryRow();

@@ -117,12 +117,7 @@ protected:
     IFSHmode            sharemode;
     IFOmode             openmode;
     IFEflags            extraFlags;
-    RelaxedAtomic<cycle_t> ioReadCycles;
-    RelaxedAtomic<cycle_t> ioWriteCycles;
-    RelaxedAtomic<__uint64> ioReadBytes;
-    RelaxedAtomic<__uint64> ioWriteBytes;
-    RelaxedAtomic<__uint64> ioReads;
-    RelaxedAtomic<__uint64> ioWrites;
+    FileIOStats         stats;
     RelaxedAtomic<unsigned> unflushedReadBytes; // more: If this recorded flushedReadBytes it could have a slightly lower overhead
     RelaxedAtomic<unsigned> unflushedWriteBytes;
 private:
@@ -147,7 +142,6 @@ public:
 
 protected:
     Linked<IFileIO>     io;
-    offset_t            curOffset;
     offset_t            headerSize;
     offset_t            maxLength;
 };
@@ -185,11 +179,10 @@ protected: friend class CFileAsyncResult;
 };
 
 
-class CFileIOStream : implements IFileIOStream, public CInterface
+class CFileIOStream : implements CInterfaceOf<IFileIOStream>
 {
 public:
     CFileIOStream(IFileIO * _io);
-    IMPLEMENT_IINTERFACE
 
     virtual void flush();
     virtual size32_t read(size32_t len, void * data);
@@ -203,6 +196,23 @@ protected:
     offset_t            curOffset;
 };
 
+
+
+class CNoSeekFileIOStream : implements CInterfaceOf<IFileIOStream>
+{
+public:
+    CNoSeekFileIOStream(IFileIOStream * _stream);
+
+    virtual void flush();
+    virtual size32_t read(size32_t len, void * data);
+    virtual void seek(offset_t pos, IFSmode origin);
+    virtual offset_t size();
+    virtual offset_t tell();
+    virtual size32_t write(size32_t len, const void * data);
+
+protected:
+    Linked<IFileIOStream>     stream;
+};
 
 
 class jlib_decl CIOStreamReadWriteSeq : public IWriteSeq, public IReadSeq, public CInterface

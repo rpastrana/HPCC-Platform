@@ -42,15 +42,18 @@ public:
     CMachineData&                   m_machineData;          //From request
     IArrayOf<IEspMachineInfoEx>&    m_machineInfoTable;     //For response
     StringArray&                    m_machineInfoColumns;   //For response
+    MapStringTo<int>&               channelsMap;            //For response
 
     CMachineInfoThreadParam(Cws_machineEx* pService, IEspContext& context, CGetMachineInfoUserOptions&  options,
-        CMachineData& machineData, IArrayOf<IEspMachineInfoEx>& machineInfoTable, StringArray& machineInfoColumns )
+        CMachineData& machineData, IArrayOf<IEspMachineInfoEx>& machineInfoTable, StringArray& machineInfoColumns,
+        MapStringTo<int>& _channelsMap)
        : CWsMachineThreadParam(NULL, NULL, NULL, pService),
          m_context(context),
          m_options(options),
          m_machineData(machineData),
          m_machineInfoTable(machineInfoTable),
-         m_machineInfoColumns(machineInfoColumns)
+         m_machineInfoColumns(machineInfoColumns),
+         channelsMap(_channelsMap)
     {
     }
 
@@ -66,6 +69,7 @@ public:
         if (m_machineInfoColumns.find(columnName) == NotFound)
             m_machineInfoColumns.append(columnName);
     }
+    int* getChannels(const char* key) { return channelsMap.getValue(key); };
 private:
     static Mutex s_mutex;
 };
@@ -77,9 +81,12 @@ class CRoxieStateInfoThreadParam : public CWsMachineThreadParam
 public:
     StringAttr                      clusterName;
     IArrayOf<IEspMachineInfoEx>&    machineInfoTable;     //For response
+    MapStringTo<int>&               channelsMap;          //For response
 
-    CRoxieStateInfoThreadParam(Cws_machineEx* pService, const char* _clusterName, IArrayOf<IEspMachineInfoEx>& _machineInfoTable)
-       : CWsMachineThreadParam(pService), clusterName(_clusterName), machineInfoTable(_machineInfoTable)
+    CRoxieStateInfoThreadParam(Cws_machineEx* pService, const char* _clusterName,
+        IArrayOf<IEspMachineInfoEx>& _machineInfoTable, MapStringTo<int>& _channelsMap)
+        : CWsMachineThreadParam(pService), clusterName(_clusterName), machineInfoTable(_machineInfoTable),
+        channelsMap(_channelsMap)
     {
     }
 
@@ -87,6 +94,7 @@ public:
     {
         m_pService->getRoxieStateInfo(this);
     }
+    int* getChannels(const char* key) { return channelsMap.getValue(key); };
 };
 
 class CGetMachineUsageThreadParam : public CWsMachineThreadParam
@@ -103,6 +111,26 @@ public:
         m_pService->getMachineUsage(espContext, this);
     }
 };
+
+const char* findComponentTypeFromProcessType(const char* ProcessType)
+{
+    if (strieq(ProcessType, eqDali))
+        return "dali";
+    if (strieq(ProcessType, eqEclAgent))
+        return "eclagent";
+    if (strieq(ProcessType, eqDfu))
+        return "dfuserver";
+    if (strieq(ProcessType, eqEsp))
+        return "esp";
+    if (strieq(ProcessType, eqEclCCServer) || strieq(ProcessType, eqEclServer))
+        return "eclserver";
+    if (strieq(ProcessType, eqEclScheduler))
+        return "eclscheduler";
+    if (strieq(ProcessType, eqSashaServer))
+        return "sasha";
+
+    return nullptr;
+}
 
 void Cws_machineEx::init(IPropertyTree *cfg, const char *process, const char *service)
 {
@@ -157,9 +185,6 @@ void Cws_machineEx::init(IPropertyTree *cfg, const char *process, const char *se
         pEnvSettings->getProp("user", environmentConfData.m_user.clear());
     }
 
-    machineUsageCache.setown(new MachineUsageCache(MACHINE_USAGE_MAX_CACHE_SIZE));
-    machineUsageCacheMinutes = pServiceNode->getPropInt("MachineUsageCacheMinutes", MACHINE_USAGE_CACHE_MINUTES);
-
     m_threadPoolSize = pServiceNode->getPropInt("ThreadPoolSize", THREAD_POOL_SIZE);
     m_threadPoolStackSize = pServiceNode->getPropInt("ThreadPoolStackSize", THREAD_POOL_STACK_SIZE);
 
@@ -172,6 +197,10 @@ void Cws_machineEx::init(IPropertyTree *cfg, const char *process, const char *se
 
     Owned<IComponentStatusFactory> factory = getComponentStatusFactory();
     factory->init(pServiceNode);
+
+    unsigned machineUsageCacheForceRebuildMinutes = pServiceNode->getPropInt("MachineUsageCacheMinutes", machineUsageCacheMinutes);
+    unsigned machineUsageCacheAutoRebuildMinutes = pServiceNode->getPropInt("MachineUsageCacheAutoRebuildMinutes", defaultMachineUsageCacheAutoBuildMinutes);
+    usageCacheReader.setown(new CUsageCacheReader(this, "Usage Reader", machineUsageCacheAutoRebuildMinutes*60, machineUsageCacheForceRebuildMinutes*60));
 }
 
 StringBuffer& Cws_machineEx::getAcceptLanguage(IEspContext& context, StringBuffer& acceptLanguage)
@@ -268,6 +297,47 @@ bool Cws_machineEx::onGetTargetClusterInfo(IEspContext &context, IEspGetTargetCl
     return true;
 }
 
+void Cws_machineEx::addChannels(CGetMachineInfoData& machineInfoData, IPropertyTree* envRoot,
+    const char* componentType, const char* componentName)
+{
+    VStringBuffer key("%s|%s", componentType, componentName);
+    int* channels = machineInfoData.getChannels(key);
+    if (channels)
+        return;
+
+    StringBuffer path("Software/");
+    if (strieq(componentType, eqThorSlaveProcess))
+        path.append(eqThorCluster);
+    else if (strieq(componentType, eqRoxieServerProcess))
+        path.append(eqRoxieCluster);
+    else
+        throw MakeStringException(ECLWATCH_INVALID_COMPONENT_TYPE, "Invalid %s in Cws_machineEx::addChannels().", componentType);
+
+    path.appendf("[@name=\"%s\"]", componentName);
+
+    Owned<IPropertyTree> component;
+    if (envRoot)
+    {
+        component.setown(envRoot->getPropTree(path));
+    }
+    else
+    {
+        Owned<IEnvironmentFactory> envFactory = getEnvironmentFactory(true);
+        Owned<IConstEnvironment> constEnv = envFactory->openEnvironment();
+        Owned<IPropertyTree> root = &constEnv->getPTree();
+        component.setown(root->getPropTree(path));
+    }
+    if (!component)
+        throw MakeStringException(ECLWATCH_INVALID_IP_OR_COMPONENT, "%s not found.", componentName);
+
+    StringAttr attr;
+    if (strieq(componentType, eqThorSlaveProcess))
+        attr.set("@channelsPerSlave");
+    else
+        attr.set("@channelsPerNode");
+    if (component->hasProp(attr.get()))
+        machineInfoData.addToChannelsMap(key, component->getPropInt(attr.get()));
+}
 ////////////////////////////////////////////////////////////////////////////////////////
 // Read Machine Infomation request and collect related settings from environment.xml  //
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -275,6 +345,7 @@ bool Cws_machineEx::onGetTargetClusterInfo(IEspContext &context, IEspGetTargetCl
 void Cws_machineEx::readMachineInfoRequest(IEspContext& context, bool getProcessorInfo, bool getStorageInfo, bool localFileSystemsOnly, bool getSoftwareInfo, bool applyProcessFilter,
                                            StringArray& processes, const char* addProcessesToFilters, CGetMachineInfoData& machineInfoData)
 {
+    double version = context.getClientVersion();
     StringBuffer userID, password;
     context.getUserID(userID);
     context.getPassword(password);
@@ -312,6 +383,8 @@ void Cws_machineEx::readMachineInfoRequest(IEspContext& context, bool getProcess
         setProcessRequest(machineInfoData, uniqueProcesses, address1.str(), address2.str(), processType.str(), compName.str(), path.str(), processNumber);
         if (strieq(processType.str(), eqRoxieServerProcess))
             machineInfoData.appendRoxieClusters(compName.str());
+        if ((version >= 1.16) && (strieq(processType, eqThorSlaveProcess) || strieq(processType, eqRoxieServerProcess)))
+            addChannels(machineInfoData, nullptr, processType, compName);
     }
 }
 
@@ -464,10 +537,14 @@ void Cws_machineEx::addProcessRequestToMachineInfoData(CGetMachineInfoData& mach
     else
         pathSep = '/';
 
+    if (!m_processFilters)
+        return;
+
     Owned<CMachineData> machineNew = new CMachineData(address1, address2, os, pathSep);
 
     //Read possible dependencies for all processes
     set<string>& dependenciesForAllProcesses = machineNew->getDependencies();
+
     StringBuffer xPath;
     xPath.appendf("Platform[@name='%s']/ProcessFilter[@name='any']/Process", machineNew->getOS() == MachineOsW2K ? "Windows" : "Linux");
     Owned<IPropertyTreeIterator> processes = m_processFilters->getElements(xPath.str());
@@ -484,7 +561,6 @@ void Cws_machineEx::addProcessRequestToMachineInfoData(CGetMachineInfoData& mach
         dependenciesForAllProcesses.insert("dafilesrv");
 
     addProcessData(machineNew, processType, compName, path, processNumber);
-
     machines.append(*machineNew.getClear());
 }
 
@@ -514,9 +590,12 @@ void Cws_machineEx::addProcessData(CMachineData* machine, const char* processTyp
         dependenciesForThisProcess.insert((*it).c_str());
 
     //now collect "process-specific" dependencies
-    StringBuffer xPath;
-    xPath.appendf("Platform[@name='%s']/ProcessFilter[@name='%s']", machine->getOS() == MachineOsW2K ? "Windows" : "Linux", processType);
-    IPropertyTree* processFilterNode = m_processFilters->queryPropTree( xPath.str() );
+    IPropertyTree* processFilterNode = nullptr;
+    if (m_processFilters)
+    {
+        VStringBuffer xPath("Platform[@name='%s']/ProcessFilter[@name='%s']", machine->getOS() == MachineOsW2K ? "Windows" : "Linux", processType);
+        processFilterNode = m_processFilters->queryPropTree( xPath.str() );
+    }
     if (!processFilterNode)
     {
         machine->getProcesses().append(*process.getClear());
@@ -547,7 +626,6 @@ void Cws_machineEx::addProcessData(CMachineData* machine, const char* processTyp
     }
 
     process->setMultipleInstances(machine->getOS() == MachineOsLinux && processFilterNode->getPropBool("@multipleInstances", false));
-
     machine->getProcesses().append(*process.getClear());
 }
 
@@ -606,28 +684,28 @@ void Cws_machineEx::readSettingsForTargetClusters(IEspContext& context, StringAr
         //Read Cluster processes
         if (clusterProcesses && clusterProcesses->first())
             ForEach(*clusterProcesses)
-                readTargetClusterProcesses(clusterProcesses->query(), clusterType.str(), uniqueProcesses, machineInfoData, targetClusterOut);
+                readTargetClusterProcesses(context, clusterProcesses->query(), clusterType.str(), uniqueProcesses, machineInfoData, targetClusterOut);
 
         //Read eclCCServer process
         if (eclCCServerProcesses->first())
-            readTargetClusterProcesses(eclCCServerProcesses->query(), eqEclCCServer, uniqueProcesses, machineInfoData, targetClusterOut);
+            readTargetClusterProcesses(context, eclCCServerProcesses->query(), eqEclCCServer, uniqueProcesses, machineInfoData, targetClusterOut);
 
         //Read eclServer process
         if (eclServerProcesses->first())
-            readTargetClusterProcesses(eclServerProcesses->query(), eqEclServer, uniqueProcesses, machineInfoData, targetClusterOut);
+            readTargetClusterProcesses(context, eclServerProcesses->query(), eqEclServer, uniqueProcesses, machineInfoData, targetClusterOut);
 
         //Read eclAgent process
         if (eclAgentProcesses->first())
-            readTargetClusterProcesses(eclAgentProcesses->query(), eqEclAgent, uniqueProcesses, machineInfoData, targetClusterOut);
+            readTargetClusterProcesses(context, eclAgentProcesses->query(), eqEclAgent, uniqueProcesses, machineInfoData, targetClusterOut);
 
         //Read eclScheduler process
         if (eclSchedulerProcesses->first())
-            readTargetClusterProcesses(eclSchedulerProcesses->query(), eqEclScheduler, uniqueProcesses, machineInfoData, targetClusterOut);
+            readTargetClusterProcesses(context, eclSchedulerProcesses->query(), eqEclScheduler, uniqueProcesses, machineInfoData, targetClusterOut);
     }
 }
 
 //Collect settings for one group of target cluster processes
-void Cws_machineEx::readTargetClusterProcesses(IPropertyTree &processNode, const char* nodeType, BoolHash& uniqueProcesses, CGetMachineInfoData& machineInfoData,
+void Cws_machineEx::readTargetClusterProcesses(IEspContext& context, IPropertyTree &processNode, const char* nodeType, BoolHash& uniqueProcesses, CGetMachineInfoData& machineInfoData,
                                               IPropertyTree* targetClustersOut)
 {
     const char* process = processNode.queryProp("@process");
@@ -643,6 +721,7 @@ void Cws_machineEx::readTargetClusterProcesses(IPropertyTree &processNode, const
     if (!pEnvironmentSoftware)
         throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get environment information.");
 
+    double version = context.getClientVersion();
     IPropertyTree* pClusterProcess = NULL;
     if (strieq(nodeType, eqThorCluster) || strieq(nodeType, eqRoxieCluster))
     {
@@ -679,11 +758,16 @@ void Cws_machineEx::readTargetClusterProcesses(IPropertyTree &processNode, const
         getProcesses(constEnv, pClusterProcess, process, eqThorMasterProcess, dirStr.str(), machineInfoData, true, uniqueProcesses);
         getThorProcesses(constEnv, pClusterProcess, process, eqThorSlaveProcess, dirStr.str(), machineInfoData, uniqueProcesses);
         getThorProcesses(constEnv, pClusterProcess, process, eqThorSpareProcess, dirStr.str(), machineInfoData, uniqueProcesses);
+        if (version >= 1.16)
+           addChannels(machineInfoData, pEnvironmentRoot, eqThorSlaveProcess, process);
+
     }
     else if (strieq(nodeType, eqRoxieCluster))
     {
         BoolHash uniqueRoxieProcesses;
         getProcesses(constEnv, pClusterProcess, process, eqRoxieServerProcess, dirStr.str(), machineInfoData, true, uniqueProcesses, &uniqueRoxieProcesses);
+        if (version >= 1.16)
+           addChannels(machineInfoData, pEnvironmentRoot, eqRoxieServerProcess, process);
     }
 }
 
@@ -693,20 +777,35 @@ void Cws_machineEx::getThorProcesses(IConstEnvironment* constEnv, IPropertyTree*
     if (!constEnv || !cluster)
         return;
 
+    Owned<IGroup> nodeGroup;
     StringBuffer groupName;
     if (strieq(processType, eqThorSlaveProcess))
+    {
         getClusterGroupName(*cluster, groupName);
-    else if (strieq(processType, eqThorSpareProcess))
+        if (groupName.length() < 1)
+        {
+            OWARNLOG("Cannot find group name for %s", processName);
+            return;
+        }
+        nodeGroup.setown(getClusterProcessNodeGroup(processName, eqThorCluster));
+    }
+    else
+    {
         getClusterSpareGroupName(*cluster, groupName);
-
-    if (groupName.length() < 1)
-        return;
-
-    Owned<IGroup> nodeGroup = queryNamedGroupStore().lookup(groupName.str());
+        if (groupName.length() < 1)
+        {
+            OWARNLOG("Cannot find group name for %s", processName);
+            return;
+        }
+        nodeGroup.setown(queryNamedGroupStore().lookup(groupName.str()));
+    }
     if (!nodeGroup || (nodeGroup->ordinality() == 0))
+    {
+        OWARNLOG("Cannot find node group for %s", processName);
         return;
+    }
 
-    unsigned processNumber = 0;
+    int slavesPerNode = cluster->getPropInt("@slavesPerNode");
     Owned<INodeIterator> gi = nodeGroup->getIterator();
     ForEach(*gi)
     {
@@ -717,8 +816,6 @@ void Cws_machineEx::getThorProcesses(IConstEnvironment* constEnv, IPropertyTree*
             OWARNLOG("Network address not found for a node in node group %s", groupName.str());
             continue;
         }
-
-        processNumber++;
 
         StringBuffer netAddress;
         const char* ip = addressRead.str();
@@ -745,7 +842,10 @@ void Cws_machineEx::getThorProcesses(IConstEnvironment* constEnv, IPropertyTree*
             continue;
         }
 
-        setProcessRequest(machineInfoData, uniqueProcesses, netAddress.str(), addressRead.str(), processType, processName, directory, processNumber);
+        //Each thor slave is a process. The i is used to check whether the process is running or not.
+        for (unsigned i = 1; i <= slavesPerNode; i++)
+            setProcessRequest(machineInfoData, uniqueProcesses, netAddress.str(), addressRead.str(),
+                processType, processName, directory, i);
     }
 
     return;
@@ -1003,7 +1103,8 @@ void Cws_machineEx::getMachineInfo(IEspContext& context, bool getRoxieState, CGe
         ForEachItemIn(idx, machines)
         {
             Owned<CMachineInfoThreadParam> pThreadReq = new CMachineInfoThreadParam(this, context, machineInfoData.getOptions(),
-                machines.item(idx), machineInfoData.getMachineInfoTable(), machineInfoData.getMachineInfoColumns());
+                machines.item(idx), machineInfoData.getMachineInfoTable(), machineInfoData.getMachineInfoColumns(),
+                machineInfoData.getChannelsMap());
             PooledThreadHandle handle = m_threadPool->start( pThreadReq.getClear());
             threadHandles.append(handle);
         }
@@ -1014,7 +1115,7 @@ void Cws_machineEx::getMachineInfo(IEspContext& context, bool getRoxieState, CGe
         ForEachItemIn(i, roxieClusters)
         {
             Owned<CRoxieStateInfoThreadParam> pThreadReq = new CRoxieStateInfoThreadParam(this, roxieClusters.item(i),
-                machineInfoData.getMachineInfoTable());
+                machineInfoData.getMachineInfoTable(), machineInfoData.getChannelsMap());
             PooledThreadHandle handle = m_threadPool->start( pThreadReq.getClear());
             threadHandles.append(handle);
         }
@@ -1642,6 +1743,14 @@ void Cws_machineEx::setProcessInfo(IEspContext& context, CMachineInfoThreadParam
         pMachineInfo->setProcessNumber(process.getProcessNumber());
     }
 
+    if ((version >= 1.16) && (strieq(process.getType(), eqThorSlaveProcess) || strieq(process.getType(), eqRoxieServerProcess)))
+    {
+        VStringBuffer key("%s|%s", process.getType(), process.getName());
+        int* channels = pParam->getChannels(key);
+        if (channels)
+            pMachineInfo->setChannels(*channels);
+    }
+
     if (error != 0 || !response || !*response)
     {
         StringBuffer description;
@@ -1649,7 +1758,10 @@ void Cws_machineEx::setProcessInfo(IEspContext& context, CMachineInfoThreadParam
             description.append("Failed in getting Machine Information");
         else
             description = response;
-        pMachineInfo->setDescription(description.str());
+        if (version < 1.17)
+            pMachineInfo->setDescription(description.str());
+        else
+            pMachineInfo->setException(description.str());
     }
     else
     {
@@ -2404,45 +2516,45 @@ void Cws_machineEx::readOtherComponentUsageReq(const char* name, const char* typ
     if (isEmptyString(name))
         throw MakeStringException(ECLWATCH_INVALID_INPUT, "Empty Component name");
 
-    if (!strieq(type, eqDali) && !strieq(type, eqEclAgent) && !strieq(type, eqSashaServer))
+    const char* componentType = findComponentTypeFromProcessType(type);
+    if (!componentType)
         throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Component usage function is not supported for %s", type);
-
-    Owned<IPropertyTree> envRoot = &constEnv->getPTree();
-    VStringBuffer xpath("Software/%s[@name='%s']/Instance/@computer", type, name);
-    const char* computer = envRoot->queryProp(xpath);
-    if (isEmptyString(computer))
-        throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get %s", xpath.str());
-
-    Owned<IPropertyTree> machineReq = createMachineUsageReq(constEnv, computer);
-
-    IPropertyTree* envDirectories = envRoot->queryPropTree("Software/Directories");
-    Owned<IPropertyTree> logFolder = createDiskUsageReq(envDirectories, "log", type, name);
-    if (logFolder)
-        machineReq->addPropTree(logFolder->queryName(), LINK(logFolder));
-
-    StringAttr componentType;
-    if (strieq(type, eqDali))
-        componentType.set("dali");
-    else if (strieq(type, eqEclAgent))
-        componentType.set("eclAgent");
-    else
-        componentType.set("sasha");
-
-    Owned<IPropertyTree> dataFolder = createDiskUsageReq(envDirectories, "data", componentType.get(), name);
-    if (dataFolder)
-        machineReq->addPropTree(dataFolder->queryName(), LINK(dataFolder));
-
-    if (strieq(type, eqDali))
-    {
-        Owned<IPropertyTree> repFolder = createDiskUsageReq(envDirectories, "mirror", "dali", name);
-        if (repFolder)
-            machineReq->addPropTree(repFolder->queryName(), LINK(repFolder));
-    }
 
     Owned<IPropertyTree> componentReq = createPTree("Component");
     componentReq->addProp("@name", name);
     componentReq->addProp("@type", type);
-    componentReq->addPropTree(machineReq->queryName(), LINK(machineReq));
+
+    Owned<IPropertyTree> envRoot = &constEnv->getPTree();
+    VStringBuffer xpath("Software/%s[@name='%s']/Instance", type, name);
+    Owned<IPropertyTreeIterator> it = envRoot->getElements(xpath);
+    ForEach(*it)
+    {
+        IPropertyTree& instance = it->query();
+
+        const char* computer = instance.queryProp("@computer");
+        if (isEmptyString(computer))
+            throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get %s", xpath.str());
+    
+        Owned<IPropertyTree> machineReq = createMachineUsageReq(constEnv, computer);
+    
+        IPropertyTree* envDirectories = envRoot->queryPropTree("Software/Directories");
+        Owned<IPropertyTree> logFolder = createDiskUsageReq(envDirectories, "log", type, name);
+        if (logFolder)
+            machineReq->addPropTree(logFolder->queryName(), LINK(logFolder));
+
+        Owned<IPropertyTree> dataFolder = createDiskUsageReq(envDirectories, "data", componentType, name);
+        if (dataFolder)
+            machineReq->addPropTree(dataFolder->queryName(), LINK(dataFolder));
+    
+        if (strieq(type, eqDali))
+        {
+            Owned<IPropertyTree> repFolder = createDiskUsageReq(envDirectories, "mirror", "dali", name);
+            if (repFolder)
+                machineReq->addPropTree(repFolder->queryName(), LINK(repFolder));
+        }
+
+        componentReq->addPropTree(machineReq->queryName(), LINK(machineReq));
+    }
     usageReq->addPropTree(componentReq->queryName(), LINK(componentReq));
 }
 
@@ -2513,16 +2625,22 @@ IArrayOf<IConstComponent>& Cws_machineEx::listComponentsForCheckingUsage(IConstE
     listComponentsByType(envRoot, eqEclAgent, componentList);
     listComponentsByType(envRoot, eqSashaServer, componentList);
     listComponentsByType(envRoot, eqDropZone, componentList);
+    listComponentsByType(envRoot, eqDfu, componentList);
+    listComponentsByType(envRoot, eqEclCCServer, componentList);
+    listComponentsByType(envRoot, eqEclServer, componentList);
+    listComponentsByType(envRoot, eqEclScheduler, componentList);
+    listComponentsByType(envRoot, eqEsp, componentList);
 
     return componentList;
 }
 
-void Cws_machineEx::readComponentUsageReq(IEspGetComponentUsageRequest& req, IConstEnvironment* constEnv, IPropertyTree* usageReq, IPropertyTree* uniqueUsages)
+IPropertyTree* Cws_machineEx::getComponentUsageReq(IEspGetComponentUsageRequest& req, IConstEnvironment* constEnv)
 {
     IArrayOf<IConstComponent>& componentList = req.getComponents();
     if (!componentList.length())
         listComponentsForCheckingUsage(constEnv, componentList);
 
+    Owned<IPropertyTree> usageReq = createPTree("Req");
     ForEachItemIn(i, componentList)
     {
         IConstComponent& component = componentList.item(i);
@@ -2539,9 +2657,7 @@ void Cws_machineEx::readComponentUsageReq(IEspGetComponentUsageRequest& req, ICo
         else
             readOtherComponentUsageReq(component.getName(), type, constEnv, usageReq);
     }
-
-    //Add unique machines from the usageReq to uniqueUsages.
-    setUniqueMachineUsageReq(usageReq, uniqueUsages);
+    return usageReq.getClear();
 }
 
 void Cws_machineEx::getMachineUsages(IEspContext& context, IPropertyTree* uniqueUsages)
@@ -2640,8 +2756,9 @@ void Cws_machineEx::getMachineUsage(IEspContext& context, CGetMachineUsageThread
 }
 
 void Cws_machineEx::readComponentUsageResult(IEspContext& context, IPropertyTree* usageReq,
-    IPropertyTree* uniqueUsages, IArrayOf<IEspComponentUsage>& componentUsages)
+    const IPropertyTree* uniqueUsages, IArrayOf<IEspComponentUsage>& componentUsages)
 {
+    double version = context.getClientVersion();
     Owned<IPropertyTreeIterator> components= usageReq->getElements("Component");
     ForEach(*components)
     {
@@ -2666,14 +2783,20 @@ void Cws_machineEx::readComponentUsageResult(IEspContext& context, IPropertyTree
             IPropertyTree* uniqueMachineReqTree = uniqueUsages->queryPropTree(xpath);
             if (!uniqueMachineReqTree)
             {
-                machineUsage->setDescription("No data returns.");
+                if (version < 1.17)
+                    machineUsage->setDescription("No data returns.");
+                else
+                    machineUsage->setException("No data returns.");
                 machineUsages.append(*machineUsage.getClear());
                 continue;
             }
             const char* error = uniqueMachineReqTree->queryProp("@error");
             if (!isEmptyString(error))
             {
-                machineUsage->setDescription(error);
+                if (version < 1.17)
+                    machineUsage->setDescription(error);
+                else
+                    machineUsage->setException(error);
                 machineUsages.append(*machineUsage.getClear());
                 continue;
             }
@@ -2692,12 +2815,22 @@ void Cws_machineEx::readComponentUsageResult(IEspContext& context, IPropertyTree
                 xpath.setf("Folder[@path='%s']", aDiskPath);
                 IPropertyTree* folderTree = uniqueMachineReqTree->queryPropTree(xpath);
                 if (!folderTree)
-                    diskUsage->setDescription("No data returns.");
+                {
+                    if (version < 1.17)
+                        diskUsage->setDescription("No data returns.");
+                    else
+                        diskUsage->setException("No data returns.");
+                }
                 else
                 {
                     const char* error = folderTree->queryProp("@error");
                     if (!isEmptyString(error))
-                        diskUsage->setDescription(error);
+                    {
+                        if (version < 1.17)
+                            diskUsage->setDescription(error);
+                        else
+                            diskUsage->setException(error);
+                    }
                     else
                     {
                         diskUsage->setAvailable(folderTree->getPropInt64("@available"));
@@ -2721,6 +2854,19 @@ void Cws_machineEx::readComponentUsageResult(IEspContext& context, IPropertyTree
     }
 }
 
+StringBuffer& Cws_machineEx::setUsageTimeStr(CUsageCache* usageCache, StringBuffer& timeStr)
+{
+    if (usageCache)
+        usageCache->queryTimeCached(timeStr);
+    else
+    {
+        CDateTime timeNow;
+        timeNow.setNow();
+        timeNow.getString(timeStr, true);
+    }
+    return timeStr;
+}
+
 bool Cws_machineEx::onGetComponentUsage(IEspContext& context, IEspGetComponentUsageRequest& req,
     IEspGetComponentUsageResponse& resp)
 {
@@ -2728,24 +2874,38 @@ bool Cws_machineEx::onGetComponentUsage(IEspContext& context, IEspGetComponentUs
     {
         context.ensureFeatureAccess(FEATURE_URL, SecAccess_Read, ECLWATCH_MACHINE_INFO_ACCESS_DENIED, "Failed to Get Machine Information. Permission denied.");
 
-        StringBuffer cacheID;
-        buildComponentUsageCacheID(cacheID, req.getComponents());
+        double version = context.getClientVersion();
 
-        if (!req.getBypassCachedResult() && readComponentUsageCache(context, cacheID, resp))
-            return true;
-
+        StringBuffer timeStr;
+        IArrayOf<IEspComponentUsage> componentUsages;
         Owned<IEnvironmentFactory> envFactory = getEnvironmentFactory(true);
         Owned<IConstEnvironment> constEnv = envFactory->openEnvironment();
+        Owned<IPropertyTree> usageReq = getComponentUsageReq(req, constEnv);
 
-        Owned<IPropertyTree> usageReq = createPTree("Req");
-        Owned<IPropertyTree> uniqueUsages = createPTree("Usage");
-        readComponentUsageReq(req, constEnv, usageReq, uniqueUsages);
+        Owned<CUsageCache> usage;
+        Owned<const IPropertyTree> uniqueUsages;
+        if (req.getBypassCachedResult())
+        {
+            Owned<IPropertyTree> tmpUniqueUsages = createPTree("Usage");
+            //Add unique machines from the usageReq to uniqueUsages.
+            setUniqueMachineUsageReq(usageReq, tmpUniqueUsages);
+            getMachineUsages(context, tmpUniqueUsages);
+            uniqueUsages.setown(tmpUniqueUsages.getClear());
+        }
+        else
+        {
+            usage.setown((CUsageCache*) usageCacheReader->getCachedInfo());
+            if (!usage)
+                throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get usage. Please try later.");
 
-        getMachineUsages(context, uniqueUsages);
+            ESPLOG(LogMax, "GetComponentUsage: found UsageCache.");
+            uniqueUsages.set(usage->queryUsages());
+        }
 
-        IArrayOf<IEspComponentUsage> componentUsages;
         readComponentUsageResult(context, usageReq, uniqueUsages, componentUsages);
-        machineUsageCache->add(cacheID, componentUsages);
+        if (version >= 1.17)
+            resp.setUsageTime(setUsageTimeStr(usage, timeStr));
+
         resp.setComponentUsages(componentUsages);
     }
     catch(IException* e)
@@ -2767,13 +2927,13 @@ StringArray& Cws_machineEx::listTargetClusterNames(IConstEnvironment* constEnv, 
     return targetClusters;
 }
 
-void Cws_machineEx::readTargetClusterUsageReq(IEspGetTargetClusterUsageRequest& req, IConstEnvironment* constEnv,
-    IPropertyTree* usageReq, IPropertyTree* uniqueUsages)
+IPropertyTree* Cws_machineEx::getTargetClusterUsageReq(IEspGetTargetClusterUsageRequest& req, IConstEnvironment* constEnv)
 {
     StringArray& targetClusters = req.getTargetClusters();
     if (targetClusters.empty())
         listTargetClusterNames(constEnv, targetClusters);
 
+    Owned<IPropertyTree> usageReq = createPTree("Req");
     Owned<IPropertyTree> envRoot = &constEnv->getPTree();
     ForEachItemIn(i, targetClusters)
     {
@@ -2801,24 +2961,24 @@ void Cws_machineEx::readTargetClusterUsageReq(IEspGetTargetClusterUsageRequest& 
         if (roxie.length())
             readRoxieUsageReq(roxie.str(), constEnv, targetClusterTree);
 
-        SCMStringBuffer eclAgent;
+        SCMStringBuffer eclAgent, eclScheduler;
         targetClusterInfo->getAgentName(eclAgent);
         if (eclAgent.length())
             readOtherComponentUsageReq(eclAgent.str(), eqEclAgent, constEnv, targetClusterTree);
+        targetClusterInfo->getECLSchedulerName(eclScheduler);
+        if (eclScheduler.length())
+            readOtherComponentUsageReq(eclScheduler.str(), eqEclScheduler, constEnv, targetClusterTree);
+        const StringArray& eclServers = targetClusterInfo->getECLServerNames();
+        ForEachItemIn(j, eclServers)
+            readOtherComponentUsageReq(eclServers.item(j), targetClusterInfo->isLegacyEclServer() ? eqEclServer : eqEclCCServer, constEnv, targetClusterTree);
 
         usageReq->addPropTree(targetClusterTree->queryName(), LINK(targetClusterTree));
     }
-
-    Owned<IPropertyTreeIterator> targetClusterItr= usageReq->getElements("TargetCluster");
-    ForEach(*targetClusterItr)
-    {
-        IPropertyTree& targetCluster = targetClusterItr->query();
-        setUniqueMachineUsageReq(&targetCluster, uniqueUsages);
-    }
+    return usageReq.getClear();
 }
 
 void Cws_machineEx::readTargetClusterUsageResult(IEspContext& context, IPropertyTree* usageReq,
-    IPropertyTree* uniqueUsages, IArrayOf<IEspTargetClusterUsage>& targetClusterUsages)
+    const IPropertyTree* uniqueUsages, IArrayOf<IEspTargetClusterUsage>& targetClusterUsages)
 {
     Owned<IPropertyTreeIterator> targetClusters= usageReq->getElements("TargetCluster");
     ForEach(*targetClusters)
@@ -2843,24 +3003,43 @@ bool Cws_machineEx::onGetTargetClusterUsage(IEspContext& context, IEspGetTargetC
     {
         context.ensureFeatureAccess(FEATURE_URL, SecAccess_Read, ECLWATCH_MACHINE_INFO_ACCESS_DENIED, "Failed to Get Machine Information. Permission denied.");
 
-        StringBuffer cacheID;
-        buildUsageCacheID(cacheID, req.getTargetClusters(), "AllTargetClusters");
+        double version = context.getClientVersion();
 
-        if (!req.getBypassCachedResult() && readTargetClusterUsageCache(context, cacheID, resp))
-            return true;
+        StringBuffer timeStr;
+        IArrayOf<IEspTargetClusterUsage> targetClusterUsages;
 
         Owned<IEnvironmentFactory> envFactory = getEnvironmentFactory(true);
         Owned<IConstEnvironment> constEnv = envFactory->openEnvironment();
+        Owned<IPropertyTree> usageReq = getTargetClusterUsageReq(req, constEnv);
 
-        Owned<IPropertyTree> usageReq = createPTree("Req");
-        Owned<IPropertyTree> uniqueUsages = createPTree("Usage");
-        readTargetClusterUsageReq(req, constEnv, usageReq, uniqueUsages);
+        Owned<CUsageCache> usage;
+        Owned<const IPropertyTree> uniqueUsages;
+        if (req.getBypassCachedResult())
+        {
+            Owned<IPropertyTree> tmpUniqueUsages = createPTree("Usage");
 
-        getMachineUsages(context, uniqueUsages);
+            Owned<IPropertyTreeIterator> targetClusterItr= usageReq->getElements("TargetCluster");
+            ForEach(*targetClusterItr)
+            {
+                IPropertyTree& targetCluster = targetClusterItr->query();
+                setUniqueMachineUsageReq(&targetCluster, tmpUniqueUsages);
+            }
+            getMachineUsages(context, tmpUniqueUsages);
+            uniqueUsages.setown(tmpUniqueUsages.getClear());
+        }
+        else
+        {
+            usage.setown((CUsageCache*) usageCacheReader->getCachedInfo());
+            if (!usage)
+                throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get usage. Please try later.");
 
-        IArrayOf<IEspTargetClusterUsage> targetClusterUsages;
+            ESPLOG(LogMax, "GetTargetClusterUsage: found UsageCache.");
+            uniqueUsages.set(usage->queryUsages());
+        }
         readTargetClusterUsageResult(context, usageReq, uniqueUsages, targetClusterUsages);
-        machineUsageCache->add(cacheID, targetClusterUsages);
+        if (version >= 1.17)
+            resp.setUsageTime(setUsageTimeStr(usage, timeStr));
+
         resp.setTargetClusterUsages(targetClusterUsages);
     }
     catch(IException* e)
@@ -2960,8 +3139,7 @@ StringArray& Cws_machineEx::listThorHThorNodeGroups(IConstEnvironment* constEnv,
     return nodeGroups;
 }
 
-void Cws_machineEx::readNodeGroupUsageReq(IEspGetNodeGroupUsageRequest& req, IConstEnvironment* constEnv,
-    IPropertyTree* usageReq, IPropertyTree* uniqueUsages)
+IPropertyTree* Cws_machineEx::getNodeGroupUsageReq(IEspGetNodeGroupUsageRequest& req, IConstEnvironment* constEnv)
 {
     StringArray& nodeGroups = req.getNodeGroups();
     if (nodeGroups.empty())
@@ -2969,6 +3147,7 @@ void Cws_machineEx::readNodeGroupUsageReq(IEspGetNodeGroupUsageRequest& req, ICo
     if (nodeGroups.empty())
         throw MakeStringException(ECLWATCH_INVALID_INPUT, "No node group found.");
 
+    Owned<IPropertyTree> usageReq = createPTree("Req");
     Owned<IPropertyTree> envRoot = &constEnv->getPTree();
     ForEachItemIn(i, nodeGroups)
     {
@@ -2995,17 +3174,11 @@ void Cws_machineEx::readNodeGroupUsageReq(IEspGetNodeGroupUsageRequest& req, ICo
 
         usageReq->addPropTree(nodeGroupTree->queryName(), LINK(nodeGroupTree));
     }
-
-    Owned<IPropertyTreeIterator> nodeGroupItr= usageReq->getElements("NodeGroup");
-    ForEach(*nodeGroupItr)
-    {
-        IPropertyTree& nodeGroup = nodeGroupItr->query();
-        setUniqueMachineUsageReq(&nodeGroup, uniqueUsages);
-    }
+    return usageReq.getClear();
 }
 
 void Cws_machineEx::readNodeGroupUsageResult(IEspContext& context, IPropertyTree* usageReq,
-    IPropertyTree* uniqueUsages, IArrayOf<IEspNodeGroupUsage>& nodeGroupUsages)
+    const IPropertyTree* uniqueUsages, IArrayOf<IEspNodeGroupUsage>& nodeGroupUsages)
 {
     Owned<IPropertyTreeIterator> nodeGroups= usageReq->getElements("NodeGroup");
     ForEach(*nodeGroups)
@@ -3030,24 +3203,43 @@ bool Cws_machineEx::onGetNodeGroupUsage(IEspContext& context, IEspGetNodeGroupUs
     {
         context.ensureFeatureAccess(FEATURE_URL, SecAccess_Read, ECLWATCH_MACHINE_INFO_ACCESS_DENIED, "Failed to Get Machine Information. Permission denied.");
 
-        StringBuffer cacheID;
-        buildUsageCacheID(cacheID, req.getNodeGroups(), "AllNodeGroups");
+        double version = context.getClientVersion();
 
-        if (!req.getBypassCachedResult() && readNodeGroupUsageCache(context, cacheID, resp))
-            return true;
+        StringBuffer timeStr;
+        IArrayOf<IEspNodeGroupUsage> nodeGroupUsages;
 
         Owned<IEnvironmentFactory> envFactory = getEnvironmentFactory(true);
         Owned<IConstEnvironment> constEnv = envFactory->openEnvironment();
+        Owned<IPropertyTree> usageReq = getNodeGroupUsageReq(req, constEnv);
 
-        Owned<IPropertyTree> usageReq = createPTree("Req");
-        Owned<IPropertyTree> uniqueUsages = createPTree("Usage");
-        readNodeGroupUsageReq(req, constEnv, usageReq, uniqueUsages);
+        Owned<CUsageCache> usage;
+        Owned<const IPropertyTree> uniqueUsages;
+        if (req.getBypassCachedResult())
+        {
+            Owned<IPropertyTree> tmpUniqueUsages = createPTree("Usage");
 
-        getMachineUsages(context, uniqueUsages);
+            Owned<IPropertyTreeIterator> nodeGroupItr= usageReq->getElements("NodeGroup");
+            ForEach(*nodeGroupItr)
+            {
+                IPropertyTree& nodeGroup = nodeGroupItr->query();
+                setUniqueMachineUsageReq(&nodeGroup, tmpUniqueUsages);
+            }
+            getMachineUsages(context, tmpUniqueUsages);
+            uniqueUsages.setown(tmpUniqueUsages.getClear());
+        }
+        else
+        {
+            usage.setown((CUsageCache*) usageCacheReader->getCachedInfo());
+            if (!usage)
+                throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get usage. Please try later.");
 
-        IArrayOf<IEspNodeGroupUsage> nodeGroupUsages;
+            ESPLOG(LogMax, "GetNodeGroupUsage: found UsageCache.");
+            uniqueUsages.set(usage->queryUsages());
+        }
+
         readNodeGroupUsageResult(context, usageReq, uniqueUsages, nodeGroupUsages);
-        machineUsageCache->add(cacheID, nodeGroupUsages);
+        if (version >= 1.17)
+            resp.setUsageTime(setUsageTimeStr(usage, timeStr));
         resp.setNodeGroupUsages(nodeGroupUsages);
     }
     catch(IException* e)
@@ -3055,84 +3247,6 @@ bool Cws_machineEx::onGetNodeGroupUsage(IEspContext& context, IEspGetNodeGroupUs
         FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
     }
 
-    return true;
-}
-
-void Cws_machineEx::buildComponentUsageCacheID(StringBuffer& id, IArrayOf<IConstComponent>& componentList)
-{
-    if (!componentList.ordinality())
-    {
-        id.set("AllComponents");
-        return;
-    }
-
-    StringArray componentNames;
-    ForEachItemIn(i, componentList)
-    {
-        IConstComponent& component = componentList.item(i);
-        StringBuffer str(component.getType());
-        if (str.isEmpty())
-            throw MakeStringException(ECLWATCH_INVALID_INPUT, "Empty Component Type");
-        str.append(":").append(component.getName());
-        componentNames.append(str);
-    }
-    componentNames.sortAscii();
-    componentNames.getString(id, ",");
-}
-
-void Cws_machineEx::buildUsageCacheID(StringBuffer& id, StringArray& names, const char* defaultID)
-{
-    if (names.ordinality())
-    {
-        names.sortAscii();
-        names.getString(id, ",");
-    }
-    else
-        id.set(defaultID);
-}
-
-bool Cws_machineEx::readComponentUsageCache(IEspContext& context, const char* cacheID,
-    IEspGetComponentUsageResponse& resp)
-{
-    Owned<MachineUsageCacheElement> cachedUsage = machineUsageCache->lookup(context,
-        cacheID, machineUsageCacheMinutes);
-    if (!cachedUsage)
-        return false;
-
-    IArrayOf<IEspComponentUsage> componentUsages;
-    ForEachItemIn(i, cachedUsage->componentUsages)
-        componentUsages.append(*LINK(&cachedUsage->componentUsages.item(i)));
-    resp.setComponentUsages(componentUsages);
-    return true;
-}
-
-bool Cws_machineEx::readTargetClusterUsageCache(IEspContext& context, const char* cacheID,
-    IEspGetTargetClusterUsageResponse& resp)
-{
-    Owned<MachineUsageCacheElement> cachedUsage = machineUsageCache->lookup(context,
-        cacheID, machineUsageCacheMinutes);
-    if (!cachedUsage)
-        return false;
-
-    IArrayOf<IEspTargetClusterUsage> targetClusterUsages;
-    ForEachItemIn(i, cachedUsage->tcUsages)
-        targetClusterUsages.append(*LINK(&cachedUsage->tcUsages.item(i)));
-    resp.setTargetClusterUsages(targetClusterUsages);
-    return true;
-}
-
-bool Cws_machineEx::readNodeGroupUsageCache(IEspContext& context, const char* cacheID,
-    IEspGetNodeGroupUsageResponse& resp)
-{
-    Owned<MachineUsageCacheElement> cachedUsage = machineUsageCache->lookup(context,
-        cacheID, machineUsageCacheMinutes);
-    if (!cachedUsage)
-        return false;
-
-    IArrayOf<IEspNodeGroupUsage> nodeGroupUsages;
-    ForEachItemIn(i, cachedUsage->ngUsages)
-        nodeGroupUsages.append(*LINK(&cachedUsage->ngUsages.item(i)));
-    resp.setNodeGroupUsages(nodeGroupUsages);
     return true;
 }
 
@@ -3199,3 +3313,217 @@ bool Cws_machineEx::onUpdateComponentStatus(IEspContext &context, IEspUpdateComp
     return true;
 }
 
+CInfoCache* CUsageCacheReader::read()
+{
+    Owned<IPropertyTree> uniqueUsages = getUsageReqAllMachines();
+
+    //Send usage command to each machine
+    Owned<IEspContext> espContext =  createEspContext();
+    servicePtr->getMachineUsages(*espContext, uniqueUsages);
+
+    Owned<CUsageCache> usageCache = new CUsageCache();
+    usageCache->setUsages(uniqueUsages.getClear());
+    return usageCache.getClear();
+}
+
+IPropertyTree* CUsageCacheReader::getUsageReqAllMachines()
+{
+    //Collect network addresses and HPCC folders for all HPCC machines.
+    Owned<IEnvironmentFactory> envFactory = getEnvironmentFactory(true);
+    Owned<IConstEnvironment> constEnv = envFactory->openEnvironment();
+
+    IArrayOf<IConstComponent> componentList;
+    servicePtr->listComponentsForCheckingUsage(constEnv, componentList);
+
+    //Create a PTree which will be used to store the usages of all HPCC machines.
+    Owned<IPropertyTree> uniqueUsages = createPTree("Usage");
+
+    //Store the network addresses and HPCC folders into the PTree.
+    //Their usages may be added by calling servicePtr->getMachineUsages().
+    ForEachItemIn(i, componentList)
+    {
+        IConstComponent& component = componentList.item(i);
+        const char* type = component.getType();
+        if (isEmptyString(type))
+            throw MakeStringException(ECLWATCH_INVALID_INPUT, "Empty Component Type");
+
+        if (strieq(type, eqThorCluster))
+            addClusterUsageReq(constEnv, component.getName(), true, uniqueUsages);
+        else if (strieq(type, eqRoxieCluster))
+            addClusterUsageReq(constEnv, component.getName(), false, uniqueUsages);
+        else if (strieq(type, eqDropZone))
+            addDropZoneUsageReq(constEnv, component.getName(), uniqueUsages);
+        else
+            addOtherComponentUsageReq(constEnv, component.getName(), type, uniqueUsages);
+    }
+
+    return uniqueUsages.getClear();
+}
+
+void CUsageCacheReader::addClusterUsageReq(IConstEnvironment* constEnv, const char* name, bool thorCluster, IPropertyTree* usageReq)
+{
+    if (isEmptyString(name))
+        throw MakeStringException(ECLWATCH_INVALID_INPUT, "Empty cluster name");
+
+    Owned<IPropertyTree> envRoot = &constEnv->getPTree();
+    IPropertyTree* envDirectories = envRoot->queryPropTree("Software/Directories");
+    Owned<IPropertyTree> logFolderReq = servicePtr->createDiskUsageReq(envDirectories, "log", thorCluster ? "thor" : "roxie", name);
+    Owned<IPropertyTree> dataFolderReq = servicePtr->createDiskUsageReq(envDirectories, "data", thorCluster ? "thor" : "roxie", name);
+    Owned<IPropertyTree> repFolderReq;
+    if (thorCluster)
+        repFolderReq.setown(servicePtr->createDiskUsageReq(envDirectories, "mirror", "thor", name));
+
+    StringBuffer xpath;
+    if (thorCluster)
+        xpath.setf("Software/ThorCluster[@name='%s']/ThorSlaveProcess", name);
+    else
+        xpath.setf("Software/RoxieCluster[@name='%s']/RoxieServerProcess", name);
+    Owned<IPropertyTreeIterator> processes= envRoot->getElements(xpath);
+    ForEach(*processes)
+    {
+        IPropertyTree& process = processes->query();
+        const char* computer = process.queryProp("@computer");
+        if (isEmptyString(computer))
+            throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get @computer for %s", xpath.str());
+
+        checkAndAddMachineUsageReq(constEnv, computer, logFolderReq, dataFolderReq, repFolderReq, usageReq);
+    }
+
+    if (!thorCluster)
+        return;
+
+    //Read ThorMasterProcess in case it is on a different machine
+    xpath.setf("Software/ThorCluster[@name='%s']/ThorMasterProcess/@computer", name);
+    const char* computer = envRoot->queryProp(xpath);
+    if (isEmptyString(computer))
+        throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get %s", xpath.str());
+
+    checkAndAddMachineUsageReq(constEnv, computer, logFolderReq, dataFolderReq, repFolderReq, usageReq);
+}
+
+void CUsageCacheReader::checkAndAddMachineUsageReq(IConstEnvironment* constEnv, const char* computer, IPropertyTree* logFolderReq,
+    IPropertyTree* dataFolderReq,  IPropertyTree* repFolderReq, IPropertyTree* usageReq)
+{
+    Owned<IPropertyTree> machineReq = servicePtr->createMachineUsageReq(constEnv, computer);
+    VStringBuffer xpath("Machine[@netAddress='%s']", machineReq->queryProp("@netAddress"));
+    IPropertyTree* foundMachineReqTree = usageReq->queryPropTree(xpath);
+    if (!foundMachineReqTree)
+    {
+        //Not sure we need those folders here. Add them just in case.
+        if (logFolderReq)
+            machineReq->addPropTree(logFolderReq->queryName(), LINK(logFolderReq));
+        if (dataFolderReq)
+            machineReq->addPropTree(dataFolderReq->queryName(), LINK(dataFolderReq));
+        if (repFolderReq)
+            machineReq->addPropTree(repFolderReq->queryName(), LINK(repFolderReq));
+        usageReq->addPropTree(machineReq->queryName(), LINK(machineReq));
+        return;
+    }
+
+    //Add unique disk folders
+    checkAndAddFolderReq(logFolderReq, foundMachineReqTree);
+    checkAndAddFolderReq(dataFolderReq, foundMachineReqTree);
+    checkAndAddFolderReq(repFolderReq, foundMachineReqTree);
+}
+
+void CUsageCacheReader::checkAndAddFolderReq(IPropertyTree* folderReq, IPropertyTree* machineReqTree)
+{
+    if (!folderReq)
+        return;
+
+    //Add unique disk folders
+    VStringBuffer xpath("Folder[@path='%s']", folderReq->queryProp("@path"));
+    if (!machineReqTree->queryPropTree(xpath))
+        machineReqTree->addPropTree(folderReq->queryName(), LINK(folderReq));
+}
+
+void CUsageCacheReader::addDropZoneUsageReq(IConstEnvironment* constEnv, const char* name, IPropertyTree* usageReq)
+{
+    if (isEmptyString(name))
+        throw MakeStringException(ECLWATCH_INVALID_INPUT, "Empty DropZone name");
+
+    Owned<IConstDropZoneInfo> envDropZone = constEnv->getDropZone(name);
+    if (!envDropZone)
+        throw MakeStringException(ECLWATCH_INVALID_INPUT, "Dropzone %s not found", name);
+
+    if (!envDropZone->isECLWatchVisible())
+        return;
+
+    SCMStringBuffer directory;
+    envDropZone->getDirectory(directory);
+    if (directory.length() == 0)
+        throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get directory for DropZone %s", name);
+
+    Owned<IPropertyTree> dataFolder = createPTree("Folder");
+    dataFolder->addProp("@name", "data");
+    dataFolder->addProp("@path", directory.str());
+
+    SCMStringBuffer computerName;
+    envDropZone->getComputerName(computerName);
+    if (computerName.length() == 0)
+    {
+        OS_TYPE os = (getPathSepChar(directory.str()) == '/') ? OS_LINUX : OS_WINDOWS;
+
+        Owned<IConstDropZoneServerInfoIterator> servers = envDropZone->getServers();
+        ForEach(*servers)
+        {
+            IConstDropZoneServerInfo& server = servers->query();
+
+            StringBuffer serverNetAddress;
+            server.getServer(serverNetAddress.clear());
+
+            VStringBuffer xpath("Machine[@netAddress='%s']", serverNetAddress.str());
+            IPropertyTree* foundMachineReqTree = usageReq->queryPropTree(xpath);
+            if (foundMachineReqTree)
+            {
+                checkAndAddFolderReq(dataFolder, foundMachineReqTree);
+                continue;
+            }
+
+            Owned<IPropertyTree> machineReq = createPTree("Machine");
+            machineReq->addProp("@name", serverNetAddress.str());
+            machineReq->addProp("@netAddress", serverNetAddress.str());
+            machineReq->addPropInt("@OS", os);
+            machineReq->addPropTree(dataFolder->queryName(), LINK(dataFolder));
+
+            usageReq->addPropTree(machineReq->queryName(), LINK(machineReq));
+        }
+    }
+    else
+    { //legacy dropzone settings
+        checkAndAddMachineUsageReq(constEnv, computerName.str(), nullptr, dataFolder, nullptr, usageReq);
+    }
+}
+
+void CUsageCacheReader::addOtherComponentUsageReq(IConstEnvironment* constEnv, const char* name, const char* type, IPropertyTree* usageReq)
+{
+    if (isEmptyString(name))
+        throw MakeStringException(ECLWATCH_INVALID_INPUT, "Empty Component name");
+
+    const char* componentType = findComponentTypeFromProcessType(type);
+    if (!componentType)
+        throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Component usage function is not supported for %s", type);
+
+    //Find disk folders for log, data, etc.
+    Owned<IPropertyTree> envRoot = &constEnv->getPTree();
+    IPropertyTree* envDirectories = envRoot->queryPropTree("Software/Directories");
+
+    Owned<IPropertyTree> dataFolder = servicePtr->createDiskUsageReq(envDirectories, "data", componentType, name);
+    Owned<IPropertyTree> logFolder = servicePtr->createDiskUsageReq(envDirectories, "log", componentType, name);
+    Owned<IPropertyTree> repFolder;
+    if (strieq(type, eqDali))
+        repFolder.setown(servicePtr->createDiskUsageReq(envDirectories, "mirror", "dali", name));
+
+    VStringBuffer xpath("Software/%s[@name='%s']/Instance", type, name);
+    Owned<IPropertyTreeIterator> it = envRoot->getElements(xpath);
+    ForEach(*it)
+    {
+        IPropertyTree& instance = it->query();
+
+        const char* computer = instance.queryProp("@computer");
+        if (isEmptyString(computer))
+            throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get @computer for %s", xpath.str());
+
+        checkAndAddMachineUsageReq(constEnv, computer, logFolder, dataFolder, repFolder, usageReq);
+    }
+}

@@ -439,8 +439,8 @@ MODULE_INIT(INIT_PRIORITY_HQLINTERNAL)
     nullType = makeNullType();
     sourcePaths = new KeptAtomTable;
     blank = createStringValue("",(unsigned)0);
-    cachedActiveTableExpr = createValue(no_activetable);
-    cachedSelfReferenceExpr = createValue(no_selfref);
+    cachedActiveTableExpr = createValue(no_activetable, LINK(nullType));
+    cachedSelfReferenceExpr = createValue(no_selfref, LINK(nullType));
     cachedNullRecord = createRecord()->closeExpr();
     cachedSelfExpr = createValue(no_self, makeRowType(cachedNullRecord->getType()));
     OwnedHqlExpr nonEmptyAttr = createAttribute(_nonEmpty_Atom);
@@ -542,7 +542,7 @@ MODULE_EXIT()
         if (cur.getOperator() == no_constant)
         {
             StringBuffer text;
-            toECL(&cur, text, false);
+            toECL(cur.queryBody(), text, false);
             printf("CONST:%" I64F "u:%s", querySeqId(&cur), text.str());
         }
     }
@@ -1116,7 +1116,17 @@ bool HqlParseContext::createCache(bool isMacro)
         writeStringToStream(*stream, "</Cache>\n");
         stream->flush();
     }
-    cacheFile->move(filename);
+    try
+    {
+        cacheFile->move(filename);
+    }
+    catch (IException * e)
+    {
+        // compilation shouldn't fail just because the cache couldn't be copied over
+        // (Copy over may fail when another process has created cache and using cache already)
+        DBGLOG(e);
+        e->Release();
+    }
     return true;
 }
 
@@ -1127,8 +1137,8 @@ void HqlParseContext::finishMeta(bool isSeparateFile, bool success, bool generat
 
     if (generateMeta)
     {
-        IPropertyTree* tos = curMeta().meta;
 #if 0
+        IPropertyTree* tos = curMeta().meta;
 # This is disabled as the location of the cache file needs to be
 # in the original location for now.  This may re-visited in the future.
         if (isSeparateFile && hasCacheLocation())
@@ -3468,7 +3478,7 @@ IHqlExpression * ensureExprType(IHqlExpression * expr, ITypeInfo * type, node_op
                  throwUnexpectedX("Cast to DATASET with no record TYPE specified");   //  cf. HPCC-9847
             OwnedHqlExpr transform = createRecordMappingTransform(no_newtransform, queryOriginalRecord(type), expr->queryNormalizedSelector());
             if (transform)
-                return createDatasetF(no_newusertable, LINK(expr), LINK(queryOriginalRecord(type)), LINK(transform), NULL);
+                return createDataset(no_newusertable, { LINK(expr), LINK(queryOriginalRecord(type)), LINK(transform) });
             //Need to create a project of the dataset - error if can't
             break;
         }
@@ -3596,7 +3606,7 @@ IIdAtom * CHqlExpression::queryId() const
 }
 
 //Can be called from updateFlagsAfterOperands to help track down inconsistencies
-static bool verifyTransform(IHqlExpression * record, IHqlExpression * expr)
+bool verifyTransform(IHqlExpression * record, IHqlExpression * expr)
 {
     ForEachChild(i, expr)
     {
@@ -4640,8 +4650,11 @@ switch (op)
         break;
     case no_funcdef:
         {
-            assertex(queryType()->getTypeCode() == type_function && queryChild(1) && queryChild(1)->getOperator() == no_sortlist);
+            IHqlExpression * formals = queryChild(1);
+            assertex(queryType()->getTypeCode() == type_function && queryChild(1) && formals->getOperator() == no_sortlist);
             assertex(queryType()->queryChildType() == queryChild(0)->queryType());
+            ForEachChild(i, formals)
+                assertex(formals->queryChild(i)->getOperator() == no_param);
             break;
         }
     case no_setresult:
@@ -4929,38 +4942,13 @@ void CHqlRealExpression::onAppendOperand(IHqlExpression & child, unsigned whichO
 #endif
 }
 
-void CHqlRealExpression::appendOperands(IHqlExpression * arg0, ...)
+void CHqlRealExpression::appendSingleOperand(IHqlExpression * arg0)
 {
     if (!arg0)
         return;
 
-    unsigned numArgs = 1;
-    va_list argscount;
-    va_start(argscount, arg0);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(argscount, IHqlExpression *);
-        if (!parm)
-            break;
-        numArgs++;
-    }
-    va_end(argscount);
-
-    operands.ensure(numArgs);
+    operands.ensure(1);
     doAppendOperand(*arg0);
-    va_list args;
-    va_start(args, arg0);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(args, IHqlExpression *);
-        if (!parm)
-            break;
-#ifdef _DEBUG
-        assertex(QUERYINTERFACE(parm, IHqlExpression));
-#endif
-        doAppendOperand(*parm);
-    }
-    va_end(args);
 }
 
 void CHqlRealExpression::setOperands(HqlExprArray & _ownedOperands)
@@ -5016,11 +5004,23 @@ unsigned CHqlRealExpression::getCachedEclCRC()
     if (cachedCRC)
         return cachedCRC;
 
+    ITypeInfo * thisType = queryType();
     unsigned crc = op;
     switch (op)
     {
     case no_record:
     case no_type:
+        thisType = nullptr;
+        break;
+    case no_thor:
+    case no_flat:
+    case no_sql:
+    case no_csv:
+    case no_xml:
+    case no_json:
+    case no_null:
+        if (thisType && (thisType->getTypeCode() == type_null))
+            thisType = nullptr;
         break;
     case no_self:
         //ignore new record argument
@@ -5028,12 +5028,13 @@ unsigned CHqlRealExpression::getCachedEclCRC()
         return crc;
     case no_selfref:
         crc = no_self;
+        thisType = nullptr;
         break;
     case no_assertconstant:
     case no_assertconcrete:
         return queryChild(0)->getCachedEclCRC();
     case no_sortlist:
-        //backward compatibility
+        thisType = nullptr;
         break;
     case no_attr_expr:
         {
@@ -5042,30 +5043,26 @@ unsigned CHqlRealExpression::getCachedEclCRC()
             //will be incompatible.
             if (name == maxLengthAtom || name == xpathAtom || name == cardinalityAtom || name == caseAtom || name == maxCountAtom || name == choosenAtom || name == maxSizeAtom || name == namedAtom || name == rangeAtom || name == xmlDefaultAtom || name == virtualAtom)
                 crc = no_attr;
-            //fallthrough
-        }
-    default:
-        {
-            ITypeInfo * thisType = queryType();
-            if (thisType && this != queryExpression(thisType))
-            {
-                ITypeInfo * hashType = thisType;
-                switch (hashType->getTypeCode())
-                {
-                case type_transform:
-                    hashType = hashType->queryChildType();
-                    break;
-                case type_row:
-                    //Backward compatibility
-                    if (op == no_field)
-                        hashType = hashType->queryChildType();
-                    break;
-                }
-                unsigned typeCRC = hashType->getCrc();
-                crc = hashc((const byte *)&typeCRC, sizeof(typeCRC), crc);
-            }
             break;
         }
+    }
+
+    if (thisType && this != queryExpression(thisType))
+    {
+        ITypeInfo * hashType = thisType;
+        switch (hashType->getTypeCode())
+        {
+        case type_transform:
+            hashType = hashType->queryChildType();
+            break;
+        case type_row:
+            //Backward compatibility
+            if (op == no_field)
+                hashType = hashType->queryChildType();
+            break;
+        }
+        unsigned typeCRC = hashType->getCrc();
+        crc = hashc((const byte *)&typeCRC, sizeof(typeCRC), crc);
     }
 
     unsigned numChildrenToHash = numChildren();
@@ -5155,6 +5152,40 @@ IHqlExpression *CHqlRealExpression::queryAttribute(IAtom * propname) const
 
 //--------------------------------------------------------------------------------------------------------------
 
+void expandOperands(HqlExprArray & args, const std::initializer_list<IHqlExpression *> &operands, bool expandCommas)
+{
+    //Generate an accurate count by iterating and counting expanded commas.  It helps prevent reallocation and minimize wasted memory.
+    unsigned count = 0;
+    for (auto & cur : operands)
+    {
+        //Skip null entries
+        if (cur)
+        {
+            dbgassertex(QUERYINTERFACE(cur, IHqlExpression));
+            if (!expandCommas || (cur->getOperator() != no_comma))
+                count++;
+            else
+                count += unwoundCount(cur, no_comma);
+        }
+    }
+
+    args.ensure(count);
+    for (auto & cur : operands)
+    {
+        //Skip null entries
+        if (cur)
+        {
+            if (!expandCommas || (cur->getOperator() != no_comma))
+                args.append(*cur);
+            else
+            {
+                cur->unwindList(args, no_comma);
+                cur->Release();
+            }
+        }
+    }
+}
+
 CHqlExpressionWithType::CHqlExpressionWithType(node_operator _op, ITypeInfo * _type, HqlExprArray & _ownedOperands)
 : CHqlExpressionWithTables(_op)
 {
@@ -5185,39 +5216,12 @@ CHqlExpression *CHqlExpressionWithType::makeExpression(node_operator _op, ITypeI
     return (CHqlExpression *)e->closeExpr();
 }
 
-CHqlExpression *CHqlExpressionWithType::makeExpression(node_operator _op, ITypeInfo *_type, ...)
+CHqlExpression* CHqlExpressionWithType::makeExpression(node_operator op, ITypeInfo *type, const std::initializer_list<IHqlExpression *> &operands, bool expandCommas)
 {
-    unsigned numArgs = 0;
-    va_list argscount;
-    va_start(argscount, _type);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(argscount, IHqlExpression *);
-        if (!parm)
-            break;
-        numArgs++;
-    }
-    va_end(argscount);
-
-    HqlExprArray operands;
-    if (numArgs)
-    {
-        va_list args;
-        va_start(args, _type);
-        operands.ensure(numArgs);
-        for (;;)
-        {
-            IHqlExpression *parm = va_arg(args, IHqlExpression *);
-            if (!parm)
-                break;
-#ifdef _DEBUG
-            assertex(QUERYINTERFACE(parm, IHqlExpression));
-#endif
-            operands.append(*parm);
-        }
-        va_end(args);
-    }
-    return makeExpression(_op, _type, operands);
+    //Could generate a more accurate count by iterating and counting expanded commas.  Probably not worth it
+    HqlExprArray args;
+    expandOperands(args, operands, expandCommas);
+    return makeExpression(op, type, args);
 }
 
 IHqlExpression *CHqlExpressionWithType::clone(HqlExprArray &newkids)
@@ -5250,23 +5254,9 @@ IHqlExpression *CHqlExpressionWithType::clone(HqlExprArray &newkids)
 
 //--------------------------------------------------------------------------------------------------------------
 
-CHqlNamedExpression::CHqlNamedExpression(node_operator _op, ITypeInfo *_type, IIdAtom * _id, ...) : CHqlExpressionWithType(_op, _type)
+CHqlNamedExpression::CHqlNamedExpression(node_operator _op, ITypeInfo *_type, IIdAtom * _id) : CHqlExpressionWithType(_op, _type)
 {
     id = _id;
-
-    va_list args;
-    va_start(args, _id);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(args, IHqlExpression *);
-        if (!parm)
-            break;
-#ifdef _DEBUG
-        assertex(QUERYINTERFACE(parm, IHqlExpression));
-#endif
-        doAppendOperand(*parm);
-    }
-    va_end(args);
 }
 
 CHqlNamedExpression::CHqlNamedExpression(node_operator _op, ITypeInfo *_type, IIdAtom * _id, HqlExprArray &_ownedOperands) : CHqlExpressionWithType(_op, _type, _ownedOperands)
@@ -6241,7 +6231,7 @@ ITypeInfo *CHqlConstant::getType()
 CHqlField::CHqlField(IIdAtom * _id, ITypeInfo *_type, IHqlExpression *defvalue)
  : CHqlExpressionWithType(no_field, _type)
 {
-    appendOperands(defvalue, NULL);
+    appendSingleOperand(defvalue);
     assertex(_id);
     id = _id;
     onCreateField();
@@ -6404,23 +6394,6 @@ IHqlDataset *CHqlRow::queryDataset()
 }
 
 //==============================================================================================================
-
-static bool isMany(IHqlExpression * expr)
-{
-    switch (expr->getOperator())
-    {
-    case no_attr:
-    case no_attr_expr:
-    case no_attr_link:
-        return (expr->queryName() == manyAtom);
-    case no_range:
-        return isMany(expr->queryChild(1));
-    case no_constant:
-        return (expr->queryValue()->getIntValue() > 1);
-    default:
-        UNIMPLEMENTED;
-    }
-}
 
 // Is this numeric expression evaluated to zero?
 bool isZero(IHqlExpression * expr)
@@ -6636,7 +6609,7 @@ bool CHqlDataset::equals(const IHqlExpression & r) const
 {
     if (CHqlExpressionWithType::equals(r))
     {
-        const CHqlDataset & other = (const CHqlDataset &)r;
+        //const CHqlDataset & other = (const CHqlDataset &)r;
         //No need to check name - since it is purely derived from one of the arguments
         return true;
     }
@@ -6979,7 +6952,7 @@ void CHqlRecord::insertSymbols(IHqlExpression * expr)
         break;
     case no_ifblock:
         expr = expr->queryChild(1);
-        //fall through:
+        //fallthrough
     case no_record:
         {
             ForEachChild(idx, expr)
@@ -7357,7 +7330,7 @@ ITypeInfo * CHqlAnnotation::getType()
 CHqlCachedBoundFunction::CHqlCachedBoundFunction(IHqlExpression *func, bool _forceOutOfLineExpansion)
 : CHqlExpressionWithTables(no_bound_func)
 {
-    appendOperands(LINK(func), NULL);
+    appendSingleOperand(LINK(func));
     if (_forceOutOfLineExpansion)
         addOperand(createConstant(true));
 }
@@ -7544,7 +7517,7 @@ IHqlExpression *CHqlSymbolAnnotation::queryExpression()
 
 inline unsigned combineSymbolFlags(unsigned symbolFlags, bool exported, bool shared)
 {
-    return symbolFlags | (exported ? ob_exported : 0) | (shared ? ob_shared : 0);
+    return symbolFlags | (exported ? ob_exported : ob_none) | (shared ? ob_shared : ob_none);
 }
 
 CHqlSimpleSymbol::CHqlSimpleSymbol(IIdAtom * _id, IIdAtom * _module, IHqlExpression *_expr, IHqlExpression * _funcdef, unsigned _symbolFlags)
@@ -7840,15 +7813,19 @@ IHqlExpression * createLocationAnnotation(IHqlExpression * _ownedBody, const ECL
 IHqlExpression * createLocationAnnotation(IHqlExpression * ownedBody, ISourcePath * sourcePath, int lineno, int column)
 {
 #ifdef _DEBUG
-    assertex(lineno != 0xdddddddd && column != 0xdddddddd);
-    assertex(lineno != 0xcdcdcdcd && column != 0xcdcdcdcd);
-    assertex(lineno != 0xcccccccc && column != 0xcccccccc);
+    assertex((unsigned)lineno != 0xdddddddd && (unsigned)column != 0xdddddddd);
+    assertex((unsigned)lineno != 0xcdcdcdcd && (unsigned)column != 0xcdcdcdcd);
+    assertex((unsigned)lineno != 0xcccccccc && (unsigned)column != 0xcccccccc);
 #endif
     if (suppressLocationAnnotations)
         return ownedBody;
     return CHqlLocationAnnotation::createLocationAnnotation(ownedBody, sourcePath, lineno, column);
 }
 
+IHqlExpression * forceCreateLocationAnnotation(IHqlExpression * _ownedBody, const ECLlocation & _location)
+{
+    return CHqlLocationAnnotation::createLocationAnnotation(_ownedBody, _location.sourcePath, _location.lineno, _location.column);
+}
 
 extern HQL_API bool okToAddAnnotation(IHqlExpression * expr)
 {
@@ -7981,7 +7958,7 @@ IHqlExpression * createJavadocAnnotation(IHqlExpression * _ownedBody, IPropertyT
 //==============================================================================================================
 
 CFileContents::CFileContents(IFile * _file, ISourcePath * _sourcePath, bool _isSigned, IHqlExpression * _gpgSignature)
-  : file(_file), sourcePath(_sourcePath), implicitlySigned(_isSigned), gpgSignature(_gpgSignature)
+  : implicitlySigned(_isSigned), file(_file), sourcePath(_sourcePath), gpgSignature(_gpgSignature)
 {
     delayedRead = false;
     if (!preloadFromFile())
@@ -7989,7 +7966,7 @@ CFileContents::CFileContents(IFile * _file, ISourcePath * _sourcePath, bool _isS
 }
 
 CFileContents::CFileContents(const char *query, ISourcePath * _sourcePath, bool _isSigned, IHqlExpression * _gpgSignature, timestamp_type _ts)
-: sourcePath(_sourcePath), implicitlySigned(_isSigned), gpgSignature(_gpgSignature), ts(_ts)
+: implicitlySigned(_isSigned), ts(_ts), sourcePath(_sourcePath), gpgSignature(_gpgSignature)
 {
     if (query)
         setContents(strlen(query), query);
@@ -7998,7 +7975,7 @@ CFileContents::CFileContents(const char *query, ISourcePath * _sourcePath, bool 
 }
 
 CFileContents::CFileContents(unsigned len, const char *query, ISourcePath * _sourcePath, bool _isSigned, IHqlExpression * _gpgSignature, timestamp_type _ts)
-: sourcePath(_sourcePath), implicitlySigned(_isSigned), gpgSignature(_gpgSignature), ts(_ts)
+: implicitlySigned(_isSigned), ts(_ts), sourcePath(_sourcePath), gpgSignature(_gpgSignature)
 {
     setContents(len, query);
     delayedRead = false;
@@ -9216,6 +9193,18 @@ bool CHqlMergedScope::isPlugin() const
     return false;
 }
 
+bool CHqlMergedScope::isEquivalentScope(const IHqlScope & other) const
+{
+    if (this == &other)
+        return true;
+
+    ForEachItemIn(i, mergedScopes)
+    {
+        if (other.isEquivalentScope(mergedScopes.item(i)))
+            return true;
+    }
+    return false;
+}
 
 
 
@@ -9282,6 +9271,23 @@ void CHqlLibraryInstance::sethash()
 
 //==============================================================================================================
 
+//Replace expressions, but do not replace parameters
+static HqlTransformerInfo quickNoParamExpressionReplacerInfo("QuickNoParamExpressionReplacer");
+class HQL_API QuickNoParamExpressionReplacer : public QuickExpressionReplacer
+{
+public:
+    QuickNoParamExpressionReplacer() : QuickExpressionReplacer(quickNoParamExpressionReplacerInfo)
+    {
+    }
+    virtual IHqlExpression * createTransformedBody(IHqlExpression * expr)
+    {
+        if (expr->getOperator() == no_param)
+            return LINK(expr);
+        return QuickExpressionReplacer::createTransformedBody(expr);
+    }
+};
+
+
 //Each function instance needs to have a unique set of parameters
 static IHqlExpression * cloneFunction(IHqlExpression * expr)
 {
@@ -9292,7 +9298,7 @@ static IHqlExpression * cloneFunction(IHqlExpression * expr)
     if (formals->numChildren() == 0)
         return LINK(expr);
 
-    QuickExpressionReplacer replacer;
+    QuickNoParamExpressionReplacer replacer;
     ForEachChild(i, formals)
     {
         IHqlExpression * formal = formals->queryChild(i);
@@ -9339,7 +9345,7 @@ IHqlExpression * createDelayedReference(node_operator op, IHqlExpression * modul
             ret.setown(createDelayedScope(ret.getClear()));
     }
 
-    return attr->cloneAllAnnotations(ret);
+    return attr->cloneAnnotation(ret);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -10075,43 +10081,6 @@ void addForwardDefinition(IHqlScope * scope, IIdAtom * symbolName, IIdAtom * mod
 }
 
 
-
-//==============================================================================================================
-
-CHqlMultiParentScope::CHqlMultiParentScope(IIdAtom * _name, ...)
- : CHqlScope(no_privatescope, _name, str(_name))
-{
-    va_list args;
-    va_start(args, _name);
-    for (;;)
-    {
-        IHqlScope *parent = va_arg(args, IHqlScope*);
-        if (!parent)
-            break;
-
-        //This should only be used for parser scopes (which are real and non virtual).
-        IHqlExpression * parentExpr = parent->queryExpression();
-        assertex(!parentExpr->hasAttribute(_virtualSeq_Atom));
-        parents.append(*parent);
-    }
-    va_end(args);
-}
-
-IHqlExpression *CHqlMultiParentScope::lookupSymbol(IIdAtom * searchName, unsigned lookupFlags, HqlLookupContext & ctx)
-{
-    IHqlExpression *ret = CHqlScope::lookupSymbol(searchName, lookupFlags, ctx);
-    if (ret)
-        return ret;
-
-    unsigned numChildren = parents.length();
-    for (unsigned i=0; i<numChildren; i++)
-    {
-        ret = ((IHqlScope&)parents.item(i)).lookupSymbol(searchName, lookupFlags, ctx);
-        if (ret)
-            return ret;
-    }
-    return NULL;
-}
 
 //==============================================================================================================
 CHqlContextScope::CHqlContextScope(IHqlScope* _scope) : CHqlScope(no_privatescope) 
@@ -11158,13 +11127,9 @@ extern IHqlExpression *createParameter(IIdAtom * id, unsigned idx, ITypeInfo *ty
     return CHqlParameter::makeParameter(id, idx, type, attrs);
 }
 
-extern IHqlExpression *createValue(node_operator op)
-{
-    return CHqlExpressionWithType::makeExpression(op, NULL, NULL);
-}
 extern IHqlExpression *createValue(node_operator op, ITypeInfo *type)
 {
-    return CHqlExpressionWithType::makeExpression(op, type, NULL);
+    return CHqlExpressionWithType::makeExpression(op, type, { });
 }
 extern IHqlExpression *createOpenValue(node_operator op, ITypeInfo *type)
 {
@@ -11185,6 +11150,7 @@ extern IHqlExpression *createOpenValue(node_operator op, ITypeInfo *type)
             case type_table:
                 assertex(!"createDataset should be called instead");
             }
+            break;
         }
     }
 #endif
@@ -11208,71 +11174,26 @@ extern IHqlExpression *createOpenNamedValue(node_operator op, ITypeInfo *type, I
                 // MORE - is this right???
             case type_groupedtable:
             case type_table:
-                assertex(!"createDataset should be called instead");
+                throwUnexpectedX("createDataset should be called instead");
             }
+            break;
         }
     }
 #endif
-    return new CHqlNamedExpression(op, type, id, NULL);
-}
-
-extern IHqlExpression *createValue(node_operator op, IHqlExpression *p1, IHqlExpression *p2)
-{
-    return CHqlExpressionWithType::makeExpression(op, p1->getType(), p1, p2, NULL);
+    return new CHqlNamedExpression(op, type, id);
 }
 
 extern IHqlExpression *createValue(node_operator op, ITypeInfo *type, IHqlExpression *p1)
 {
-    return CHqlExpressionWithType::makeExpression(op, type, p1, NULL);
+    return CHqlExpressionWithType::makeExpression(op, type, { p1 });
 }
 extern IHqlExpression *createValue(node_operator op, ITypeInfo *type, IHqlExpression *p1, IHqlExpression *p2)
 {
-    return CHqlExpressionWithType::makeExpression(op, type, p1, p2, NULL);
+    return CHqlExpressionWithType::makeExpression(op, type, { p1, p2 });
 }
 extern IHqlExpression *createValue(node_operator op, ITypeInfo *type, IHqlExpression *p1, IHqlExpression *p2, IHqlExpression *p3)
 {
-    return CHqlExpressionWithType::makeExpression(op, type, p1, p2, p3, NULL);
-}
-
-extern IHqlExpression *createValue(node_operator op, ITypeInfo *type, IHqlExpression *p1, IHqlExpression *p2, IHqlExpression *p3, IHqlExpression *p4)
-{
-    return CHqlExpressionWithType::makeExpression(op, type, p1, p2, p3, p4, NULL);
-}
-
-extern IHqlExpression *createValueF(node_operator op, ITypeInfo *type, ...)
-{
-    HqlExprArray children;
-    va_list args;
-    va_start(args, type);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(args, IHqlExpression *);
-        if (!parm)
-            break;
-
-        dbgassertex(QUERYINTERFACE(parm, IHqlExpression));
-
-        if (parm->getOperator() == no_comma)
-        {
-            parm->unwindList(children, no_comma);
-            parm->Release();
-        }
-        else
-            children.append(*parm);
-    }
-    va_end(args);
-    return CHqlExpressionWithType::makeExpression(op, type, children);
-}
-
-extern HQL_API IHqlExpression * createValueFromCommaList(node_operator op, ITypeInfo * type, IHqlExpression * argsExpr)
-{
-    HqlExprArray args;
-    if (argsExpr)
-    {
-        argsExpr->unwindList(args, no_comma);
-        argsExpr->Release();
-    }
-    return createValue(op, type, args);
+    return CHqlExpressionWithType::makeExpression(op, type, { p1, p2, p3 });
 }
 
 extern HQL_API IHqlExpression * createValueSafe(node_operator op, ITypeInfo * type, const HqlExprArray & args)
@@ -11295,17 +11216,17 @@ extern HQL_API IHqlExpression * createValueSafe(node_operator op, ITypeInfo * ty
 
 extern IHqlExpression *createBoolExpr(node_operator op, IHqlExpression *p1)
 {
-    return CHqlExpressionWithType::makeExpression(op, makeBoolType(), p1, NULL);
+    return CHqlExpressionWithType::makeExpression(op, makeBoolType(), { p1 });
 }
 
 extern IHqlExpression *createBoolExpr(node_operator op, IHqlExpression *p1, IHqlExpression *p2)
 {
-    return CHqlExpressionWithType::makeExpression(op, makeBoolType(), p1, p2, NULL);
+    return CHqlExpressionWithType::makeExpression(op, makeBoolType(), { p1, p2 });
 }
 
 extern IHqlExpression *createBoolExpr(node_operator op, IHqlExpression *p1, IHqlExpression *p2, IHqlExpression *p3)
 {
-    return CHqlExpressionWithType::makeExpression(op, makeBoolType(), p1, p2, p3, NULL);
+    return CHqlExpressionWithType::makeExpression(op, makeBoolType(), { p1, p2, p3 });
 }
 
 extern IHqlExpression *createField(IIdAtom *id, ITypeInfo *type, HqlExprArray & _ownedOperands)
@@ -11461,29 +11382,11 @@ IHqlExpression *createDataset(node_operator op, IHqlExpression *dataset)
 }
 
 
-extern IHqlExpression *createDatasetF(node_operator op, ...)
+IHqlExpression *createDataset(node_operator op, const std::initializer_list<IHqlExpression *> &operands)
 {
-    HqlExprArray children;
-    va_list args;
-    va_start(args, op);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(args, IHqlExpression *);
-        if (!parm)
-            break;
-
-        dbgassertex(QUERYINTERFACE(parm, IHqlExpression));
-
-        if (parm->getOperator() == no_comma)
-        {
-            parm->unwindList(children, no_comma);
-            parm->Release();
-        }
-        else
-            children.append(*parm);
-    }
-    va_end(args);
-    return createDataset(op, children);
+    HqlExprArray args;
+    expandOperands(args, operands, true);
+    return createDataset(op, args);
 }
 
 IHqlExpression *createDictionary(node_operator op, HqlExprArray & parms)
@@ -11615,6 +11518,13 @@ IHqlExpression *createDictionary(node_operator op, IHqlExpression *dictionary)
     return createDictionary(op, parms);
 }
 
+IHqlExpression *createDictionary(node_operator op, const std::initializer_list<IHqlExpression *> &operands)
+{
+    HqlExprArray args;
+    expandOperands(args, operands, true);
+    return createDictionary(op, args);
+}
+
 IHqlExpression * createAliasOwn(IHqlExpression * expr, IHqlExpression * attr)
 {
     if (expr->getOperator() == no_alias)
@@ -11623,7 +11533,8 @@ IHqlExpression * createAliasOwn(IHqlExpression * expr, IHqlExpression * attr)
         return createDataset(no_alias, expr, attr);
     if (expr->isDatarow())
         return createRow(no_alias, expr, attr);
-    return createValueF(no_alias, expr->getType(), expr, attr, NULL);   // unwinds no_comma
+
+    return createValue(no_alias, expr->getType(), { expr, attr }, true);
 }
 
 
@@ -11895,7 +11806,6 @@ protected:
                 IValue * searchValue = folded->queryValue();
                 if (!searchValue)
                     break;
-                ITypeInfo * searchType = searchValue->queryType();
                 ForEachChildFrom(i, expr, 1)
                 {
                     IHqlExpression * cur = expr->queryChild(i);
@@ -11925,7 +11835,8 @@ protected:
                 if (oldModule != newModule)
                 {
                     IIdAtom * selectedName = expr->queryChild(3)->queryId();
-                    newModule.setown(checkCreateConcreteModule(ctx.errors, newModule, newModule->queryAttribute(_location_Atom)));
+                    IHqlExpression * location = newModule->queryAttribute(_location_Atom);
+                    newModule.setown(checkCreateConcreteModule(ctx.errors, newModule, location));
 
                     HqlDummyLookupContext dummyctx(ctx.errors);
                     IHqlScope * newScope = newModule->queryScope();
@@ -12517,19 +12428,6 @@ extern IHqlExpression * createReboundFunction(IHqlExpression *func, HqlExprArray
 
 //---------------------------------------------------------------------------------------------------------------
 
-static void checkConsistent(IHqlExpression* e)
-{
-    //Check there are no datasets in the expression other than no_activetable
-    if (!e) return;
-    OwnedHqlExpr e1 = replaceSelector(e, NULL, querySelfReference());
-    OwnedHqlExpr e2 = replaceSelector(e, queryActiveTableSelector(), querySelfReference());
-    if (e1 != e2)
-    {
-        DBGLOG("Paranoia: type information wasn't correctly normalized");
-        e1.setown(replaceSelector(e, NULL, querySelfReference()));
-    }
-}
-
 //NOTE: The type information - e.g., distribution, grouping, sorting cannot include the dataset of the primary file
 //because for a no_newusertable etc. that would result in a circular reference.
 //so all references to fields in the primary file have no_activetable as the selector.
@@ -12617,31 +12515,12 @@ extern IHqlExpression *createRow(node_operator op, IHqlExpression *dataset, IHql
     return createRow(op, args);
 }
 
-extern IHqlExpression *createRowF(node_operator op, ...)
+extern IHqlExpression* createRow(node_operator op, const std::initializer_list<IHqlExpression *> &operands)
 {
-    HqlExprArray children;
-    va_list args;
-    va_start(args, op);
-    for (;;)
-    {
-        IHqlExpression *parm = va_arg(args, IHqlExpression *);
-        if (!parm)
-            break;
-
-        dbgassertex(QUERYINTERFACE(parm, IHqlExpression));
-
-        if (parm->getOperator() == no_comma)
-        {
-            parm->unwindList(children, no_comma);
-            parm->Release();
-        }
-        else
-            children.append(*parm);
-    }
-    va_end(args);
-    return createRow(op, children);
+    HqlExprArray args;
+    expandOperands(args, operands, true);
+    return createRow(op, args);
 }
-
 
 extern IHqlExpression *createRow(node_operator op, HqlExprArray & args)
 {
@@ -12775,17 +12654,6 @@ extern IHqlExpression *createRow(node_operator op, HqlExprArray & args)
         type = makeRowType(NULL);
 
     return CHqlRow::makeRow(op, type, args);
-}
-
-extern IHqlExpression *createList(node_operator op, ITypeInfo *type, IHqlExpression *list)
-{
-    HqlExprArray parms;
-    if (list)
-    {
-        list->unwindList(parms, no_comma);
-        list->Release();
-    }
-    return CHqlExpressionWithType::makeExpression(op, type, parms);
 }
 
 extern IHqlExpression *createBinaryList(node_operator op, HqlExprArray & args)
@@ -13004,16 +12872,13 @@ IHqlExpression * createExternalFuncdefFromInternal(IHqlExpression * funcdef)
     return replaceChild(funcdef, 0, externalExpr);
 }
 
-extern IHqlExpression* createValue(node_operator op, HqlExprArray& operands) {
-    return CHqlExpressionWithType::makeExpression(op, NULL, operands);
+extern IHqlExpression* createValue(node_operator op, ITypeInfo *type, HqlExprArray& operands) {
+    return CHqlExpressionWithType::makeExpression(op, type, operands);
 }
 
-extern IHqlExpression* createValue(node_operator op, ITypeInfo *_type, HqlExprArray& operands) {
-    return CHqlExpressionWithType::makeExpression(op, _type, operands);
-}
-
-extern IHqlExpression *createValue(node_operator op, IHqlExpression *p1) {
-    return CHqlExpressionWithType::makeExpression(op, NULL, p1, NULL);
+extern IHqlExpression* createValue(node_operator op, ITypeInfo *type, const std::initializer_list<IHqlExpression *> &operands, bool expandCommas)
+{
+    return CHqlExpressionWithType::makeExpression(op, type, operands, expandCommas);
 }
 
 extern IHqlExpression* createConstant(int ival) {
@@ -13158,11 +13023,11 @@ extern IHqlExpression * createSelectExpr(IHqlExpression * _lhs, IHqlExpression *
 
     type_t t = rhs->queryType()->getTypeCode();
     if (t == type_table || t == type_groupedtable)
-        return createDataset(no_select, LINK(normalLhs), createComma(rhs, LINK(newAttr)));
+        return createDataset(no_select, { LINK(normalLhs), rhs, LINK(newAttr) });
     if (t == type_dictionary)
         return createDictionary(no_select, LINK(normalLhs), createComma(rhs, LINK(newAttr)));
     if (t == type_row)
-        return createRow(no_select, LINK(normalLhs), createComma(rhs, LINK(newAttr)));
+        return createRow(no_select, { LINK(normalLhs), rhs, LINK(newAttr) });
 
     return CHqlSelectBaseExpression::makeSelectExpression(LINK(normalLhs), rhs, LINK(newAttr));
 }
@@ -13560,9 +13425,22 @@ extern IHqlExpression * createComma(IHqlExpression * expr1, IHqlExpression * exp
 }
 
 
-extern IHqlExpression * createComma(IHqlExpression * expr1, IHqlExpression * expr2, IHqlExpression * expr3, IHqlExpression * expr4)
+extern HQL_API IHqlExpression * createComma(const std::initializer_list<IHqlExpression *> &operands)
 {
-    return createComma(expr1, createComma(expr2, createComma(expr3, expr4)));
+    auto cur = operands.end();
+    const auto last = operands.begin();
+    if (cur == last)
+        return nullptr;
+
+    //MORE: could support (,)(a,b,c,d) as an expression with many children.  I suspect else would need changing.
+    //Walk the list in reverse to create a tree of the form (a,(b,(c,d)))
+    IHqlExpression * result = *--cur;
+    while (cur != last)
+    {
+        --cur;
+        result = createComma(*cur, result);
+    }
+    return result;
 }
 
 
@@ -13910,7 +13788,7 @@ static IHqlExpression * doAttachWorkflowOwn(IHqlExpression * value, IHqlExpressi
         break;
     }
 #endif
-    return createValueF(no_colon, type.getClear(), value, LINK(workflow), NULL);
+    return createValue(no_colon, type.getClear(), { value, LINK(workflow) }, true);
 }
 
 
@@ -14529,11 +14407,11 @@ public:
 };
 
 static TransformTrackingInfo transformExtraState[NUM_PARALLEL_TRANSFORMS+1];
-static bool isActiveMask[NUM_PARALLEL_TRANSFORMS+1];
 
 #if NUM_PARALLEL_TRANSFORMS==1
 const unsigned threadActiveExtraIndex=1;
 #else
+static bool isActiveMask[NUM_PARALLEL_TRANSFORMS+1];
 #ifdef _WIN32
 __declspec(thread) unsigned threadActiveExtraIndex;
 #else
@@ -14930,7 +14808,9 @@ public:
     }
 };
 
-static bool removeVirtualAttributes(HqlExprArray & fields, IHqlExpression * cur, HqlMapTransformer & transformer)
+// MORE - does not seem to be called?
+
+bool removeVirtualAttributes(HqlExprArray & fields, IHqlExpression * cur, HqlMapTransformer & transformer)
 {
     switch (cur->getOperator())
     {
@@ -15489,22 +15369,6 @@ void unwindAttributes(HqlExprArray & children, const IHqlExpression * expr)
             children.append(*LINK(child));
         }
     }
-}
-
-
-void unwindList(HqlExprArray &dst, IHqlExpression * expr, node_operator op)
-{
-    while (expr->getOperator() == op)
-    {
-        unsigned _max = expr->numChildren();
-        if (_max == 0)
-            return;
-        unsigned max = _max-1;
-        for (unsigned i=0; i < max; i++)
-            unwindList(dst, expr->queryChild(i), op);
-        expr = expr->queryChild(max);
-    }
-    dst.append(*LINK(expr));
 }
 
 
@@ -16238,7 +16102,7 @@ IHqlExpression * createSelector(node_operator op, IHqlExpression * ds, IHqlExpre
     case no_activetable:
         return LINK(cachedActiveTableExpr);
     default:
-        return createValue(op);
+        return createValue(op, makeNullType());
     }
 }
 

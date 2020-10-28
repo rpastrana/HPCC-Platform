@@ -147,6 +147,25 @@ add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hqllex.cpp
     DEPENDS hqllex.l
 )
 
+if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG)
+  SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wno-switch -Wno-unused-parameter -Werror -Wno-error=delete-non-virtual-dtor")
+
+  if (CMAKE_COMPILER_IS_GNUCC AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS "7.0.0")
+    SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wimplicit-fallthrough=3")
+    #gcc incorrectly thinks that a function that never returns can fall through
+    set_source_files_properties (hqlfilter.cpp PROPERTIES COMPILE_FLAGS " -Wimplicit-fallthrough=0")
+  endif()
+
+  #Compiler complains about a memcpy of a structure that contains a union, and copy if uninitialised enum
+  if (CMAKE_COMPILER_IS_GNUCC AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS "8.0.0")
+    set_source_files_properties (hqlgram.cpp PROPERTIES COMPILE_FLAGS " -Wno-class-memaccess -fno-sanitize=undefined")
+    set_source_files_properties (hqllex.cpp PROPERTIES COMPILE_FLAGS " -Wno-class-memaccess -Wno-sign-compare")
+  endif()
+
+  #Compiler complains about an unused function yyunput, and make sure that any warnings are not reported as errors
+  set_source_files_properties (hqllex.cpp PROPERTIES COMPILE_FLAGS " -Wno-unused-function -Wno-error")
+endif()
+
 if (WIN32)
     set_source_files_properties (hqlgram.cpp PROPERTIES COMPILE_FLAGS "/Od")
 endif()

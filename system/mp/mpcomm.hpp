@@ -54,7 +54,7 @@ interface ICommunicator: extends IInterface
     virtual void flush  (mptag_t tag) = 0;    // flushes pending buffers
 
     virtual bool verifyConnection(rank_t rank, unsigned timeout=1000*60*5) = 0; // verifies connected to rank
-    virtual bool verifyAll(bool duplex=false, unsigned timeout=1000*60*30) = 0;
+    virtual bool verifyAll(bool duplex=false, unsigned timeout=1000*60*30, unsigned perConnectionTimeout=0) = 0;
     virtual void disconnect(INode *node) = 0;
     virtual void barrier() = 0;
     virtual const SocketEndpoint &queryChannelPeerEndpoint(const SocketEndpoint &sender) const = 0;
@@ -100,15 +100,15 @@ interface IMPServer : extends IInterface
     virtual void stop() = 0;
     virtual INode *queryMyNode() = 0;
     virtual void setOpt(MPServerOpts opt, const char *value) = 0;
-    virtual void installWhiteListCallback(IWhiteListHandler *whiteListCallback) = 0;
-    virtual IWhiteListHandler *queryWhiteListCallback() const = 0;
+    virtual void installAllowListCallback(IAllowListHandler *allowListCallback) = 0;
+    virtual IAllowListHandler *queryAllowListCallback() const = 0;
 };
 
-extern mp_decl void startMPServer(unsigned port, bool paused=false);
-extern mp_decl void startMPServer(unsigned __int64 role, unsigned port, bool paused=false);
+extern mp_decl void startMPServer(unsigned port, bool paused=false, bool listen=false);
+extern mp_decl void startMPServer(unsigned __int64 role, unsigned port, bool paused=false, bool listen=false);
 extern mp_decl void stopMPServer();
 extern mp_decl IMPServer *getMPServer();
-extern mp_decl IMPServer *startNewMPServer(unsigned port);
+extern mp_decl IMPServer *startNewMPServer(unsigned port, bool listen=false);
 
 interface IConnectionMonitor: extends IInterface
 {

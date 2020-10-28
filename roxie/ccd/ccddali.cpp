@@ -17,7 +17,7 @@
 
 #include "jlib.hpp"
 #include "workunit.hpp"
-#include "dalienv.hpp"
+#include "environment.hpp"
 #include "daclient.hpp"
 #include "dautils.hpp"
 #include "dllserver.hpp"
@@ -35,17 +35,17 @@
 
 const char *roxieStateName = "RoxieLocalState.xml";
 
-class CDaliPackageWatcher : public CInterface, implements ISDSSubscription, implements ISDSNodeSubscription, implements IDaliPackageWatcher
+class CDaliPackageWatcher : public CInterface, implements ISafeSDSSubscription, implements ISDSNodeSubscription, implements IDaliPackageWatcher
 {
     SubscriptionId change;
-    ISDSSubscription *notifier;
+    ISafeSDSSubscription *notifier;
     StringAttr id;
     StringAttr xpath;
     mutable CriticalSection crit;
     bool isExact;
 public:
     IMPLEMENT_IINTERFACE;
-    CDaliPackageWatcher(const char *_id, const char *_xpath, ISDSSubscription *_notifier)
+    CDaliPackageWatcher(const char *_id, const char *_xpath, ISafeSDSSubscription *_notifier)
       : change(0), id(_id), xpath(_xpath), isExact(false)
     {
         notifier = _notifier;
@@ -55,6 +55,7 @@ public:
         if (change)
             unsubscribe();
     }
+    virtual ISafeSDSSubscription *linkIfAlive() override { return isAliveAndLink() ? this : nullptr; }
     virtual void subscribe(bool exact)
     {
         CriticalBlock b(crit);
@@ -125,12 +126,12 @@ public:
     virtual void notify(SubscriptionId subid, const char *daliXpath, SDSNotifyFlags flags, unsigned valueLen, const void *valueData)
     {
         Linked<CDaliPackageWatcher> me = this;  // Ensure that I am not released by the notify call (which would then access freed memory to release the critsec)
-        Linked<ISDSSubscription> myNotifier;
+        Linked<ISafeSDSSubscription> myNotifier;
         {
             CriticalBlock b(crit);
             if (traceLevel > 5)
                 DBGLOG("Notification on %s (%s), %p", xpath.get(), daliXpath ? daliXpath : "", this);
-            myNotifier.set(notifier);
+            myNotifier.setown(notifier ? notifier->linkIfAlive() : nullptr);
             // allow crit to be released, allowing this to be unsubscribed, to avoid deadlocking when other threads via notify call unsubscribe
         }
         if (myNotifier)
@@ -241,17 +242,20 @@ private:
 
     static void initCache()
     {
-        IPropertyTree *tree = createPTree("Roxie", ipt_lowmem);
-        tree->addPropTree("QuerySets");
-        tree->addPropTree("PackageSets");
-        tree->addPropTree("PackageMaps");
-        tree->addPropTree("Files");
-        cache.setown(tree);
+        if (!oneShotRoxie)
+        {
+            IPropertyTree *tree = createPTree("Roxie", ipt_lowmem);
+            tree->addPropTree("QuerySets");
+            tree->addPropTree("PackageSets");
+            tree->addPropTree("PackageMaps");
+            tree->addPropTree("Files");
+            cache.setown(tree);
+        }
     }
 
     static void loadCache()
     {
-        if (!cache)
+        if (!cache && !oneShotRoxie)
         {
             StringBuffer cacheFileName(queryDirectory);
             cacheFileName.append(roxieStateName);
@@ -264,6 +268,8 @@ private:
 
     static IPropertyTree *readCache(const char *xpath)
     {
+        if (oneShotRoxie)
+            return nullptr;
         CriticalBlock b(cacheCrit);
         loadCache();
         return cache->getPropTree(xpath);
@@ -271,12 +277,15 @@ private:
 
     static void writeCache(const char *foundLoc, const char *newLoc, IPropertyTree *val)
     {
-        CriticalBlock b(cacheCrit);
-        if (!cache)
-            initCache();
-        cache->removeProp(foundLoc);
-        if (val)
-            cache->addPropTree(newLoc, LINK(val));
+        if (!oneShotRoxie)
+        {
+            CriticalBlock b(cacheCrit);
+            if (!cache)
+                initCache();
+            cache->removeProp(foundLoc);
+            if (val)
+                cache->addPropTree(newLoc, LINK(val));
+        }
     }
 
     IPropertyTree *loadDaliTree(const char *path, const char *id)
@@ -306,6 +315,8 @@ private:
                 daliHelper->disconnect();
             }
         }
+        if (oneShotRoxie)
+            throw makeStringException(-1, "Error - dali not connected");
         DBGLOG("LoadDaliTree(%s) - not connected - read from cache", xpath.str());
         localTree.setown(readCache(xpath));
         return localTree.getClear();
@@ -577,7 +588,7 @@ public:
 
     virtual void commitCache()
     {
-        if (isConnected && cache)
+        if (isConnected && cache && !oneShotRoxie)
         {
             CriticalBlock b(cacheCrit);
             if (!recursiveCreateDirectory(queryDirectory))
@@ -605,6 +616,8 @@ public:
         if (!w)
             return NULL;
         w->setAgentSession(myProcessSession());
+        if(topology->getPropBool("@resetWorkflow", false))
+            w->resetWorkflow();
         if (source)
         {
             StringBuffer wuXML;
@@ -616,6 +629,8 @@ public:
             else
                 throw MakeStringException(ROXIE_DALI_ERROR, "Failed to locate dll workunit info");
         }
+        if (topology->hasProp("@workunit"))    // This really only works properly in one-shot mode
+            userdesc.set(w->queryUserDescriptor());
         w->commit();
         w.clear();
         return wuFactory->openWorkUnit(wuid);
@@ -681,6 +696,7 @@ public:
                 waitToConnect -= delay;
             }
         }
+        initializeStorageGroups(daliHelper->connected());
         return daliHelper;
     }
 
@@ -696,7 +712,7 @@ public:
         subscription->unsubscribe();
     }
 
-    IDaliPackageWatcher *getSubscription(const char *id, const char *xpath, ISDSSubscription *notifier, bool exact)
+    IDaliPackageWatcher *getSubscription(const char *id, const char *xpath, ISafeSDSSubscription *notifier, bool exact)
     {
         IDaliPackageWatcher *watcher = new CDaliPackageWatcher(id, xpath, notifier);
         watchers.append(*LINK(watcher));
@@ -705,25 +721,25 @@ public:
         return watcher;
     }
 
-    virtual IDaliPackageWatcher *getQuerySetSubscription(const char *id, ISDSSubscription *notifier)
+    virtual IDaliPackageWatcher *getQuerySetSubscription(const char *id, ISafeSDSSubscription *notifier)
     {
         StringBuffer xpath;
         return getSubscription(id, getQuerySetPath(xpath, id), notifier, false);
     }
 
-    virtual IDaliPackageWatcher *getPackageSetsSubscription(ISDSSubscription *notifier)
+    virtual IDaliPackageWatcher *getPackageSetsSubscription(ISafeSDSSubscription *notifier)
     {
         StringBuffer xpath;
         return getSubscription("PackageSets", "PackageSets", notifier, false);
     }
 
-    virtual IDaliPackageWatcher *getPackageMapsSubscription(ISDSSubscription *notifier)
+    virtual IDaliPackageWatcher *getPackageMapsSubscription(ISafeSDSSubscription *notifier)
     {
         StringBuffer xpath;
         return getSubscription("PackageMaps", "PackageMaps", notifier, false);
     }
 
-    virtual IDaliPackageWatcher *getSuperFileSubscription(const char *lfn, ISDSSubscription *notifier)
+    virtual IDaliPackageWatcher *getSuperFileSubscription(const char *lfn, ISafeSDSSubscription *notifier)
     {
         StringBuffer xpathBuf;
         const char *xpath = getSuperFilePath(xpathBuf, lfn);
@@ -755,9 +771,8 @@ public:
                         throw MakeStringException(ROXIE_DALI_ERROR, "Could not instantiate dali IGroup");
 
                     // Initialize client process
-                    if (!initClientProcess(serverGroup, DCR_RoxyMaster, 0, NULL, NULL, timeout))
+                    if (!initClientProcess(serverGroup, DCR_Roxie, 0, NULL, NULL, timeout))
                         throw MakeStringException(ROXIE_DALI_ERROR, "Could not initialize dali client");
-                    setPasswordsFromSDS();
                     serverStatus = new CSDSServerStatus("RoxieServer");
                     serverStatus->queryProperties()->setProp("@cluster", roxieName.str());
                     serverStatus->commitProperties();

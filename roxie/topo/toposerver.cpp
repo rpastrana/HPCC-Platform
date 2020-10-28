@@ -49,11 +49,15 @@ static void topo_server_usage()
     printf("\ttoposerver [options below]\n");
 
     printf("\nOptions:\n");
+#ifndef _CONTAINERIZED
     printf("  --daemon|-d <instanceName>: Run daemon as instance\n");
+#endif
     printf("  --port=[integer]          : Network port (default %d)\n", TOPO_SERVER_PORT);
-    printf("  --tracelevel=[integer]    : Amount of information to dump on logs (default 1)\n");
+    printf("  --traceLevel=[integer]    : Amount of information to dump on logs (default 1)\n");
+#ifndef _CONTAINERIZED
     printf("  --stdlog=[boolean]        : Standard log format (based on tracelevel)\n");
     printf("  --logdir=[filename]       : Outputs to logfile, rather than stdout\n");
+#endif
     printf("  --help|-h                 : This message\n");
     printf("\n");
 }
@@ -269,6 +273,15 @@ void doServer(ISocket *socket)
     pinger.join();
 }
 
+static constexpr const char * defaultYaml = R"!!(
+  version: "1.0"
+  roxie:
+    logdir: ""
+    topoport: 9004
+    stdlog: true
+    traceLevel: 1
+)!!";
+
 int main(int argc, const char *argv[])
 {
     EnableSEHtoExceptionMapping();
@@ -289,7 +302,6 @@ int main(int argc, const char *argv[])
     removeSentinelFile(sentinelFile);
     try
     {
-        Owned<IProperties> globals = createProperties(true);
         for (unsigned i=0; i<(unsigned)argc; i++)
         {
             if (stricmp(argv[i], "--help")==0 ||
@@ -298,52 +310,27 @@ int main(int argc, const char *argv[])
                 topo_server_usage();
                 return EXIT_SUCCESS;
             }
+#ifndef _CONTAINERIZED
             else if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
                 if (daemon(1,0) || write_pidfile(argv[++i])) {
                     perror("Failed to daemonize");
                     return EXIT_FAILURE;
                 }
             }
-            else
-                globals->loadProp(argv[i], true);  // We ignore unrecognized options for now
+#endif
         }
 
         // locate settings xml file in runtime dir
-        char currentDirectory[_MAX_DIR];
-        if (!getcwd(currentDirectory, sizeof(currentDirectory)))
-        {
-            perror("getcwd failure");
-            return EXIT_FAILURE;
-        }
-        topologyFile.set(currentDirectory);
-        addNonEmptyPathSepChar(topologyFile);
-        topologyFile.append(PATHSEPCHAR).append("toposerver.xml");
-        IPropertyTree *topology;
-        if (checkFileExists(topologyFile.str()))
-            topology = createPTreeFromXMLFile(topologyFile.str(), ipt_lowmem);
-        else
-            topology = createPTreeFromXMLString(
-                "<TopoServerProcess port='9004' traceLevel='1'>"
-                "</TopoServerProcess>"
-                , ipt_lowmem
-                );
-        if (globals->hasProp("--traceLevel"))
-            topology->setProp("@traceLevel", globals->queryProp("--traceLevel"));
-        if (globals->hasProp("--port"))
-            topology->setProp("@port", globals->queryProp("--port"));
-        if (globals->hasProp("--stdlog"))
-            topology->setProp("@stdlog", globals->queryProp("--stdlog"));
-        if (globals->hasProp("--logdir"))
-            topology->setProp("@logdir", globals->queryProp("--logdir"));
-
+        Owned<IPropertyTree> topology = loadConfiguration(defaultYaml, argv, "roxie", "ROXIE", nullptr, nullptr);
         traceLevel = topology->getPropInt("@traceLevel", 1);
-        topoPort = topology->getPropInt("@port", TOPO_SERVER_PORT);
+        topoPort = topology->getPropInt("@topoport", TOPO_SERVER_PORT);
+#ifndef _CONTAINERIZED
         if (topology->getPropBool("@stdlog", traceLevel != 0))
             queryStderrLogMsgHandler()->setMessageFields(MSGFIELD_time | MSGFIELD_milliTime | MSGFIELD_thread | MSGFIELD_prefix);
         else
             removeLog();
         const char *logdir = topology->queryProp("@logdir");
-        if (logdir)
+        if (logdir && *logdir)
         {
             Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(logdir, "toposerver");
             lf->setMaxDetail(TopDetail);
@@ -351,6 +338,9 @@ int main(int argc, const char *argv[])
             queryLogMsgManager()->enterQueueingMode();
             queryLogMsgManager()->setQueueDroppingLimit(512, 32);
         }
+#else
+        setupContainerizedLogMsgHandler();
+#endif
         Owned<ISocket> socket = ISocket::create(topoPort);
         if (traceLevel)
             DBGLOG("Topology server starting");

@@ -27,6 +27,9 @@
 #include "thmem.hpp"
 #include "rtlformat.hpp"
 #include "thorsoapcall.hpp"
+#include "thorport.hpp"
+#include "roxiehelper.hpp"
+
 
 
 PointerArray createFuncs;
@@ -319,7 +322,47 @@ CGraphElementBase *createGraphElement(IPropertyTree &node, CGraphBase &owner, CG
     return container;
 }
 
-CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) : owner(&_owner)
+///////////////////////////////////
+CActivityCodeContext::CActivityCodeContext()
+{
+}
+
+IThorChildGraph * CActivityCodeContext::resolveChildQuery(__int64 gid, IHThorArg * colocal)
+{
+    return parent->getChildGraph((graph_id)gid);
+}
+
+IEclGraphResults * CActivityCodeContext::resolveLocalQuery(__int64 gid)
+{
+    if (gid == containerGraph->queryGraphId())
+        return containerGraph;
+    else
+        return ctx->resolveLocalQuery(gid);
+}
+
+unsigned CActivityCodeContext::getGraphLoopCounter() const
+{
+    return containerGraph->queryLoopCounter();           // only called if value is valid
+}
+
+ISectionTimer * CActivityCodeContext::registerTimer(unsigned activityId, const char * name)
+{
+    if (!stats) // if master context and local CQ, there is no activity instance, and hence no setStats call
+        return queryNullSectionTimer();
+    CriticalBlock b(contextCrit);
+    auto it = functionTimers.find(name);
+    if (it != functionTimers.end())
+        return it->second;
+
+    ISectionTimer *timer = ThorSectionTimer::createTimer(*stats, name);    
+    functionTimers.insert({name, timer}); // owns
+    return timer;
+}
+
+///////////////////////////////////
+
+CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml, CGraphBase *_resultsGraph)
+    : owner(&_owner), resultsGraph(_resultsGraph)
 {
     xgmml.setown(createPTreeFromIPT(&_xgmml));
     eclText.set(xgmml->queryProp("att[@name=\"ecl\"]/@value"));
@@ -330,7 +373,6 @@ CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) 
     isLocalData = xgmml->getPropBool("att[@name=\"local\"]/@value", false); // local execute + local data access only
     isLocal = isLocalData || coLocal; // local execute
     isGrouped = xgmml->getPropBool("att[@name=\"grouped\"]/@value", false);
-    resultsGraph = NULL;
     ownerId = xgmml->getPropInt("att[@name=\"_parentActivity\"]/@value", 0);
     onCreateCalled = prepared = haveCreateCtx = nullAct = false;
     onlyUpdateIfChanged = xgmml->getPropBool("att[@name=\"_updateIfChanged\"]/@value", false);
@@ -348,6 +390,11 @@ CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) 
     if (0 == maxCores)
         maxCores = queryJob().queryMaxDefaultActivityCores();
     baseHelper.setown(helperFactory());
+
+    CGraphBase *graphContainer = resultsGraph;
+    if (!graphContainer)
+        graphContainer = owner;
+    activityCodeContext.setContext(owner, graphContainer, &queryJobChannel().queryCodeContext());
 }
 
 CGraphElementBase::~CGraphElementBase()
@@ -497,7 +544,7 @@ void CGraphElementBase::addInput(unsigned input, CGraphElementBase *inputAct, un
 
 void CGraphElementBase::connectInput(unsigned input, CGraphElementBase *inputAct, unsigned inputOutIdx)
 {
-    ActPrintLog("CONNECTING (id=%" ACTPF "d, idx=%d) to (id=%" ACTPF "d, idx=%d)", inputAct->queryId(), inputOutIdx, queryId(), input);
+    ::ActPrintLog(this, thorDetailedLogLevel, "CONNECTING (id=%" ACTPF "d, idx=%d) to (id=%" ACTPF "d, idx=%d)", inputAct->queryId(), inputOutIdx, queryId(), input);
     while (connectedInputs.ordinality()<=input) connectedInputs.append(NULL);
     connectedInputs.replace(new COwningSimpleIOConnection(LINK(inputAct), inputOutIdx), input);
     while (inputAct->connectedOutputs.ordinality()<=inputOutIdx) inputAct->connectedOutputs.append(NULL);
@@ -774,13 +821,14 @@ void CGraphElementBase::createActivity()
     if (activity)
         return;
     activity.setown(factory());
+    activityCodeContext.setStats(&activity->queryStats());
     if (isSink())
         owner->addActiveSink(*this);
 }
 
-ICodeContext *CGraphElementBase::queryCodeContext()
+ICodeContextExt *CGraphElementBase::queryCodeContext()
 {
-    return queryOwner().queryCodeContext();
+    return &activityCodeContext;
 }
 
 /////
@@ -1135,12 +1183,12 @@ void traceMemUsage()
 {
     StringBuffer memStatsStr;
     roxiemem::memstats(memStatsStr);
-    PROGLOG("Roxiemem stats: %s", memStatsStr.str());
+    LOG(MCthorDetailedDebugInfo, thorJob, "Roxiemem stats: %s", memStatsStr.str());
     memsize_t heapUsage = getMapInfo("heap");
     if (heapUsage) // if 0, assumed to be unavailable
     {
         memsize_t rmtotal = roxiemem::getTotalMemoryLimit();
-        PROGLOG("Heap usage (excluding Roxiemem) : %" I64F "d bytes", (unsigned __int64)(heapUsage-rmtotal));
+        LOG(MCthorDetailedDebugInfo, thorJob, "Heap usage (excluding Roxiemem) : %" I64F "d bytes", (unsigned __int64)(heapUsage-rmtotal));
     }
 }
 
@@ -1324,9 +1372,12 @@ void CGraphBase::executeSubGraph(size32_t parentExtractSz, const byte *parentExt
     {
         if (!queryOwner())
         {
-            StringBuffer s;
-            toXML(&queryXGMML(), s, 2);
-            GraphPrintLog("Running graph [%s] : %s", isGlobal()?"global":"local", s.str());
+            if (!REJECTLOG(MCthorDetailedDebugInfo))
+            {
+                StringBuffer s;
+                toXML(&queryXGMML(), s, 2);
+                LOG(MCthorDetailedDebugInfo, thorJob, "Running graph [%s] : %s", isGlobal()?"global":"local", s.str());
+            }
         }
         if (localResults)
             localResults->clear();
@@ -1340,9 +1391,12 @@ void CGraphBase::executeSubGraph(size32_t parentExtractSz, const byte *parentExt
     if (!queryOwner())
     {
         GraphPrintLog("Graph Done");
-        StringBuffer memStr;
-        getSystemTraceInfo(memStr, PerfMonStandard | PerfMonExtended);
-        GraphPrintLog("%s", memStr.str());
+        if (!REJECTLOG(MCthorDetailedDebugInfo))
+        {
+            StringBuffer memStr;
+            getSystemTraceInfo(memStr, PerfMonStandard | PerfMonExtended);
+            ::GraphPrintLog(this, thorDetailedLogLevel, "%s", memStr.str());
+        }
     }
     if (exception)
         throw exception.getClear();
@@ -1385,6 +1439,7 @@ void CGraphBase::doExecute(size32_t parentExtractSz, const byte *parentExtract, 
         throw MakeGraphException(this, 0, "subgraph aborted");
     }
     GraphPrintLog("Processing graph");
+    setParentCtx(parentExtractSz, parentExtract);
     Owned<IException> exception;
     try
     {
@@ -1727,11 +1782,20 @@ void CGraphBase::abort(IException *e)
     if (aborted)
         return;
 
+    GraphPrintLog("Aborted");
+
     {
         CriticalBlock cb(crit);
 
         abortException.set(e);
         aborted = true;
+
+        if (!job.getOptBool("coreOnAbort", false))
+        {
+            // prevent dtors throwing ... __verbose_terminate_handler()->abort()->raise()->core files
+            setProcessAborted(true);
+        }
+
         graphCancelHandler.cancel(0);
 
         if (0 == containers.count())
@@ -1877,12 +1941,6 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
     parentActivityId = node->getPropInt("att[@name=\"_parentActivity\"]/@value", 0);
 
     graphResultsContainer = resultsGraph;
-    CGraphBase *graphContainer = this;
-    if (resultsGraph)
-        graphContainer = resultsGraph; // JCSMORE is this right?
-
-    graphCodeContext.setContext(this, graphContainer, (ICodeContextExt *)&jobChannel.queryCodeContext());
-
 
     unsigned numResults = xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0);
     if (numResults)
@@ -2247,7 +2305,7 @@ void CGraphTempHandler::deregisterFile(const char *name, bool kept)
         try
         {
             if (!removeTemp(name))
-                LOG(MCwarning, unknownJob, "Failed to delete tmp file : %s (not found)", name);
+                LOG(MCwarning, thorJob, "Failed to delete tmp file : %s (not found)", name);
         }
         catch (IException *e) { StringBuffer s("Failed to delete tmp file : "); FLLOG(MCwarning, thorJob, e, s.append(name).str()); }
     }
@@ -2794,10 +2852,11 @@ void CJobBase::endJob()
     {
         jobChannels.kill(); // avoiding circular references. Kill before other CJobBase components are destroyed that channels reference.
         ::Release(userDesc);
-        callThreadTerminationHooks(); // must call any installed thread termination functions, before unloading plugins
+        callThreadTerminationHooks(true); // must call any installed thread termination functions, before unloading plugins
         ::Release(pluginMap);
 
-        traceMemUsage();
+        if (!REJECTLOG(MCthorDetailedDebugInfo))
+            traceMemUsage();
 
         if (numChannels > 1) // if only 1 - then channel allocator is same as sharedAllocator, leaks will be reported by the single channel
             checkAndReportLeaks(sharedAllocator->queryRowManager());
@@ -2929,6 +2988,8 @@ CJobChannel::CJobChannel(CJobBase &_job, IMPServer *_mpServer, unsigned _channel
     jobComm.setown(mpServer->createCommunicator(&job.queryJobGroup()));
     myrank = job.queryJobGroup().rank(queryMyNode());
     graphExecutor.setown(new CGraphExecutor(*this));
+    myBasePort = mpServer->queryMyNode()->endpoint().port;
+    portMap.setown(createBitSet());
 }
 
 CJobChannel::~CJobChannel()
@@ -2948,7 +3009,7 @@ void CJobChannel::wait()
         graphExecutor->wait();
 }
 
-ICodeContext &CJobChannel::queryCodeContext() const
+ICodeContextExt &CJobChannel::queryCodeContext() const
 {
     return *codeCtx;
 }
@@ -2964,7 +3025,7 @@ mptag_t CJobChannel::deserializeMPTag(MemoryBuffer &mb)
     deserializeMPtag(mb, tag);
     if (TAG_NULL != tag)
     {
-        PROGLOG("deserializeMPTag: tag = %d", (int)tag);
+        LOG(MCthorDetailedDebugInfo, thorJob, "deserializeMPTag: tag = %d", (int)tag);
         jobComm->flush(tag);
     }
     return tag;
@@ -3000,8 +3061,11 @@ void CJobChannel::clean()
     cleaned = true;
     wait();
 
-    queryRowManager()->reportMemoryUsage(false);
-    PROGLOG("CJobBase resetting memory manager");
+    if (!REJECTLOG(MCthorDetailedDebugInfo))
+    {
+        queryRowManager()->reportMemoryUsage(false);
+        LOG(MCthorDetailedDebugInfo, thorJob, "CJobBase resetting memory manager");
+    }
 
     if (graphExecutor)
     {
@@ -3048,6 +3112,51 @@ IThorResult *CJobChannel::getOwnedResult(graph_id gid, activity_id ownerId, unsi
     return result.getClear();
 }
 
+unsigned short CJobChannel::allocPort(unsigned num)
+{
+    CriticalBlock block(portAllocCrit);
+    if (num==0)
+        num = 1;
+    unsigned sp=0;
+    unsigned p;
+    for (;;)
+    {
+        p = portMap->scan(sp, false);
+        unsigned q;
+        for (q=p+1; q<p+num; q++)
+        {
+            if (portMap->test(q))
+                break;
+        }
+        if (q == p+num)
+        {
+            while (q != p)
+                portMap->set(--q);
+            break;
+        }
+        sp = p+1;
+    }
+
+    return (unsigned short)(p+queryMyBasePort());
+}
+
+void CJobChannel::freePort(unsigned short p, unsigned num)
+{
+    CriticalBlock block(portAllocCrit);
+    if (!p)
+        return;
+    if (num == 0)
+        num = 1;
+    while (num--) 
+        portMap->set(p-queryMyBasePort()+num, false);
+}
+
+void CJobChannel::reservePortKind(ThorPortKind kind)
+{
+    CriticalBlock block(portAllocCrit);
+    portMap->set(getPortOffset(kind), true);
+}
+
 void CJobChannel::abort(IException *e)
 {
     aborted = true;
@@ -3084,13 +3193,12 @@ IThorResource &queryThor()
 //
 //
 
-CActivityBase::CActivityBase(CGraphElementBase *_container) : container(*_container), timeActivities(_container->queryJob().queryTimeActivities())
+CActivityBase::CActivityBase(CGraphElementBase *_container, const StatisticsMapping &statsMapping)
+    : container(*_container), timeActivities(_container->queryJob().queryTimeActivities()), stats(statsMapping)
 {
     mpTag = TAG_NULL;
     abortSoon = receiving = cancelledReceive = initialized = reInit = false;
     baseHelper.set(container.queryHelper());
-    parentExtractSz = 0;
-    parentExtract = NULL;
 
     defaultRoxieMemHeapFlags = (roxiemem::RoxieHeapFlags)container.getOptInt("heapflags", defaultHeapFlags);
     if (container.queryJob().queryUsePackedAllocators())
@@ -3103,8 +3211,11 @@ CActivityBase::~CActivityBase()
 
 void CActivityBase::abort()
 {
-    if (!abortSoon) ActPrintLog("Abort condition set");
-    abortSoon = true;
+    if (!abortSoon)
+    {
+        ::ActPrintLog(this, thorDetailedLogLevel, "Abort condition set");
+        abortSoon = true;
+    }
 }
 
 void CActivityBase::kill()

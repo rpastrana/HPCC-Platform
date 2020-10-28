@@ -42,7 +42,7 @@ if(WSSQL_SERVICE)
         ${CMAKE_CURRENT_SOURCE_DIR}/ws_sqlService.cpp
         ${ESPSCM_GENERATED_DIR}/common_esp.cpp
         ${ESPSCM_GENERATED_DIR}/ws_sql_esp.cpp
-        ${ESPSCM_GENERATED_DIR}/ws_workunits_esp.cpp
+        ${ESPSCM_GENERATED_DIR}/ws_workunits_struct_esp.cpp
         ${ESPSCM_GENERATED_DIR}/ws_topology_esp.cpp
         ${HPCC_SOURCE_DIR}/esp/services/ws_ecl/ws_ecl_wuinfo.cpp
         ${HPCC_SOURCE_DIR}/esp/services/ws_workunits/ws_workunitsHelpers.cpp
@@ -82,6 +82,8 @@ if(WSSQL_SERVICE)
         ${HPCC_SOURCE_DIR}/system/mp
         ${HPCC_SOURCE_DIR}/dali/dfu
         ${HPCC_SOURCE_DIR}/dali/base/
+        ${HPCC_SOURCE_DIR}/dali/sasha
+        ${HPCC_SOURCE_DIR}/dali/ft
         ${HPCC_SOURCE_DIR}/common/workunit
         ${HPCC_SOURCE_DIR}/common/remote
         ${HPCC_SOURCE_DIR}/common/environment
@@ -93,6 +95,7 @@ if(WSSQL_SERVICE)
         ${libantlr3c_includes}
         ${ESPSCM_GENERATED_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/SQL2ECL
+        ${HPCC_SOURCE_DIR}/common/thorhelper
         )
 
     if (CMAKE_COMPILER_IS_CLANG)
@@ -104,6 +107,7 @@ if(WSSQL_SERVICE)
     add_dependencies(ws_sql espscm sql2ecl)
     target_link_libraries(
         ws_sql
+        ws_workunits
         ws_dfu
         jlib
         xmllib

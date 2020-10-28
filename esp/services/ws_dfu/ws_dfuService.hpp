@@ -25,6 +25,7 @@
 #include "dadfs.hpp"
 #include "environment.hpp"
 #include <atomic>
+#include "ws_dfuHelpers.hpp"
 
 class CThorNodeGroup: public CInterface
 {
@@ -108,6 +109,11 @@ public:
 
     virtual void getNavigationData(IEspContext &context, IPropertyTree & data)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+        {
+            CHttpSoapBinding::getNavigationData(context, data);
+            return;
+        }
     }
     virtual bool canDetachFromDali() override
     {
@@ -141,6 +147,11 @@ class CWsDfuEx : public CWsDfu
     static const unsigned defaultMaxFileAccessExpirySeconds=86400; // 24 hours
 
     void dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileName &lfn, SessionId clientSessionId, const char *requestId, unsigned expirySecs, bool returnTextResponse, unsigned lockTimeoutMs, IEspDFUFileAccessResponse &resp);
+    void clearFileProtections(IDistributedFile *df);
+    bool changeFileProtections(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp);
+    bool changeFileRestrictions(IEspContext &context, IEspDFUArrayActionRequest &req, IEspDFUArrayActionResponse &resp);
+    void addFileActionResult(const char* fileName, const char* nodeGroup, bool failed, const  char* msg,
+        IArrayOf<IEspDFUActionInfo>& actionResults);
 public:
     IMPLEMENT_IINTERFACE;
     virtual ~CWsDfuEx(){};
@@ -180,16 +191,11 @@ public:
     virtual bool onDFUFileCreate(IEspContext &context, IEspDFUFileCreateRequest &req, IEspDFUFileCreateResponse &resp);
 
 private:
-    const char* getPrefixFromLogicalName(const char* logicalName, StringBuffer& prefix);
-    bool addDFUQueryFilter(DFUQResultField *filters, unsigned short &count, MemoryBuffer &buff, const char* value, DFUQResultField name);
-    void appendDFUQueryFilter(const char *name, DFUQFilterType type, const char *value, StringBuffer& filterBuf);
-    void appendDFUQueryFilter(const char *name, DFUQFilterType type, const char *value, const char *valueHigh, StringBuffer& filterBuf);
     void setFileIterateFilter(unsigned maxFiles, StringBuffer &filterBuf);
     void setFileTypeFilter(const char* fileType, StringBuffer& filterBuf);
     void setFileNameFilter(const char* fname, const char* prefix, StringBuffer &buff);
     void setDFUQueryFilters(IEspDFUQueryRequest& req, StringBuffer& filterBuf);
     void setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sortBy, bool& descending, DFUQResultField* sortOrder);
-    bool addToLogicalFileList(IPropertyTree& file, const char* nodeGroup, double version, IArrayOf<IEspDFULogicalFile>& logicalFiles);
     void setDFUQueryResponse(IEspContext &context, unsigned totalFiles, StringBuffer& sortBy, bool descending, unsigned pageStart,
         unsigned pageSize, IEspDFUQueryRequest & req, IEspDFUQueryResponse & resp);
     void getLogicalFileAndDirectory(IEspContext &context, IUserDescriptor* udesc, const char *dirname,
@@ -238,6 +244,8 @@ private:
     void parseStringArray(const char *input, StringArray& strarray);
     int superfileAction(IEspContext &context, const char* action, const char* superfile, StringArray& subfiles,
         const char* beforeSubFile, bool existingSuperfile, bool autocreatesuper, bool deleteFile, bool removeSuperfile =  true);
+    void getFilePartsOnClusters(IEspContext &context, const char *clusterReq, StringArray &clusters, IDistributedFile *df,
+        IEspDFUFileDetail &fileDetails);
     bool getQueryFile(const char *logicalName, const char *querySet, const char *queryID, IEspDFUFileDetail &fileDetails);
     void queryFieldNames(IEspContext &context, const char *fileName, const char *cluster,
         unsigned __int64 fieldMask, StringArray &fieldNames);
@@ -246,6 +254,8 @@ private:
     void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &port, bool &secure, const char *fileName, std::vector<std::string> &groups);
     void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &retPort, bool &retSecure, const char *group);
     void exportRecordDefinitionBinaryType(const char *recordDefinition, MemoryBuffer &layoutBin);
+    void appendTimeString(const char *in, StringBuffer &out);
+    void setTimeRangeFilter(const char *from, const char *to, DFUQFilterField filterID, StringBuffer &filterBuf);
 
     bool attachServiceToDali() override
     {

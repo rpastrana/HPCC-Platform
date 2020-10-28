@@ -158,7 +158,7 @@ static const unsigned defaultFetchLookupProcessBatchLimit = 10000;
 class CJoinGroup;
 
 
-enum AllocatorTypes { AT_Transform=1, AT_LookupWithJG, AT_LookupWithJGRef, AT_JoinFields, AT_FetchRequest, AT_FetchResponse, AT_JoinGroup, AT_JoinGroupRhsRows, AT_FetchDisk, AT_LookupResponse };
+enum AllocatorTypes { AT_Transform=1, AT_LookupWithJG, AT_JoinFields, AT_FetchRequest, AT_FetchResponse, AT_JoinGroup, AT_JoinGroupRhsRows, AT_FetchDisk, AT_LookupResponse };
 
 
 struct Row
@@ -695,9 +695,7 @@ class CJoinGroupList
     CJoinGroup *head = nullptr, *tail = nullptr;
     unsigned count = 0;
 
-public:
-    CJoinGroupList() { }
-    ~CJoinGroupList()
+    void removeAll()
     {
         while (head)
         {
@@ -705,6 +703,17 @@ public:
             head->Release();
             head = next;
         }
+    }
+public:
+    CJoinGroupList() { }
+    ~CJoinGroupList()
+    {
+        removeAll();
+    }
+    void clear()
+    {
+        removeAll();
+        head = tail = nullptr;
     }
     inline unsigned queryCount() const { return count; }
     inline CJoinGroup *queryHead() const { return head; }
@@ -760,8 +769,6 @@ public:
         ++count;
     }
 };
-
-enum AdditionStats { AS_Seeks, AS_Scans, AS_Accepted, AS_PostFiltered, AS_PreFiltered,  AS_DiskSeeks, AS_DiskAccepted, AS_DiskRejected };
 
 struct PartIO
 {
@@ -1008,7 +1015,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             for (auto &partCopy : parts)
             {
                 unsigned partNo = partCopy & partMask;
-                unsigned copy = partCopy >> 24;
+                unsigned copy = partCopy >> partBits;
                 IPartDescriptor &pd = allParts->item(partNo);
                 RemoteFilename rfn;
                 pd.getFilename(copy, rfn);
@@ -1137,8 +1144,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         virtual void end()
         {
+#ifdef _DEBUG
             VStringBuffer log("processed: %" I64F "u", total);
             trace(log);
+#endif
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) = 0;
     // IThreaded
@@ -1215,7 +1224,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 limiter->dec(); // unblocks any requests to start lookup threads
         }
     };
-    static const unsigned partMask = 0x00ffffff;
 
     class CKeyLookupLocalBase : public CLookupHandler
     {
@@ -1250,6 +1258,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
+            unsigned __int64 startSeeks = keyManager->querySeeks();
+            unsigned __int64 startScans = keyManager->queryScans();
+            unsigned __int64 startWildSeeks = keyManager->queryWildSeeks();
+            auto onScopeExitFunc = [&]()
+            {
+                activity.stats.sumStatistic(StNumIndexSeeks, keyManager->querySeeks()-startSeeks);
+                activity.stats.sumStatistic(StNumIndexScans, keyManager->queryScans()-startScans);
+                activity.stats.sumStatistic(StNumIndexWildSeeks, keyManager->queryWildSeeks()-startWildSeeks);
+            };
+            COnScopeExit scoped(onScopeExitFunc);
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
                 OwnedConstThorRow row = processing.getClear(r);
@@ -1336,7 +1354,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
-            unsigned copy = partCopy >> 24;
+            unsigned copy = partCopy >> partBits;
             IKeyManager *&keyManager = keyManagers[selected];
             if (!keyManager) // delayed until actually needed
             {
@@ -1366,7 +1384,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 for (auto &partCopy: parts)
                 {
                     unsigned partNo = partCopy & partMask;
-                    unsigned copy = partCopy >> 24;
+                    unsigned copy = partCopy >> partBits;
                     Owned<IKeyIndex> keyIndex = activity.createPartKeyIndex(partNo, copy, false);
                     partKeySet->addIndex(keyIndex.getClear());
                 }
@@ -1476,7 +1494,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             {
                 IPartDescriptor &part = activity.allIndexParts.item(partNo);
                 unsigned crc;
-                part.getCrc(crc);
+                if (!part.getCrc(crc))
+                    crc = 0;
                 RemoteFilename rfn;
                 part.getFilename(copy, rfn);
                 StringBuffer fname;
@@ -1486,6 +1505,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 DelayedSizeMarker sizeMark(msg);
                 activity.queryHelper()->serializeCreateContext(msg);
                 sizeMark.write();
+
+                size32_t parentExtractSz;
+                const byte *parentExtract = activity.queryGraph().queryParentExtract(parentExtractSz);
+                msg.append(parentExtractSz);
+                msg.append(parentExtractSz, parentExtract);
+                msg.append(activity.startCtxMb.length());
+                msg.append(activity.startCtxMb.length(), activity.startCtxMb.toByteArray());
 
                 msg.append(activity.messageCompression);
                 // NB: potentially translation per part could be different if dealing with superkeys
@@ -1546,7 +1572,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
-            unsigned copy = partCopy >> 24;
+            unsigned copy = partCopy >> partBits;
 
             unsigned numRows = processing.ordinality();
 
@@ -1654,6 +1680,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     }
                     joinGroup->decPending(); // Every queued lookup row triggered an inc., this is the corresponding dec.
                 }
+                unsigned __int64 seeks, scans, wildseeks;
+                mb.read(seeks).read(scans).read(wildseeks);
+                activity.stats.sumStatistic(StNumIndexSeeks, seeks);
+                activity.stats.sumStatistic(StNumIndexScans, scans);
+                activity.stats.sumStatistic(StNumIndexWildSeeks, wildseeks);
                 if (received == numRows)
                     break;
             }
@@ -1701,10 +1732,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
-            unsigned copy = partCopy >> 24;
+            unsigned copy = partCopy >> partBits;
 
-            ScopedAtomic<unsigned __int64> diskRejected(activity.statsArr[AS_DiskRejected]);
-            ScopedAtomic<unsigned __int64> diskSeeks(activity.statsArr[AS_DiskSeeks]);
+            unsigned __int64 diskAccepted = 0;
+            unsigned __int64 diskRejected = 0;
+            unsigned __int64 diskSeeks = 0;
+            auto onScopeExitFunc = [&]()
+            {
+                activity.stats.mergeStatistic(StNumDiskAccepted, diskAccepted);
+                activity.stats.mergeStatistic(StNumDiskRejected, diskRejected);
+                activity.stats.mergeStatistic(StNumDiskSeeks, diskSeeks);
+            };
+            COnScopeExit scoped(onScopeExitFunc);
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
                 OwnedConstThorRow row = processing.getClear(r);
@@ -1741,7 +1780,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     // If !preserverOrder, right rows added to single array in jg, so pass 0
                     joinGroup->addRightMatchCompletePending(activity.preserveOrder ? indexPartNo : 0, sequence, joinFieldsSz, fetchRow);
 
-                    if (++activity.statsArr[AS_DiskAccepted] > activity.rowLimit)
+                    if (++diskAccepted > activity.rowLimit)
                         helper->onLimitExceeded();
                 }
                 else
@@ -1851,12 +1890,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
-            unsigned copy = partCopy >> 24;
+            unsigned copy = partCopy >> partBits;
 
             CMessageBuffer msg;
             prepAndSend(msg, processing, selected, partNo, copy);
 
-            ScopedAtomic<unsigned __int64> diskSeeks(activity.statsArr[AS_DiskSeeks]);
+            unsigned __int64 diskSeeks = 0;
+            auto onScopeExitFunc = [&]()
+            {
+                activity.stats.mergeStatistic(StNumDiskSeeks, diskSeeks);
+            };
+            COnScopeExit scoped(onScopeExitFunc);
+
             unsigned numRows = processing.ordinality();
             // read back results and feed in to appropriate join groups.
 
@@ -1931,8 +1976,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     unsigned rejected = 0;
                     mb.read(accepted);
                     mb.read(rejected);
-                    activity.statsArr[AS_DiskAccepted] += accepted;
-                    activity.statsArr[AS_DiskRejected] += rejected;
+                    activity.stats.mergeStatistic(StNumDiskAccepted, accepted);
+                    activity.stats.mergeStatistic(StNumDiskRejected, rejected);
                 }
                 if (received == numRows)
                     break;
@@ -2048,6 +2093,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
     };
 
+    const unsigned startSpillAmountPercentage = 10;   // Initial percentage to spill, will grow if memory pressure keeps calling callback
+    const memsize_t startSpillAmount = 10 * 0x100000; // (10MB) Initial amount to try to spill
+    const memsize_t minRhsJGSpillSz = 1024;           // (1K) Threshold, if a join group is smaller than this, don't attempt to spill
+    const unsigned minimumQueueLimit = 5;             // When spilling the pending and group limits will gradually reduce until this limit
+    const unsigned unknownCopyNum = 0xff;             // in a partCopy denotes that a copy is unknown.
+
     IHThorKeyedJoinArg *helper = nullptr;
     StringAttr indexName;
     size32_t fixedRecordSize = 0;
@@ -2057,8 +2108,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     bool onFailTransform = false;
     bool keyHasTlk = false;
     std::vector<mptag_t> tags;
-    std::vector<RelaxedAtomic<unsigned __int64>> statsArr; // (seeks, scans, accepted, prefiltered, postfiltered, diskSeeks, diskAccepted, diskRejected)
-    unsigned numStats = 0;
 
     enum HandlerType { ht_remotekeylookup, ht_localkeylookup, ht_localfetch, ht_remotefetch };
     CHandlerContainer keyLookupHandlers;
@@ -2068,7 +2117,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     CLimiter doneListLimiter;
 
     CPartDescriptorArray allDataParts;
-    IArrayOf<IPartDescriptor> allIndexParts;
+    CPartDescriptorArray allIndexParts;
     std::vector<unsigned> localIndexParts, localFetchPartMap;
     IArrayOf<IKeyIndex> tlkKeyIndexes;
     Owned<IEngineRowAllocator> joinFieldsAllocator;
@@ -2118,20 +2167,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     std::atomic<bool> waitingForDoneGroups{false};
     Semaphore waitingForDoneGroupsSem;
     CJoinGroupList pendingJoinGroupList, doneJoinGroupList;
-    Owned<IException> abortLimitException;
     Owned<CJoinGroup> currentJoinGroup;
     unsigned currentMatchIdx = 0;
     CJoinGroup::JoinGroupRhsState rhsState;
 
-    unsigned spillAmountPercentage = 10;   // Initial percentage to spill, will grow if memory pressure keeps calling callback
-    memsize_t spillAmount = 10 * 0x100000; // (10MB) Initial amount to try to spill
-    memsize_t minRhsJGSpillSz = 1024; // (1K) Threshold, if a join group is smaller than this, don't attempt to spill
-    const unsigned minimumQueueLimit = 5; // When spilling the pending and group limits will gradually reduce until this limit
+    unsigned spillAmountPercentage = startSpillAmountPercentage;
+    memsize_t spillAmount = startSpillAmount;
     bool memoryCallbackInstalled = false;
 
     roxiemem::IRowManager *rowManager = nullptr;
     unsigned currentAdded = 0;
     unsigned currentJoinGroupSize = 0;
+    MemoryBuffer startCtxMb;
 
     Owned<IThorRowInterfaces> fetchInputMetaRowIf; // fetch request rows, header + fetch fields
     Owned<IThorRowInterfaces> fetchOutputMetaRowIf; // fetch request reply rows, header + [join fields as child row]
@@ -2287,7 +2334,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         {
             Owned<IFileIO> lazyFileIO = queryThor().queryFileCache().lookupIFileIO(*this, indexName, filePart);
             Owned<IDelayedFile> delayedFile = createDelayedFile(lazyFileIO);
-            return createKeyIndex(filename, crc, *delayedFile, false, false);
+            return createKeyIndex(filename, crc, *delayedFile, (unsigned) -1, false, false);
         }
         else
         {
@@ -2296,7 +2343,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
              * The underlying IFileIO can later be closed by fhe file caching mechanism.
              */
             Owned<IFileIO> lazyIFileIO = queryThor().queryFileCache().lookupIFileIO(*this, indexName, filePart);
-            return createKeyIndex(filename, crc, *lazyIFileIO, false, false);
+            return createKeyIndex(filename, crc, *lazyIFileIO, (unsigned) -1, false, false);
         }
     }
     IKeyManager *createPartKeyManager(unsigned partNo, unsigned copy)
@@ -2483,6 +2530,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     {
         endOfInput = false;
         CJoinGroup *groupStart = nullptr;
+        unsigned __int64 preFiltered = 0;
+
+        auto onScopeExitFunc = [&]()
+        {
+            stats.mergeStatistic(StNumPreFiltered, preFiltered);
+        };
+        COnScopeExit scoped(onScopeExitFunc);
         do
         {
             if (queryAbortSoon())
@@ -2499,7 +2553,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             if (helper->leftCanMatch(lhsRow))
                 jg.setown(queueLookup(lhsRow)); // NB: will block if excessive amount queued
             else
-                statsArr[AS_PreFiltered]++;
+                preFiltered++;
             if (!jg && ((joinFlags & JFleftonly) || (joinFlags & JFleftouter)))
             {
                 size32_t maxSz;
@@ -2608,25 +2662,45 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         return nullptr;
     }
-
     bool transferToDoneList(CJoinGroup *joinGroup, bool markBlocked) // NB: always coming from pendingJoinGroupList
     {
         doneJoinGroupList.addToTail(joinGroup);
         pendingKeyLookupLimiter.dec();
         return doneListLimiter.preIncNonBlocking(markBlocked);
     }
-
     void addPartToHandler(CHandlerContainer &handlerContainer, const std::vector<unsigned> &partToSlaveMap, unsigned partCopy, HandlerType hType, std::vector<unsigned> &handlerCounts, std::vector<std::vector<CLookupHandler *>> &slaveHandlers, std::vector<unsigned> &slaveHandlersRR)
     {
         // NB: This is called in partNo ascending order
 
         unsigned partNo = partCopy & partMask;
+        unsigned copy = partCopy >> partBits;
         unsigned slave = 0;
         if (partToSlaveMap.size())
         {
             slave = partToSlaveMap[partNo];
             if (NotFound == slave) // part not local to cluster, part is handled locally/directly.
-                slave = handlerCounts.size()-1; // last one reserved for out of cluster part handling.
+            {
+                // Last one reserved for out of cluster part handling.
+                // And if off cluster, make sure hType is a local handler (will only be remote due to force options)
+                slave = handlerCounts.size()-1;
+                if (ht_remotekeylookup == hType)
+                    hType = ht_localkeylookup;
+                else if (ht_remotefetch == hType)
+                    hType = ht_localfetch;
+            }
+            else
+            {
+                if (unknownCopyNum == copy)// this means that this is a part for a remote slave, and copy is unknown
+                {
+                    /* The partToSlaveMap encodes the target slave and the copy.
+                     * Extract the copy, so that the correct copy is used when request
+                     * arrives at the remote slave.
+                     */
+                    copy = slave >> slaveBits;
+                    partCopy = partNo | (copy << partBits);
+                }
+                slave = slave & slaveMask;
+            }
         }
         unsigned max = queryMaxHandlers(hType);
         unsigned &handlerCount = handlerCounts[slave];
@@ -2718,11 +2792,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     partNo = partCopy & partMask;
                     if (superFdesc)
                     {
-                        unsigned copy = partCopy >> 24;
+                        unsigned copy = partCopy >> partBits;
                         unsigned subfile, subpartnum;
                         superFdesc->mapSubPart(partNo, subfile, subpartnum);
                         partNo = superWidth*subfile+subpartnum;
-                        partCopy = partNo | (copy << 24);
+                        partCopy = partNo | (copy << partBits);
                     }
                 }
                 else
@@ -2735,7 +2809,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 while (p<partNo)
                 {
                     if (remoteLookup) // NB: only relevant if ,LOCAL and only some parts avail. otherwise if !remoteLookup all parts will have been sent
-                        addPartToHandler(handlerContainer, partToSlaveMap, p, missingHandlerType, handlerCounts, slaveHandlers, slaveHandlersRR);
+                    {
+                        unsigned remotePartCopy = p | (unknownCopyNum << partBits); // copy will be looked up via map in addPartToHandler
+                        addPartToHandler(handlerContainer, partToSlaveMap, remotePartCopy, missingHandlerType, handlerCounts, slaveHandlers, slaveHandlersRR);
+                    }
                     else // no handler if local KJ and part not local
                         handlerContainer.partIdxToHandler.push_back(nullptr);
                     ++p;
@@ -2747,12 +2824,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 ++p;
             }
         }
+#ifdef _DEBUG
         handlerContainer.trace();
+#endif
     }
 public:
     IMPLEMENT_IINTERFACE_USING(PARENT);
 
-    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container), readAheadThread(*this), statsArr(8)
+    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container, keyedJoinActivityStatistics), readAheadThread(*this)
     {
         helper = static_cast <IHThorKeyedJoinArg *> (queryHelper());
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
@@ -2823,7 +2902,6 @@ public:
             initialized = true;
             joinFlags = helper->getJoinFlags();
             needsDiskRead = helper->diskAccessRequired();
-            numStats = needsDiskRead ? 8 : 5;
             fixedRecordSize = helper->queryIndexRecordSize()->getFixedSize(); // 0 if variable and unused
             onFailTransform = (0 != (joinFlags & JFonfail)) && (0 == (joinFlags & JFmatchAbortLimitSkips));
 
@@ -2840,14 +2918,19 @@ public:
             tlkKeyIndexes.kill();
             allIndexParts.kill();
             localIndexParts.clear();
+            localFetchPartMap.clear();
 
             allDataParts.kill();
             globalFPosToSlaveMap.clear();
             keyLookupHandlers.clear();
             fetchLookupHandlers.clear();
+            openFetchParts.clear();
+
+            indexPartToSlaveMap.clear();
+            dataPartToSlaveMap.clear();
+            tlkKeyManagers.kill();
+            partitionKey = false;
         }
-        for (auto &a : statsArr)
-            a = 0;
         // decode data from master. NB: can be resent and differ if in global loop
         data.read(indexName);
         data.read(totalIndexParts);
@@ -2890,7 +2973,7 @@ public:
                     Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
                     StringBuffer name("TLK");
                     name.append('_').append(container.queryId()).append('_');
-                    Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false); // MORE - not the right crc
+                    Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, (unsigned) -1, true, false); // MORE - not the right crc
                     tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                 }
             }
@@ -2970,7 +3053,7 @@ public:
 // IThorDataLink
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         assertex(inputs.ordinality() == 1);
         PARENT::start();
 
@@ -2990,6 +3073,7 @@ public:
         rowLimit = (rowcount_t)helper->getRowLimit();
         if (rowLimit < keepLimit)
             keepLimit = rowLimit+1; // if keepLimit is small, let it reach rowLimit+1, but any more is pointless and a waste of time/resources.
+        helper->serializeStartContext(startCtxMb.clear());
 
         inputHelper.set(input->queryFromActivity()->queryContainer().queryHelper());
         preserveOrder = 0 == (joinFlags & JFreorderable);
@@ -2999,12 +3083,19 @@ public:
         currentMatchIdx = 0;
         rhsState.clear();
         currentAdded = 0;
+        currentJoinGroupSize = 0;
         eos = false;
         endOfInput = false;
         lookupThreadLimiter.reset();
         fetchThreadLimiter.reset();
         keyLookupHandlers.init();
         fetchLookupHandlers.init();
+        pendingKeyLookupLimiter.reset();
+        doneListLimiter.reset();
+        pendingJoinGroupList.clear();
+        doneJoinGroupList.clear();
+        currentJoinGroup.clear();
+        waitingForDoneGroups = false;
 
         if ((pendingKeyLookupLimiter.queryMax() > minimumQueueLimit) || (doneListLimiter.queryMax() > minimumQueueLimit))
         {
@@ -3016,7 +3107,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         OwnedConstThorRow ret;
         while (!abortSoon && !eos)
         {
@@ -3189,12 +3280,6 @@ public:
         initMetaInfo(info);
         info.canStall = true;
         info.unknownRowsOutput = true;
-    }
-    virtual void serializeStats(MemoryBuffer &mb) override
-    {
-        PARENT::serializeStats(mb);
-        for (unsigned s=0; s<numStats; s++)
-            mb.append(statsArr[s]);
     }
     // IJoinProcessor
     virtual void onComplete(CJoinGroup *joinGroup) override

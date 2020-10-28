@@ -22,15 +22,20 @@
 #include "workunit.hpp"
 #include "ws_workunitsHelpers.hpp"
 #include "dasds.hpp"
+#include "environment.hpp"
+
 #ifdef _USE_ZLIB
 #include "zcrypt.hpp"
 #endif
 #include "referencedfilelist.hpp"
+#include "ws_wuresult.hpp"
 
 #define UFO_DIRTY                                0x01
 #define UFO_RELOAD_TARGETS_CHANGED_PMID          0x02
 #define UFO_RELOAD_MAPPED_QUERIES                0x04
 #define UFO_REMOVE_QUERIES_NOT_IN_QUERYSET       0x08
+
+static const __uint64 defaultWUResultMaxSize = 10000000; //10M
 
 class QueryFilesInUse : public CInterface, implements ISDSSubscription
 {
@@ -173,6 +178,29 @@ struct WUShowScheduledFilters
         jobName(_jobName), eventName(_eventName), eventText(_eventText) {};
 };
 
+class CWUQueryDetailsReq
+{
+    StringAttr querySet, queryIdOrAlias;
+    bool includeWUDetails = false;
+    bool IncludeWUQueryFiles = false;
+    bool includeSuperFiles = false;
+    bool includeWsEclAddresses = false;
+    bool includeStateOnClusters = false;
+    bool checkAllNodes = false;
+public:
+    CWUQueryDetailsReq(IEspWUQueryDetailsRequest &req);
+    CWUQueryDetailsReq(IEspWUQueryDetailsLightWeightRequest &req);
+
+    const char *getQuerySet() const { return querySet.get(); }
+    const char *getQueryIdOrAlias() const { return queryIdOrAlias.get(); }
+    const bool getIncludeWUDetails() const { return includeWUDetails; }
+    const bool getIncludeWUQueryFiles() const { return IncludeWUQueryFiles; }
+    const bool getIncludeSuperFiles() const { return includeSuperFiles; }
+    const bool getIncludeWsEclAddresses() const { return includeWsEclAddresses; }
+    const bool getIncludeStateOnClusters() const { return includeStateOnClusters; }
+    const bool getCheckAllNodes() const { return checkAllNodes; }
+};
+
 class CWsWorkunitsEx : public CWsWorkunits
 {
 public:
@@ -201,6 +229,8 @@ public:
     void getGraphsByQueryId(const char *target, const char *queryId, const char *graphName, const char *subGraphId, IArrayOf<IEspECLGraphEx>& ECLGraphs);
     void checkAndSetClusterQueryState(IEspContext &context, const char* cluster, const char* querySetId, IArrayOf<IEspQuerySetQuery>& queries, bool checkAllNodes);
     void checkAndSetClusterQueryState(IEspContext &context, const char* cluster, StringArray& querySetIds, IArrayOf<IEspQuerySetQuery>& queries, bool checkAllNodes);
+    IWorkUnitFactory *queryWUFactory() { return wuFactory; };
+    const char *getDataDirectory() const { return dataDirectory.str(); };
 
     bool onWUQuery(IEspContext &context, IEspWUQueryRequest &req, IEspWUQueryResponse &resp);
     bool onWULightWeightQuery(IEspContext &context, IEspWULightWeightQueryRequest &req, IEspWULightWeightQueryResponse &resp);
@@ -217,6 +247,7 @@ public:
     bool onWUCopyQuerySet(IEspContext &context, IEspWUCopyQuerySetRequest &req, IEspWUCopyQuerySetResponse &resp);
     bool onWUCopyLogicalFiles(IEspContext &context, IEspWUCopyLogicalFilesRequest &req, IEspWUCopyLogicalFilesResponse &resp);
     bool onWUQueryDetails(IEspContext &context, IEspWUQueryDetailsRequest & req, IEspWUQueryDetailsResponse & resp);
+    bool onWUQueryDetailsLightWeight(IEspContext &context, IEspWUQueryDetailsLightWeightRequest & req, IEspWUQueryDetailsResponse & resp);
     bool onWUListQueries(IEspContext &context, IEspWUListQueriesRequest &req, IEspWUListQueriesResponse &resp);
     bool onWUListQueriesUsingFile(IEspContext &context, IEspWUListQueriesUsingFileRequest &req, IEspWUListQueriesUsingFileResponse &resp);
     bool onWUQueryFiles(IEspContext &context, IEspWUQueryFilesRequest &req, IEspWUQueryFilesResponse &resp);
@@ -293,6 +324,7 @@ public:
     bool onWUListArchiveFiles(IEspContext &context, IEspWUListArchiveFilesRequest &req, IEspWUListArchiveFilesResponse &resp);
     bool onWUGetArchiveFile(IEspContext &context, IEspWUGetArchiveFileRequest &req, IEspWUGetArchiveFileResponse &resp);
     bool onWUEclDefinitionAction(IEspContext &context, IEspWUEclDefinitionActionRequest &req, IEspWUEclDefinitionActionResponse &resp);
+    bool onWUGetPlugins(IEspContext &context, IEspWUGetPluginsRequest &req, IEspWUGetPluginsResponse &resp);
 
     bool unsubscribeServiceFromDali() override
     {
@@ -355,6 +387,18 @@ private:
     void readQueryStatsList(IPropertyTree *queryStatsTree, const char *status, const char *ep,
         bool all, IArrayOf<IEspEndpointQueryStats> &endpointQueryStatsList);
 
+    void getWsWuResult(IEspContext &context, const char *wuid, const char *name, const char *logical, unsigned index, __int64 start,
+        unsigned &count, __int64 &total, IStringVal &resname, bool bin, IArrayOf<IConstNamedValue> *filterBy, MemoryBuffer &mb,
+        WUState &wuState, bool xsd=true);
+    void getFileResults(IEspContext &context, const char *logicalName, const char *cluster, __int64 start, unsigned &count, __int64 &total,
+        IStringVal &resname, bool bin, IArrayOf<IConstNamedValue> *filterBy, MemoryBuffer &buf, bool xsd);
+    void getSuspendedQueriesByCluster(MapStringTo<bool> &suspendedByCluster, const char *querySet, const char *queryID, bool checkAllNodes);
+    void addSuspendedQueryIDs(MapStringTo<bool> &suspendedQueryIDs, IPropertyTree *queriesOnCluster, const char *target);
+    void getWUQueryDetails(IEspContext &context, CWUQueryDetailsReq &req, IEspWUQueryDetailsResponse &resp);
+    void readPluginFolders(StringBuffer &eclccPaths, StringArray &pluginFolders);
+    void findPlugins(const char *pluginFolder, bool dotSoFile, StringArray &plugins);
+    bool checkPluginECLAttr(const char *fileNameWithPath);
+
     unsigned awusCacheMinutes;
     StringBuffer queryDirectory;
     StringBuffer envLocalAddress;
@@ -372,7 +416,9 @@ private:
     int maxRequestEntityLength;
     Owned<IThreadPool> clusterQueryStatePool;
     unsigned thorSlaveLogThreadPoolSize = THOR_SLAVE_LOG_THREAD_POOL_SIZE;
-
+    Owned<IWorkUnitFactory> wuFactory;
+    StringBuffer dataDirectory;
+    __uint64 wuResultMaxSize = defaultWUResultMaxSize;
 
 public:
     QueryFilesInUse filesInUse;
@@ -398,10 +444,18 @@ public:
 
         xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ThorSlaveLogThreadPoolSize", process, service);
         thorSlaveLogThreadPoolSize = cfg->getPropInt(xpath, THOR_SLAVE_LOG_THREAD_POOL_SIZE);
+
+        xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/WUResultDownloadFlushThreshold", process, service);
+        wuResultDownloadFlushThreshold = cfg->getPropInt(xpath, defaultWUResultDownloadFlushThreshold);
     }
 
     virtual void getNavigationData(IEspContext &context, IPropertyTree & data)
     {
+        if (queryComponentConfig().getPropBool("@api_only"))
+        {
+            CHttpSoapBinding::getNavigationData(context, data);
+            return;
+        }
         if (!batchWatchFeaturesOnly)
         {
             IPropertyTree *folder = ensureNavFolder(data, "ECL", "Run Ecl code and review Ecl workunits", NULL, false, 2);
@@ -416,6 +470,7 @@ public:
 
     int onGetForm(IEspContext &context, CHttpRequest* request, CHttpResponse* response, const char *service, const char *method);
     int onGet(CHttpRequest* request, CHttpResponse* response);
+    int onStartUpload(IEspContext& ctx, CHttpRequest* request, CHttpResponse* response, const char* service, const char* method);
 
     virtual void addService(const char * name, const char * host, unsigned short port, IEspService & service)
     {
@@ -430,6 +485,7 @@ private:
     CWsWorkunitsEx *wswService;
     Owned<IPropertyTree> directories;
     unsigned thorSlaveLogThreadPoolSize = THOR_SLAVE_LOG_THREAD_POOL_SIZE;
+    size32_t wuResultDownloadFlushThreshold = defaultWUResultDownloadFlushThreshold;
 };
 
 void deploySharedObject(IEspContext &context, StringBuffer &wuid, const char *filename, const char *cluster, const char *name, const MemoryBuffer &obj, const char *dir, const char *xml=NULL);

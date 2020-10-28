@@ -687,6 +687,10 @@ static bool SEHtermOnSystemDLLs = false;
 static bool SEHtermAlways = false;
 
 #ifdef _WIN32
+void jlib_decl setProcessAborted(bool _abortVal)
+{
+}
+
 static void *SEHrestore;
 
 #ifdef EXTENDED_EXCEPTION_TRACE
@@ -1101,10 +1105,20 @@ static void throwSigSegV()
 }
 #endif
 
+static std::atomic<bool> processAborted { false };
+void jlib_decl setProcessAborted(bool _abortVal)
+{
+    processAborted = _abortVal;
+}
+
 NO_SANITIZE("alignment") void excsighandler(int signum, siginfo_t *info, void *extra)
 {
     static byte nested=0;
     if (nested++)
+        return;
+
+    //If the program is terminating then do not try and trace
+    if (!queryLogMsgManager())
         return;
 
     excsignal = 0;
@@ -1354,7 +1368,10 @@ NO_SANITIZE("alignment") void excsighandler(int signum, siginfo_t *info, void *e
         if ( SEHHandler->fireException(new CSEHException(signum,s.str())) )
             return;
     }
-    raise(signum);
+    if ( (SIGABRT == signum) && (processAborted) )
+        _exit(128 + SIGABRT);
+    else
+        raise(signum);
 #endif
     nested--;
 }
@@ -1713,7 +1730,7 @@ IError *createError(IPropertyTree * tree)
 
 //---------------------------------------------------------------------------------------------------------------------
 
-void IErrorReceiver::ThrowStringException(int code,const char *format, ...) const
+void IErrorReceiver::throwStringExceptionV(int code,const char *format, ...) const
 {
     va_list args;
     va_start(args, format);

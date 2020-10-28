@@ -98,8 +98,8 @@
         <html>
             <head>
                 <title>ESP Service form</title>
-        <link rel="stylesheet" type="text/css" href="/esp/files/yui/build/fonts/fonts-min.css" />
-        <link rel="stylesheet" type="text/css" href="/esp/files/css/espdefault.css" />
+        <link rel="stylesheet" type="text/css" href="files_/yui/build/fonts/fonts-min.css" />
+        <link rel="stylesheet" type="text/css" href="files_/css/espdefault.css" />
         <link rel="stylesheet" type="text/css" href="files_/gen_form.css"/>
                 <script type="text/javascript" src="files_/req_array.js"/>
                 <script type="text/javascript" src="files_/hashtable.js"/>
@@ -1158,7 +1158,9 @@
                 <xsl:if test="$checked='1'">
                     <xsl:text disable-output-escaping="yes"><![CDATA[' checked='1]]></xsl:text>
                 </xsl:if>
-                <xsl:text disable-output-escaping="yes"><![CDATA[' onClick='onBoolChange(this)'/> <input type='hidden' value=']]></xsl:text>
+                <xsl:text disable-output-escaping="yes"><![CDATA[' onClick='onBoolChange(this)' name=']]></xsl:text>
+                <xsl:value-of select="$fieldId"/>
+                <xsl:text disable-output-escaping="yes"><![CDATA['/> <input type='hidden' value=']]></xsl:text>
                 <xsl:value-of select="$checked"/>
                 <xsl:text disable-output-escaping="yes"><![CDATA[' name=']]></xsl:text>
                 <xsl:value-of select="$fieldId"/>

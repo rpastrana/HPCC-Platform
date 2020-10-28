@@ -244,8 +244,8 @@ ECLCC_PATH
                     <entry><graphic fileref="images/caution.png" scale="noin"
                     xml:base="../../" /></entry>
 
-                    <entry>We do not recommend storingword in an Environment
-                    Variable unless your system is secured.</entry>
+                    <entry>We do not recommend storing your password in an
+                    Environment Variable.</entry>
                   </row>
                 </tbody>
               </tgroup>
@@ -289,9 +289,9 @@ ecl deploy roxie - --name=FindPersonService
                 <row>
                   <entry>ecl deploy</entry>
 
-                  <entry>Creates a workunit on the HPCC Systems platform from the given
-                  ECL text, file, archive, shared object, or dll. The workunit
-                  is created in the <emphasis>compiled</emphasis>
+                  <entry>Creates a workunit on the HPCC Systems platform from
+                  the given ECL text, file, archive, shared object, or dll.
+                  The workunit is created in the <emphasis>compiled</emphasis>
                   state.</entry>
                 </row>
 
@@ -402,8 +402,8 @@ ecl deploy roxie - --name=FindPersonService
                 <row>
                   <entry>--ecl-only</entry>
 
-                  <entry>Send ECL query to HPCC Systems cluster as text rather than as a
-                  generated archive</entry>
+                  <entry>Send ECL query to HPCC Systems cluster as text rather
+                  than as a generated archive</entry>
                 </row>
 
                 <row>
@@ -519,7 +519,8 @@ ecl publish roxie ArchiveQuery.xml --name=FindPersonService --no-activate
                 <row>
                   <entry>wuid</entry>
 
-                  <entry>The workunit id to publish</entry>
+                  <entry>The workunit id to publish (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>
@@ -727,8 +728,8 @@ ecl publish roxie ArchiveQuery.xml --name=FindPersonService --no-activate
                 <row>
                   <entry>--ecl-only</entry>
 
-                  <entry>Send ECL query to HPCC Systems cluster as text rather than as a
-                  generated archive</entry>
+                  <entry>Send ECL query to HPCC Systems cluster as text rather
+                  than as a generated archive</entry>
                 </row>
 
                 <row>
@@ -972,7 +973,8 @@ ecl run thor findperson.ecl -I C:\MyECL\
                 <row>
                   <entry>wuid</entry>
 
-                  <entry>The workunit id to run</entry>
+                  <entry>The workunit id to run (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>
@@ -1111,8 +1113,8 @@ ecl run thor findperson.ecl -I C:\MyECL\
                 <row>
                   <entry>--ecl-only</entry>
 
-                  <entry>Send ECL query to HPCC Systems cluster as text rather than as a
-                  generated archive</entry>
+                  <entry>Send ECL query to HPCC Systems cluster as text rather
+                  than as a generated archive</entry>
                 </row>
 
                 <row>
@@ -1224,7 +1226,8 @@ ecl results W20170519-142920 --noroot --exception-level=error
                 <row>
                   <entry>wuid</entry>
 
-                  <entry>The workunit from which to return results.</entry>
+                  <entry>The workunit from which to return results. (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>
@@ -1690,10 +1693,10 @@ ecl queries copy //192.168.1.10:8010/thor/findperson thor
                   <entry>ecl queries copy</entry>
 
                   <entry>Copies a query from one queryset to another. A query
-                  can be copied from one HPCC Systems environment to another by using
-                  a path which begins with '//' followed by the IP or hostname
-                  and Port of the source ECL Watch and then followed by the
-                  source queryset and query.</entry>
+                  can be copied from one HPCC Systems environment to another
+                  by using a path which begins with '//' followed by the IP or
+                  hostname and Port of the source ECL Watch and then followed
+                  by the source queryset and query.</entry>
                 </row>
 
                 <row>
@@ -2755,7 +2758,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -2903,7 +2906,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="175.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -2998,7 +3001,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="175.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -3102,7 +3105,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="175.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -3206,7 +3209,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -3312,7 +3315,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -3420,7 +3423,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="175.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -3606,7 +3609,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
             <tgroup cols="2">
               <colspec align="left" colwidth="175.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -3736,7 +3739,7 @@ ecl packagemap add roxie mypackagemap.pkg --daliip=192.168.11.11
           <tgroup cols="2">
             <colspec align="left" colwidth="175.55pt" />
 
-            <colspec colwidth="384.85pt" />
+            <colspec />
 
             <tbody>
               <row>
@@ -3887,7 +3890,7 @@ ecl packagemap validate roxie mypackagemap.pkg --ignore-queries='findPerson*, fi
             <tgroup cols="2">
               <colspec align="left" colwidth="155.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4044,7 +4047,7 @@ ecl packagemap copy //192.168.0.100:8010/roxie/MyPkg roxie2
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4228,7 +4231,7 @@ ecl packagemap copy //192.168.0.100:8010/roxie/MyPkg roxie2
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4314,7 +4317,7 @@ ecl packagemap copy //192.168.0.100:8010/roxie/MyPkg roxie2
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4400,7 +4403,7 @@ ecl packagemap copy //192.168.0.100:8010/roxie/MyPkg roxie2
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4486,7 +4489,7 @@ ecl packagemap copy //192.168.0.100:8010/roxie/MyPkg roxie2
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4578,7 +4581,7 @@ ecl bundle depends mybundle --version=2</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4637,7 +4640,7 @@ ecl bundle info mybundle --version=2</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4699,7 +4702,7 @@ ecl bundle install mybundle --keepprior</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4762,6 +4765,43 @@ ecl bundle install mybundle --keepprior</programlisting>
         <para>To use the "ecl bundle install &lt;git url&gt;" command, you
         must have git installed and configured on your system. Git must be
         accessible to the user (in the path).</para>
+
+        <para><emphasis role="bold">Server-side Installation</emphasis></para>
+
+        <para>A system using ECL Server and a remote MySQL repository or ECLCC
+        Server with git hooks can only access bundles if they are installed on
+        the server. Using a bundle in the ECL Playground also requires
+        installation on the ECLCC Server node.</para>
+
+        <para></para>
+
+        <orderedlist>
+          <listitem>
+            <para>In a terminal window on your ECLCC Server (or ECL Server),
+            use this command:</para>
+
+            <para><programlisting>sudo su hpcc</programlisting>This switches
+            the user to <emphasis role="bold">hpcc</emphasis>.</para>
+          </listitem>
+
+          <listitem>
+            <para>Next install the bundle using this command:</para>
+
+            <programlisting>ecl bundle install &lt;bundle URL&gt;.git </programlisting>
+
+            <para>For example: </para>
+
+            <para><programlisting>ecl bundle install https://github.com/hpcc-systems/Visualizer.git</programlisting></para>
+          </listitem>
+
+          <listitem>
+            <para>Close the terminal window or use the <emphasis
+            role="bold">exit</emphasis> command to return to acting as the
+            original user.</para>
+          </listitem>
+        </orderedlist>
+
+        <para></para>
       </sect2>
 
       <sect2 id="CT_CLI_SyntaxECLBundleUninstall" role="brk">
@@ -4783,7 +4823,7 @@ ecl bundle install mybundle --keepprior</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4850,7 +4890,7 @@ ecl bundle list myb*
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4903,7 +4943,7 @@ ecl bundle list myb*
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -4956,7 +4996,7 @@ ecl bundle list myb*
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -5051,7 +5091,7 @@ ecl abort -n MyJob</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -5068,7 +5108,8 @@ ecl abort -n MyJob</programlisting>
                 <row>
                   <entry>-wu</entry>
 
-                  <entry>The WUID (Workunit ID)</entry>
+                  <entry>The WUID (Workunit ID) (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>
@@ -5150,7 +5191,7 @@ ecl status -n MyJob</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -5167,7 +5208,8 @@ ecl status -n MyJob</programlisting>
                 <row>
                   <entry>-wu</entry>
 
-                  <entry>The WUID (Workunit ID)</entry>
+                  <entry>The WUID (Workunit ID) (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>
@@ -5249,7 +5291,7 @@ ecl getwuid -n MyCommonJobName --limit=100</programlisting>
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -5349,7 +5391,7 @@ ecl getname -wu W201407*
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -5361,7 +5403,8 @@ ecl getname -wu W201407*
                 <row>
                   <entry>--wuid</entry>
 
-                  <entry>The WUID (Workunit ID)</entry>
+                  <entry>The WUID (Workunit ID) (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>
@@ -5453,7 +5496,7 @@ ecl zapgen W20171018-091399 --path ~ --inc-thor-slave-logs --description "Unexpe
             <tgroup cols="2">
               <colspec align="left" colwidth="125.55pt" />
 
-              <colspec colwidth="384.85pt" />
+              <colspec />
 
               <tbody>
                 <row>
@@ -5466,7 +5509,8 @@ ecl zapgen W20171018-091399 --path ~ --inc-thor-slave-logs --description "Unexpe
                 <row>
                   <entry>WUID</entry>
 
-                  <entry>The WUID (Workunit ID)</entry>
+                  <entry>The WUID (Workunit ID) (WUID is
+                  case-sensitive)</entry>
                 </row>
 
                 <row>

@@ -1,8 +1,6 @@
 define([
     "dojo/_base/declare",
-    "dojo/_base/lang",
-    "dojo/i18n",
-    "dojo/i18n!./nls/hpcc",
+    "src/nlsHPCC",
 
     "hpcc/_TabContainerWidget",
 
@@ -14,42 +12,44 @@ define([
 
     "hpcc/DelayLoadWidget"
 
-], function (declare, lang, i18n, nlsHPCC,
+], function (declare, nlsHPCCMod,
     _TabContainerWidget,
     template) {
-        return declare("HPCCPlatformECLWidget", [_TabContainerWidget], {
-            templateString: template,
-            baseClass: "HPCCPlatformECLWidget",
-            i18n: nlsHPCC,
 
-            postCreate: function (args) {
-                this.inherited(arguments);
-            },
+    var nlsHPCC = nlsHPCCMod.default;
+    return declare("HPCCPlatformECLWidget", [_TabContainerWidget], {
+        templateString: template,
+        baseClass: "HPCCPlatformECLWidget",
+        i18n: nlsHPCC,
 
-            startup: function (args) {
-                this.inherited(arguments);
-            },
+        postCreate: function (args) {
+            this.inherited(arguments);
+        },
 
-            getTitle: function () {
-                return this.i18n.title;
-            },
+        startup: function (args) {
+            this.inherited(arguments);
+        },
 
-            //  Hitched actions  ---
+        getTitle: function () {
+            return this.i18n.title;
+        },
 
-            //  Implementation  ---
-            init: function (params) {
-                if (this.inherited(arguments))
-                    return;
-                this.initTab();
-            },
+        //  Hitched actions  ---
 
-            initTab: function () {
-                var currSel = this.getSelectedChild();
-                if (currSel && !currSel.initalized) {
-                    if (currSel.init) {
-                        currSel.init({});
-                    }
+        //  Implementation  ---
+        init: function (params) {
+            if (this.inherited(arguments))
+                return;
+            this.initTab();
+        },
+
+        initTab: function () {
+            var currSel = this.getSelectedChild();
+            if (currSel && !currSel.initalized) {
+                if (currSel.init) {
+                    currSel.init({});
                 }
             }
-        });
+        }
     });
+});

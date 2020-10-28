@@ -57,7 +57,7 @@ public:
     {
         ForEachItemIn(idx, subFiles)
         {
-            if (stricmp(subFiles.item(idx).queryProp("@value"), subname))
+            if (strieq(subFiles.item(idx).queryProp("@value"), subname))
                 return idx;
         }
         return NotFound;
@@ -124,7 +124,7 @@ protected:
         const char *val = queryEnv("control:enableFieldTranslation");
         if (!val) val = queryEnv("enableFieldTranslation"); // Backward compatibility
         if (val)
-            return getTranslationMode(val);
+            return getTranslationMode(val, false);
         else
             return getSysFieldTranslationEnabled();
     }

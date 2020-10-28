@@ -18,6 +18,7 @@ include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 set (    SRCS
          ${ESPSCM_GENERATED_DIR}/common_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_smc_esp.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_dfu_common_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_dfuXref_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_dfu_esp.cpp
          ecl-roxie.cpp
@@ -42,6 +43,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/system/xmllib
          ${HPCC_SOURCE_DIR}/ecl/eclcmd
          ${HPCC_SOURCE_DIR}/ecl/eclcc
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )

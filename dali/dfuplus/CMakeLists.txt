@@ -28,6 +28,7 @@ include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
 set (    SRCS
          ../../esp/bindings/bindutil.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_dfu_common_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_dfu_esp.cpp
          ${ESPSCM_GENERATED_DIR}/ws_fs_esp.cpp
          dfuplus.cpp
@@ -51,6 +52,7 @@ include_directories (
          ./../../fs/dafsserver
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
 set_source_files_properties (dfuplus.cpp PROPERTIES COMPILE_FLAGS -DDAFILESRV_LOCAL)

@@ -1229,7 +1229,7 @@ public:
                         translateBuf.setLength(0);
                         MemoryBufferBuilder rowBuilder(translateBuf, 0);
                         translator->translate(rowBuilder, *fieldCallback, row);
-                        row = reinterpret_cast<const byte *>(translateBuf.toByteArray());
+                        row = rowBuilder.getSelf();
                     }
                     return row;
                 }
@@ -1776,6 +1776,8 @@ void ActivityTimeAccumulator::addStatistics(IStatisticGatherer & builder) const
         builder.addStatistic(StTimeElapsed, elapsed());
         builder.addStatistic(StTimeTotalExecute, cycle_to_nanosec(totalCycles));
         builder.addStatistic(StTimeFirstExecute, latency());
+        if (blockedCycles)
+            builder.addStatistic(StTimeBlocked, cycle_to_nanosec(blockedCycles));
     }
 }
 
@@ -1787,6 +1789,8 @@ void ActivityTimeAccumulator::addStatistics(CRuntimeStatisticCollection & merged
         merged.mergeStatistic(StTimeElapsed, elapsed());
         merged.mergeStatistic(StTimeTotalExecute, cycle_to_nanosec(totalCycles));
         merged.mergeStatistic(StTimeFirstExecute, latency());
+        if (blockedCycles)
+            merged.mergeStatistic(StTimeBlocked, cycle_to_nanosec(blockedCycles));
     }
 }
 
@@ -1809,6 +1813,7 @@ void ActivityTimeAccumulator::merge(const ActivityTimeAccumulator & other)
             if (endCycles < other.endCycles)
                 endCycles = other.endCycles;
             totalCycles += other.totalCycles;
+            blockedCycles += other.blockedCycles;
         }
         else
             *this = other;
@@ -2081,7 +2086,12 @@ static bool getTranslators(Owned<const IDynamicTransform> &translator, Owned<con
     {
         IOutputMetaData * sourceFormat = expectedFormat;
         unsigned sourceCrc = expectedCrc;
-        if (mode != RecordTranslationMode::AlwaysECL)
+        if (mode == RecordTranslationMode::AlwaysECL)
+        {
+            if (publishedCrc && expectedCrc && (publishedCrc != expectedCrc))
+                DBGLOG("Overriding stored record layout reading file %s", tracing);
+        }
+        else
         {
             if (publishedFormat)
             {
@@ -2097,8 +2107,11 @@ static bool getTranslators(Owned<const IDynamicTransform> &translator, Owned<con
         if ((projectedFormat != sourceFormat) && (projectedCrc != sourceCrc))
         {
             translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), sourceFormat->queryRecordAccessor(true)));
-            DBGLOG("Record layout translator created for %s", tracing);
-            translator->describe();
+            if (expectedCrc && publishedCrc && expectedCrc != publishedCrc)
+            {
+                DBGLOG("Record layout translator created for %s", tracing);
+                translator->describe();
+            }
 
             if (!translator->canTranslate())
                 throw MakeStringException(0, "Untranslatable record layout mismatch detected for file %s", tracing);

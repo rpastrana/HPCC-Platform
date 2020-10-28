@@ -129,9 +129,7 @@ endif()
 
 include(${HPCC_SOURCE_DIR}/cmake_modules/optionDefaults.cmake)
 
-if(NOT DESTDIR STREQUAL "")
-    set(CMAKE_INSTALL_MESSAGE LAZY)
-endif()
+set(CMAKE_INSTALL_MESSAGE LAZY)
 
 if ( REMBED AND (NOT INCLUDE_PLUGINS) )
   # various components that are not needed if only making the R plugin
@@ -142,6 +140,8 @@ endif()
 include(${HPCC_SOURCE_DIR}/cmake_modules/commonSetup.cmake)
 
 if ( PLUGIN )
+    HPCC_ADD_SUBDIRECTORY (system/yaml)
+    HPCC_ADD_SUBDIRECTORY (system/aws "SQS")
     HPCC_ADD_SUBDIRECTORY (system/tbb_sm)
     HPCC_ADD_SUBDIRECTORY (roxie/roxiemem)
     HPCC_ADD_SUBDIRECTORY (rtl/nbcd)
@@ -167,8 +167,6 @@ elseif ( NOT MAKE_DOCS_ONLY )
     HPCC_ADD_SUBDIRECTORY (tools)
     HPCC_ADD_SUBDIRECTORY (common)
     HPCC_ADD_SUBDIRECTORY (dali)
-    HPCC_ADD_SUBDIRECTORY (deploy)
-    HPCC_ADD_SUBDIRECTORY (deployment)
     HPCC_ADD_SUBDIRECTORY (ecl)
     HPCC_ADD_SUBDIRECTORY (ecllibrary)
     HPCC_ADD_SUBDIRECTORY (esp)
@@ -179,8 +177,12 @@ elseif ( NOT MAKE_DOCS_ONLY )
     HPCC_ADD_SUBDIRECTORY (services "PLATFORM")
     HPCC_ADD_SUBDIRECTORY (thorlcr "PLATFORM")
     HPCC_ADD_SUBDIRECTORY (testing)
-    HPCC_ADD_SUBDIRECTORY (configuration)
-
+    if (NOT CONTAINERIZED)
+      HPCC_ADD_SUBDIRECTORY (deploy)
+      HPCC_ADD_SUBDIRECTORY (deployment)
+      HPCC_ADD_SUBDIRECTORY (configuration)
+    endif()
+    
     if ( WIN32 )
         HPCC_ADD_SUBDIRECTORY (clienttools/IDEPlugins "CLIENTTOOLS_ONLY")
         HPCC_ADD_SUBDIRECTORY (clienttools/win "CLIENTTOOLS_ONLY")
@@ -255,6 +257,7 @@ if(TOP_LEVEL_PROJECT)
     set(CPACK_PACKAGE_VENDOR_WITHOUT_TRADEMARK "HPCC Systems")
 
     if(WIN32)
+        set(CPACK_PACKAGE_VENDOR "HPCC Systems")
         if(${ARCH64BIT} EQUAL 1)
             set(CPACK_RPM_PACKAGE_ARCHITECTURE "x86_64")
         else(${ARCH64BIT} EQUAL 1)
@@ -392,7 +395,8 @@ if(TOP_LEVEL_PROJECT)
                 "%define _use_internal_dependency_generator 0
                 %define __getdeps()while read file; do /usr/lib/rpm/rpmdeps -%{1} ${file} | %{__grep} -v libantlr3c.so | %{__grep} -v libtbb.so ; done | /bin/sort -u
                 %define __find_provides /bin/sh -c '%{__getdeps P}'
-                %define __find_requires /bin/sh -c '%{__getdeps R}'")
+                %define __find_requires /bin/sh -c '%{__getdeps R}'
+                %undefine __brp_mangle_shebangs")
             message("-- Will build RPM package")
             message("-- Packing BASH installation files")
             if(CLIENTTOOLS_ONLY)
@@ -500,6 +504,8 @@ if(PLATFORM OR CLIENTTOOLS OR REMBED)
     install(FILES ${HPCC_SOURCE_DIR}/${LICENSE_FILE} DESTINATION "." COMPONENT Runtime)
 endif()
 
+add_subdirectory(devel)
+
 #uninstall target
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake_uninstall.cmake.in"
@@ -507,5 +513,9 @@ configure_file(
     IMMEDIATE @ONLY)
 add_custom_target(uninstall
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+
+add_custom_target(localinstall
+	COMMAND $(MAKE) install
+    )
 
 include(CPack)

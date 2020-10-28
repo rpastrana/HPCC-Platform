@@ -19,6 +19,7 @@ interface IXmlWriterExt : extends IXmlWriter
     virtual void outputNumericString(const char *field, const char *fieldname) = 0;
     virtual void outputInline(const char* text) = 0;
     virtual void finalize() = 0;
+    virtual void checkDelimiter() = 0;
 };
 
 class ECLRTL_API SimpleOutputWriter : implements IXmlWriterExt, public CInterface
@@ -33,6 +34,7 @@ public:
     virtual size32_t length() const override                { return out.length(); }
     virtual const char * str() const override               { return out.str(); }
     virtual void finalize() override                        {}
+    virtual void checkDelimiter() override                  {}
 
 
     virtual void outputQuoted(const char *text) override;
@@ -65,6 +67,7 @@ public:
     virtual void cutFrom(IInterface *location, StringBuffer& databuf) override { UNIMPLEMENTED; }
     virtual void outputNumericString(const char *field, const char *fieldname) override { UNIMPLEMENTED; }
     virtual void outputInline(const char* text) override { UNIMPLEMENTED; }
+    virtual void flushContent(bool close) override { UNIMPLEMENTED; }
 
 protected:
     StringBuffer out;
@@ -131,6 +134,7 @@ public:
     virtual unsigned length() const                                 { return out.length(); }
     virtual const char * str() const                                { return out.str(); }
     virtual void finalize() override                                {}
+    virtual void checkDelimiter() override                          {}
 
     virtual IInterface *saveLocation() const
     {
@@ -161,6 +165,7 @@ public:
     {
         outputCString(field, fieldname);
     }
+    virtual void flushContent(bool close) override { flush(close); }
 
 protected:
     bool checkForAttribute(const char * fieldname);
@@ -224,6 +229,7 @@ public:
     virtual unsigned length() const                                 { return out.length(); }
     virtual const char * str() const                                { return out.str(); }
     virtual void finalize() override                                {}
+    virtual void checkDelimiter() override                          { checkDelimit(); }
     virtual void rewindTo(unsigned int prevlen)                     { if (prevlen < out.length()) out.setLength(prevlen); }
     virtual IInterface *saveLocation() const
     {
@@ -252,6 +258,7 @@ public:
 
     void outputBeginRoot(){out.append('{');}
     void outputEndRoot(){out.append('}');}
+    virtual void flushContent(bool close) override { flush(close); }
 
 protected:
     inline void flush(bool isClose)
@@ -338,6 +345,8 @@ public:
     virtual void outputEndArray(const char *fieldname) override {};
     virtual void outputSetAll();
     virtual void outputXmlns(const char *name, const char *uri);
+    virtual void flushContent(bool close) override {};
+    
 
 protected:
     bool checkForAttribute(const char * fieldname);
@@ -549,6 +558,8 @@ public:
     virtual unsigned length() const { return out.length(); }
     virtual const char* str() const { return out.str(); }
     virtual void finalize() override {}
+    virtual void checkDelimiter() override {}
+
     virtual void rewindTo(IInterface* location) { };
     virtual void cutFrom(IInterface *location, StringBuffer& databuf) { };
     virtual IInterface* saveLocation() const
@@ -600,6 +611,7 @@ public:
     void outputCSVHeader(const char* name, const char* type);
     void finishCSVHeaders();
     const char* auditStr() const { return auditOut.str(); }
+    virtual void flushContent(bool close) override { flush(close); }
 
 protected:
     IXmlStreamFlusher* flusher;

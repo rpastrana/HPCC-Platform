@@ -34,21 +34,8 @@
 
 class CSortBaseActivityMaster : public CMasterActivity
 {
-    CThorStatsCollection extraStats;
 public:
-    CSortBaseActivityMaster(CMasterGraphElement * info) : CMasterActivity(info), extraStats(info->queryJob(), spillStatistics) { }
-
-    virtual void deserializeStats(unsigned node, MemoryBuffer &mb)
-    {
-        CMasterActivity::deserializeStats(node, mb);
-
-        extraStats.deserializeMerge(node, mb);
-    }
-    virtual void getActivityStats(IStatisticGatherer & stats)
-    {
-        CMasterActivity::getActivityStats(stats);
-        extraStats.getStats(stats);
-    }
+    CSortBaseActivityMaster(CMasterGraphElement * info) : CMasterActivity(info, sortActivityStatistics) { }
 };
 
 class CGroupSortActivityMaster : public CSortBaseActivityMaster
@@ -129,7 +116,6 @@ protected:
     virtual void preStart(size32_t parentExtractSz, const byte *parentExtract)
     {
         CSortBaseActivityMaster::preStart(parentExtractSz, parentExtract);
-        ActPrintLog("preStart");
         imaster = CreateThorSorterMaster(this);
         unsigned s=0;
         for (; s<container.queryJob().querySlaves(); s++)
@@ -141,8 +127,6 @@ protected:
     }
     virtual void process()
     {
-        ActPrintLog("process");
-
         CSortBaseActivityMaster::process();
 
         IHThorSortArg *helper = (IHThorSortArg *)queryHelper();
@@ -208,7 +192,6 @@ protected:
             throw;
         }
         ::Release(imaster);
-        ActPrintLog("process exit");
     }
 };
 

@@ -129,6 +129,7 @@ void jlib_decl *setSEHtoExceptionHandler(IExceptionHandler *handler); // sets ha
 void jlib_decl setTerminateOnSEHInSystemDLLs(bool set=true);
 void jlib_decl setTerminateOnSEH(bool set=true);
 
+void jlib_decl setProcessAborted(bool _abortVal);
 
 __declspec(noreturn) void jlib_decl throwUnexpectedException(const char * file, unsigned line) __attribute__((noreturn));
 __declspec(noreturn) void jlib_decl throwUnexpectedException(const char * where, const char * file, unsigned line) __attribute__((noreturn));
@@ -240,7 +241,7 @@ interface jlib_decl IErrorReceiver : public IInterface
     virtual size32_t errCount() = 0;
     virtual size32_t warnCount() = 0;
     virtual void exportMappings(IWorkUnit * wu) const = 0;
-    virtual __declspec(noreturn) void ThrowStringException(int code,const char *format, ...) const __attribute__((format(printf, 3, 4), noreturn));            // override the global function to try and add more context information
+    virtual __declspec(noreturn) void throwStringExceptionV(int code,const char *format, ...) const __attribute__((format(printf, 3, 4), noreturn));            // override the global function to try and add more context information
 
     //global helper functions
     void reportError(int errNo, const char *msg, const char *filename, int lineno, int column, int pos);

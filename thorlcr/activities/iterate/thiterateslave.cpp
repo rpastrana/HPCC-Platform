@@ -77,7 +77,7 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         if (global) // only want lookahead if global (hence serial)
         {
@@ -119,7 +119,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         for (;;) {
             if (eof || abortSoon)
                 break;
@@ -180,6 +180,8 @@ CActivityBase *createLocalIterateSlave(CGraphElementBase *container)
 
 class CProcessSlaveActivity : public IterateSlaveActivityBase
 {
+    typedef IterateSlaveActivityBase PARENT;
+
     IHThorProcessArg * helper;
     OwnedConstThorRow left;
     OwnedConstThorRow right;
@@ -199,7 +201,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         for (;;) {
             if (eof || abortSoon)
                 break;
@@ -240,7 +242,13 @@ public:
         }
         return NULL;
     }
-
+    virtual void reset() override
+    {
+        PARENT::reset();
+        left.clear();
+        right.clear();
+        nextright.clear();
+    }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) const override
     {
         initMetaInfo(info);
@@ -282,14 +290,14 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         eof = !container.queryLocalOrGrouped() && !firstNode();
         count = 0;
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (!eof) {
             if (count==0)
                 eof = !helper->first();
@@ -334,13 +342,13 @@ public:
     }
     virtual void start() override
     {
-        ActivityTimer s(totalCycles, timeActivities);
+        ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         dohere = container.queryLocalOrGrouped() || firstNode();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (dohere)
         {
             OwnedConstThorRow row;
@@ -407,7 +415,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities);
+        ActivityTimer t(slaveTimerStats, timeActivities);
         if (eof || abortSoon)
             return NULL;
         assertex(rows);

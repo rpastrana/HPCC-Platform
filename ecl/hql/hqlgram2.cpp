@@ -75,11 +75,6 @@ static void setAttribute(int attrToken)
     attributeToTokenMap[attrToken] = attrToken;
 }
 
-static void setKeyword(int attrToken)
-{
-    attributeToTokenMap[attrToken] = attrToken;
-}
-
 //called if the attribute is clashes with another reserved word
 static void setAttribute(int attrToken, int lexToken)
 {
@@ -296,7 +291,7 @@ IHqlExpression * HqlGram::createSetRange(attribute & array, attribute & range)
                     IHqlExpression * from = ensureExprType(rangeExpr->queryChild(0), indexType);
                     IHqlExpression * to = ensureExprType(rangeExpr->queryChild(1), indexType);
                     OwnedHqlExpr length = createValue(no_add, LINK(indexType), createValue(no_sub, LINK(indexType), to, from), createConstant(indexType->castFrom(true, (__int64)1)));
-                    dsChooseN.setown(createDataset(no_choosen, dsFromList.getClear(), createComma(length.getClear(), LINK(from))));
+                    dsChooseN.setown(createDataset(no_choosen, { dsFromList.getClear(), length.getClear(), LINK(from) }));
                     break;
                 }
             case no_rangeto :
@@ -1044,7 +1039,7 @@ IHqlExpression * HqlGram::processEmbedBody(const attribute & errpos, IHqlExpress
     else
         result.setown(createValue(no_embedbody, LINK(type), args));
 
-    result.setown(createLocationAnnotation(result.getClear(), errpos.pos));
+    result.setown(forceCreateLocationAnnotation(result.getClear(), errpos.pos));
 
     if (queryParametered())  // MORE - this code should be in checkEmbedBody?
     {
@@ -1149,10 +1144,9 @@ IHqlExpression * HqlGram::processIndexBuild(const attribute &err, attribute & in
         }
 
         //Recalculated because it might be updated in modifyIndexPayloadRecord() above
-        bool hasFileposition = getBoolAttributeInList(flags, filepositionAtom, true);
         record.setown(checkBuildIndexRecord(record.getClear(), *recordAttr));
         record.setown(checkIndexRecord(record, *recordAttr, flags));
-        projectedDataset.setown(createDatasetF(no_selectfields, LINK(dataset), LINK(record), NULL));
+        projectedDataset.setown(createDataset(no_selectfields, { LINK(dataset), LINK(record) }));
         warnIfRecordPacked(projectedDataset, *recordAttr);
     }
     else
@@ -1437,170 +1431,104 @@ IHqlExpression * HqlGram::leaveService(const attribute & errpos)
 
 //-----------------------------------------------------------------------------
 
-
-/* this func does not affect linkage */
-/* Assume: field is of the form: (((self.r1).r2...).rn). */
-IHqlExpression * HqlGram::queryAlreadyAssigned(IHqlExpression * select)
-{
-    IHqlExpression * match = (IHqlExpression *)select->queryTransformExtra();
-    if (match && !match->isAttribute())
-        return select;
-    if (select->getOperator() == no_select)
-    {
-        IHqlExpression * lhs = select->queryChild(0);
-        if (lhs->getOperator() == no_select)
-            return queryAlreadyAssigned(lhs);
-    }
-    return nullptr;
-}
-
-bool HqlGram::checkAlreadyAssigned(const attribute & errpos, IHqlExpression * select)
-{
-    IHqlExpression * assigned = queryAlreadyAssigned(select);
-    if (!assigned)
-        return false;
-
-    StringBuffer s;
-    getFldName(assigned,s);
-    if (assigned == select)
-    {
-        reportError(ERR_VALUEDEFINED, errpos, "A value for \"%s\" has already been specified", s.str());
-    }
-    else
-    {
-        StringBuffer selectText;
-        getFldName(select,selectText);
-        reportError(ERR_VALUEDEFINED, errpos.pos, "A value for \"%s\" is already specified by the assignment to \"%s\"", selectText.str(), s.str());
-    }
-
-    return true;
-}
-
-IHqlExpression * HqlGram::findAssignment(IHqlExpression *field)
-{
-//  assertex(field->getOperator() == no_select);
-    IHqlExpression * match = (IHqlExpression *)field->queryTransformExtra();
-    if (match && !match->isAttribute())
-        return match;
-    return NULL;
-}
-
-/* All in parms will be consumed by this function */
-void HqlGram::addAssignment(attribute & target, attribute &source)
-{
-    OwnedHqlExpr targetExpr = target.getExpr();
-    OwnedHqlExpr srcExpr = source.getExpr();
-
-    if (!srcExpr) // something bad just happened.
-        return; 
-    
-    node_operator targetOp = targetExpr->getOperator();
-    if (targetOp ==no_self) // self := expr;
-    {
-        ITypeInfo* type = srcExpr->queryType();
-        if (!type)
-            type = queryCurrentTransformType();
-        
-        switch(type->getTypeCode())
-        {
-            case type_record:
-            case type_row:
-                addAssignall(targetExpr.getClear(), srcExpr.getClear(), target);
-                break;
-            default:
-                {
-                    StringBuffer msg("Can not assign non-record type ");
-                    getFriendlyTypeStr(type, msg).append(" to self");
-                    reportError(ERR_TRANS_ILLASSIGN2SELF, target, "%s", msg.str());
-                }
-        }
-    }
-    else if (targetOp == no_select)
-    {
-        // self.* := expr;
-        if (checkAlreadyAssigned(target, targetExpr))
-        {
-        }
-        else if (targetExpr->queryType()->getTypeCode() == type_row)
-        {
-            //assertex(srcExpr->getOperator() == no_null);
-            addAssignall(targetExpr.getClear(), srcExpr.getClear(), target);
-        }
-        else
-            doAddAssignment(curTransform, targetExpr.getClear(), srcExpr.getClear(), target);
-    }
-    //else error occurred somewhere else
-}
-
-
-void HqlGram::addAssignment(const attribute & errpos, IHqlExpression * targetExpr, IHqlExpression * srcExpr)
-{
-    if (!srcExpr) // something bad just happened.
-        return; 
-    
-    node_operator targetOp = targetExpr->getOperator();
-    if (targetOp ==no_self) // self := expr;
-    {
-        ITypeInfo* type = srcExpr->queryType();
-        if (!type)
-            type = queryCurrentTransformType();
-        
-        switch(type->getTypeCode())
-        {
-            case type_record:
-            case type_row:
-                addAssignall(LINK(targetExpr), LINK(srcExpr), errpos);
-                break;
-            default:
-                {
-                    StringBuffer msg("Can not assign non-record type ");
-                    getFriendlyTypeStr(type, msg).append(" to self");
-                    reportError(ERR_TRANS_ILLASSIGN2SELF, errpos, "%s", msg.str());
-                }
-        }
-    }
-    else if (targetOp == no_select)
-    {
-        // self.* := expr;      assertex(targetExpr->getOperator()==no_select);
-        if (checkAlreadyAssigned(errpos, targetExpr))
-        {
-        }
-        else if (targetExpr->queryType()->getTypeCode() == type_row)
-        {
-            //assertex(srcExpr->getOperator() == no_null);
-            addAssignall(LINK(targetExpr), LINK(srcExpr), errpos);
-        }
-        else
-            doAddAssignment(curTransform, LINK(targetExpr), LINK(srcExpr), errpos);
-    }
-    //else error occurred somewhere else
-}
-
-
-class SelfReferenceReplacer
+static HqlTransformerInfo selfReferenceReplacerInfo("SelfReferenceReplacer");
+class SelfReferenceReplacer : public QuickHqlTransformer, public CInterface
 {
 public:
-    SelfReferenceReplacer(HqlGram * _parser, IHqlExpression * _self) : parser(_parser), self(_self)
+    SelfReferenceReplacer(HqlGram * _parser, IHqlExpression * _self)
+    : QuickHqlTransformer(selfReferenceReplacerInfo, nullptr), self(_self), parser(_parser)
     {
     }
 
     IHqlExpression * replaceExpression(IHqlExpression * expr)
     {
-        return recursiveReplaceExpression(expr);
+        return transform(expr);
+    }
+
+    IHqlExpression * queryAlreadyAssigned(IHqlExpression * select)
+    {
+        IHqlExpression * match = (IHqlExpression *)select->queryTransformExtra();
+        if (match && !match->isAttribute())
+            return select;
+        if (select->getOperator() == no_select)
+        {
+            IHqlExpression * lhs = select->queryChild(0);
+            if (lhs->getOperator() == no_select)
+                return queryAlreadyAssigned(lhs);
+        }
+        return nullptr;
+    }
+
+    bool haveAssignedToChildren(IHqlExpression * select)
+    {
+        return select->queryTransformExtra() == alreadyAssignedNestedTag;
+    }
+
+    bool haveAssignedToAllChildren(IHqlExpression * select)
+    {
+        return haveAssignedToAllChildren(select, select->queryRecord());
+    }
+
+    IHqlExpression * findAssignment(IHqlExpression *field)
+    {
+    //  assertex(field->getOperator() == no_select);
+        IHqlExpression * match = (IHqlExpression *)field->queryTransformExtra();
+        if (match && !match->isAttribute())
+            return match;
+        return NULL;
+    }
+
+    void associateAssignedValues(IHqlExpression * to, IHqlExpression * from)
+    {
+        //Associate the expression with target assignments, so we can quickly check if something has been assigned to,
+        //and also substitute references to SELF.x on the rhs of an assignment.
+        to->setTransformExtra(from);
+
+        IHqlExpression * parent = to->queryChild(0);
+        while ((parent->getOperator() == no_select) && !parent->queryTransformExtra())
+        {
+            parent->setTransformExtra(alreadyAssignedNestedTag);
+            parent = parent->queryChild(0);
+        }
+    }
+
+    bool haveAssignedToAllChildren(IHqlExpression * select, IHqlExpression * record)
+    {
+        IHqlExpression * match = static_cast<IHqlExpression *>(select->queryTransformExtra());
+        if (!match)
+            return false;
+        if (match != alreadyAssignedNestedTag)
+            return true;
+        if (!record)
+            return false;
+        ForEachChild(i, record)
+        {
+            IHqlExpression * cur = record->queryChild(i);
+            switch (cur->getOperator())
+            {
+            case no_record:
+                if (!haveAssignedToAllChildren(select, cur))
+                    return false;
+                break;
+            case no_ifblock:
+                if (!haveAssignedToAllChildren(select, cur->queryChild(1)))
+                    return false;
+                break;
+            case no_field:
+            {
+                OwnedHqlExpr nested = createSelectExpr(LINK(select), LINK(cur));
+                if (!haveAssignedToAllChildren(nested, cur->queryRecord()))
+                    return false;
+                break;
+            }
+            }
+        }
+        return true;
     }
 
 protected:
-    IHqlExpression * doRecursiveReplaceExpression(IHqlExpression * expr)
+    IHqlExpression * createTransformedBody(IHqlExpression * expr)
     {
-        IHqlExpression * body = expr->queryBody();
-        if (expr != body)
-        {
-            OwnedHqlExpr mapped = recursiveReplaceExpression(body);
-            if (mapped == body)
-                return LINK(expr);
-            return expr->cloneAllAnnotations(mapped);
-        }
-
         if (expr == self)
             return LINK(expr);
 
@@ -1609,7 +1537,7 @@ protected:
             return LINK(expr);
 
         //Fields and records cannot be returned as-is because this is an unnormalized expression
-        //and a TABLE statment might have references to self in the result record (HPCC-20863)
+        //and a TABLE statement might have references to self in the result record (HPCC-20863)
         switch (expr->getOperator())
         {
         case no_attr:
@@ -1621,7 +1549,7 @@ protected:
             {
                 //The following optimization would be required if we ever supported recursive records.
                 IHqlExpression * rhs = expr->queryChild(1);
-                OwnedHqlExpr newRhs = recursiveReplaceExpression(rhs);
+                OwnedHqlExpr newRhs = transform(rhs);
                 if (rhs == newRhs)
                     return LINK(expr);
                 IHqlExpression * lhs = expr->queryChild(0);
@@ -1629,23 +1557,10 @@ protected:
             }
         }
 
-        bool same = true;
-        HqlExprArray args;
-        for (unsigned i=0; i< max; i++)
-        {
-            IHqlExpression * cur = expr->queryChild(i);
-            IHqlExpression * tr = recursiveReplaceExpression(cur);
-            args.append(*tr);
-            if (cur != tr)
-                same = false;
-        }
-
-        if (same)
-            return LINK(expr);
-        return expr->clone(args);
+        return QuickHqlTransformer::createTransformedBody(expr);
     }
 
-    IHqlExpression * recursiveReplaceExpression(IHqlExpression * expr)
+    IHqlExpression * transform(IHqlExpression * expr)
     {
         if (!containsSelf(expr))
             return LINK(expr);
@@ -1655,7 +1570,7 @@ protected:
         {
             if (mapped == alreadyAssignedNestedTag)
             {
-                if (parser->haveAssignedToAllChildren(expr))
+                if (haveAssignedToAllChildren(expr))
                 {
                     //create a new nested project from the child assignments.
                     //This will always succeed since we have assigned to all the children
@@ -1675,7 +1590,7 @@ protected:
             return ensureExprType(mapped, expr->queryType());
         }
 
-        IHqlExpression * ret = doRecursiveReplaceExpression(expr);
+        IHqlExpression * ret = createTransformed(expr);
         expr->setTransformExtra(ret);
         return ret;
     }
@@ -1710,14 +1625,146 @@ protected:
     HqlGram * parser;
 };
 
+//-----------------------------------------------------------------------------
+
+static bool wasLegacyAssignable(ITypeInfo * to, ITypeInfo * from)
+{
+    return to && from && (to->getTypeCode() == type_boolean) && isIntegralType(from);
+}
+
+/* this func does not affect linkage */
+/* Assume: field is of the form: (((self.r1).r2...).rn). */
+IHqlExpression * HqlGram::queryAlreadyAssigned(IHqlExpression * select)
+{
+    return curSelfReplacer ? curSelfReplacer->queryAlreadyAssigned(select) : nullptr;
+}
+
+bool HqlGram::checkAlreadyAssigned(const attribute & errpos, IHqlExpression * select)
+{
+    IHqlExpression * assigned = queryAlreadyAssigned(select);
+    if (!assigned)
+        return false;
+
+    StringBuffer s;
+    getFldName(assigned,s);
+    if (assigned == select)
+    {
+        reportError(ERR_VALUEDEFINED, errpos, "A value for \"%s\" has already been specified", s.str());
+    }
+    else
+    {
+        StringBuffer selectText;
+        getFldName(select,selectText);
+        reportError(ERR_VALUEDEFINED, errpos.pos, "A value for \"%s\" is already specified by the assignment to \"%s\"", selectText.str(), s.str());
+    }
+
+    return true;
+}
+
+IHqlExpression * HqlGram::findAssignment(IHqlExpression *select)
+{
+    return curSelfReplacer ? curSelfReplacer->findAssignment(select) : nullptr;
+}
+
+/* All in parms will be consumed by this function */
+void HqlGram::addAssignment(attribute & target, attribute &source)
+{
+    OwnedHqlExpr targetExpr = target.getExpr();
+    OwnedHqlExpr srcExpr = source.getExpr();
+
+    if (!srcExpr) // something bad just happened.
+        return;
+
+    node_operator targetOp = targetExpr->getOperator();
+    if (targetOp ==no_self) // self := expr;
+    {
+        ITypeInfo* type = srcExpr->queryType();
+        if (!type)
+            type = queryCurrentTransformType();
+
+        switch(type->getTypeCode())
+        {
+            case type_record:
+            case type_row:
+            case type_null: // Assign no_null
+                addAssignall(targetExpr.getClear(), srcExpr.getClear(), target);
+                break;
+            default:
+                {
+                    StringBuffer msg("Can not assign non-record type ");
+                    getFriendlyTypeStr(type, msg).append(" to self");
+                    reportError(ERR_TRANS_ILLASSIGN2SELF, target, "%s", msg.str());
+                    break;
+                }
+        }
+    }
+    else if (targetOp == no_select)
+    {
+        // self.* := expr;
+        if (checkAlreadyAssigned(target, targetExpr))
+        {
+        }
+        else if (targetExpr->queryType()->getTypeCode() == type_row)
+        {
+            //assertex(srcExpr->getOperator() == no_null);
+            addAssignall(targetExpr.getClear(), srcExpr.getClear(), target);
+        }
+        else
+            doAddAssignment(curTransform, targetExpr.getClear(), srcExpr.getClear(), target);
+    }
+    //else error occurred somewhere else
+}
+
+
+void HqlGram::addAssignment(const attribute & errpos, IHqlExpression * targetExpr, IHqlExpression * srcExpr)
+{
+    if (!srcExpr) // something bad just happened.
+        return;
+
+    node_operator targetOp = targetExpr->getOperator();
+    if (targetOp ==no_self) // self := expr;
+    {
+        ITypeInfo* type = srcExpr->queryType();
+        if (!type)
+            type = queryCurrentTransformType();
+
+        switch(type->getTypeCode())
+        {
+            case type_record:
+            case type_row:
+            case type_null: // no_null
+                addAssignall(LINK(targetExpr), LINK(srcExpr), errpos);
+                break;
+            default:
+                {
+                    StringBuffer msg("Can not assign non-record type ");
+                    getFriendlyTypeStr(type, msg).append(" to self");
+                    reportError(ERR_TRANS_ILLASSIGN2SELF, errpos, "%s", msg.str());
+                    break;
+                }
+        }
+    }
+    else if (targetOp == no_select)
+    {
+        // self.* := expr;      assertex(targetExpr->getOperator()==no_select);
+        if (checkAlreadyAssigned(errpos, targetExpr))
+        {
+        }
+        else if (targetExpr->queryType()->getTypeCode() == type_row)
+        {
+            //assertex(srcExpr->getOperator() == no_null);
+            addAssignall(LINK(targetExpr), LINK(srcExpr), errpos);
+        }
+        else
+            doAddAssignment(curTransform, LINK(targetExpr), LINK(srcExpr), errpos);
+    }
+    //else error occurred somewhere else
+}
+
+
 IHqlExpression * HqlGram::replaceSelfReferences(IHqlExpression * transform, IHqlExpression * rhs, IHqlExpression * self, const attribute& errpos)
 {
-    //MORE: This could be done more efficiently by replacing all the self references in a single pass
-    //would need to tag assigns in the transform, and process incrementally at the end.
-    //Seems to be fast enough anyway at the moment.
-    SelfReferenceReplacer replacer(this, self);
-
-    OwnedHqlExpr ret = replacer.replaceExpression(rhs);
+    OwnedHqlExpr ret = curSelfReplacer ? curSelfReplacer->replaceExpression(rhs) : LINK(rhs);
     if (containsSelf(ret))
     {
         //Horrible can have an assignment to an attribute which is then used in a nested transform - so as well as
@@ -1748,7 +1795,7 @@ void HqlGram::doAddAssignment(IHqlExpression * transform, IHqlExpression * _fiel
     // type checking
     ITypeInfo* fldType = field->queryType();
     Owned<ITypeInfo> rhsType = rhs->getType();
-    if (!rhsType)           // this happens when rhs is no_null.
+    if (!rhsType || (rhsType->getTypeCode() == type_null))           // this happens when rhs is no_null.
         rhsType.set(fldType);
 
     // handle alien type
@@ -1764,8 +1811,15 @@ void HqlGram::doAddAssignment(IHqlExpression * transform, IHqlExpression * _fiel
         getFriendlyTypeStr(rhsType,msg).append(" to ");
         getFriendlyTypeStr(fldType,msg).append(" (field ");
         getFldName(field,msg).append(")");
-        reportError(ERR_TYPE_INCOMPATIBLE,errpos, "%s", msg.str());
-        rhs.setown(createNullExpr(field));
+        if (wasLegacyAssignable(fldType, rhsType))
+        {
+            reportWarning(CategoryCast, ERR_TYPE_INCOMPATIBLE,errpos.pos, "%s", msg.str());
+        }
+        else
+        {
+            reportError(ERR_TYPE_INCOMPATIBLE,errpos, "%s", msg.str());
+            rhs.setown(createNullExpr(field));
+        }
     }
 
     appendTransformAssign(transform, field, rhs, errpos);
@@ -1791,16 +1845,8 @@ void HqlGram::appendTransformAssign(IHqlExpression * transform, IHqlExpression *
         assign = createLocationAnnotation(assign, errpos.pos);
     transform->addOperand(assign);
 
-    //Associate the expression with target assignments, so we can quickly check if something has been assigned to,
-    //and also substiture refrences to SELF.x on the rhs of an assignment.
-    to->setTransformExtraOwned(from.getClear());
-
-    IHqlExpression * parent = to->queryChild(0);
-    while ((parent->getOperator() == no_select) && !parent->queryTransformExtra())
-    {
-        parent->setTransformExtra(alreadyAssignedNestedTag);
-        parent = parent->queryChild(0);
-    }
+    assertex(curSelfReplacer);
+    curSelfReplacer->associateAssignedValues(to, from);
 }
 
 IHqlExpression * HqlGram::forceEnsureExprType(IHqlExpression * expr, ITypeInfo * type)
@@ -1891,45 +1937,12 @@ bool haveAssignedToChildren(IHqlExpression * select, IHqlExpression * transform)
 
 bool HqlGram::haveAssignedToChildren(IHqlExpression * select)
 {
-    return select->queryTransformExtra() == alreadyAssignedNestedTag;
-}
-
-bool HqlGram::haveAssignedToAllChildren(IHqlExpression * select, IHqlExpression * record)
-{
-    IHqlExpression * match = static_cast<IHqlExpression *>(select->queryTransformExtra());
-    if (!match)
-        return false;
-    if (match != alreadyAssignedNestedTag)
-        return true;
-    if (!record)
-        return false;
-    ForEachChild(i, record)
-    {
-        IHqlExpression * cur = record->queryChild(i);
-        switch (cur->getOperator())
-        {
-        case no_record:
-            if (!haveAssignedToAllChildren(select, cur))
-                return false;
-            break;
-        case no_ifblock:
-            if (!haveAssignedToAllChildren(select, cur->queryChild(1)))
-                return false;
-            break;
-        case no_field:
-        {
-            OwnedHqlExpr nested = createSelectExpr(LINK(select), LINK(cur));
-            if (!haveAssignedToAllChildren(nested, cur->queryRecord()))
-                return false;
-        }
-        }
-    }
-    return true;
+    return curSelfReplacer ? curSelfReplacer->haveAssignedToChildren(select) : false;
 }
 
 bool HqlGram::haveAssignedToAllChildren(IHqlExpression * select)
 {
-    return haveAssignedToAllChildren(select, select->queryRecord());
+    return curSelfReplacer ? curSelfReplacer->haveAssignedToAllChildren(select) : false;
 }
 
 
@@ -2049,7 +2062,7 @@ IHqlExpression * HqlGram::createDefaultProjectDataset(IHqlExpression * record, I
     OwnedHqlExpr seq = createActiveSelectorSequence(src, NULL);
     OwnedHqlExpr left = createSelector(no_left, src, seq);
     OwnedHqlExpr transform = createDefaultAssignTransform(record, left, errpos);
-    return createDatasetF(no_hqlproject, ::ensureDataset(src), LINK(transform), LINK(seq), NULL);
+    return createDataset(no_hqlproject, { ::ensureDataset(src), LINK(transform), LINK(seq) });
 }
 
 
@@ -2188,7 +2201,7 @@ IHqlExpression * HqlGram::createRowAssignTransform(const attribute & srcAttr, co
 
 IHqlExpression * HqlGram::createClearTransform(IHqlExpression * record, const attribute & errpos)
 {
-    OwnedHqlExpr null = createValue(no_null);
+    OwnedHqlExpr null = createValue(no_null, makeNullType());
     return createDefaultAssignTransform(record, null, errpos);
 }
 
@@ -2715,7 +2728,7 @@ void HqlGram::addField(const attribute &errpos, IIdAtom * name, ITypeInfo *_type
         ITypeInfo * valueType = value->queryType();
         // MORE - is this implicit or explicit?
         if (!expectedType->assignableFrom(valueType->queryPromotedType()))
-            canNotAssignTypeWarn(fieldType,valueType,errpos);
+            canNotAssignTypeWarn(fieldType,valueType,str(name),errpos);
         if (expectedType->getTypeCode() != type_row)
         {
             value.setown(ensureExprType(value, expectedType));
@@ -2732,7 +2745,12 @@ void HqlGram::addField(const attribute &errpos, IIdAtom * name, ITypeInfo *_type
             if (defvalueType != expectedType)
             {
                 if (!expectedType->assignableFrom(defvalueType->queryPromotedType()))
-                    canNotAssignTypeError(fieldType,defvalueType,errpos);
+                {
+                    if (wasLegacyAssignable(expectedType, defvalueType))
+                        canNotAssignTypeWarn(expectedType,defvalueType,str(name),errpos);
+                    else
+                        canNotAssignTypeError(fieldType,defvalueType,str(name),errpos);
+                }
                 IValue * constValue = defaultValue->queryValue();
                 if (constValue && (constValue->rangeCompare(expectedType) > 0))
                     reportWarning(CategorySyntax, ERR_TYPE_INCOMPATIBLE, errpos.pos, "%s", "Default value too large");
@@ -2839,9 +2857,16 @@ void HqlGram::addDatasetField(const attribute &errpos, IIdAtom * name, ITypeInfo
         }
         else if (!dsType->assignableFrom(valueType))
         {
-            canNotAssignTypeError(dsType,valueType,errpos);
-            value->Release();
-            value = NULL;
+            if (wasLegacyAssignable(dsType, valueType))
+            {
+                canNotAssignTypeWarn(dsType,valueType,str(name),errpos);
+            }
+            else
+            {
+                canNotAssignTypeError(dsType,valueType,str(name),errpos);
+                value->Release();
+                value = NULL;
+            }
         }
     }
     else
@@ -2889,9 +2914,16 @@ void HqlGram::addDictionaryField(const attribute &errpos, IIdAtom * name, ITypeI
             dictType.set(value->queryType());
         else if (!dictType->assignableFrom(valueType))
          {
-             canNotAssignTypeError(dictType,valueType,errpos);
-             value->Release();
-             value = NULL;
+            if (wasLegacyAssignable(dictType, valueType))
+            {
+                canNotAssignTypeWarn(dictType,valueType,str(name),errpos);
+            }
+            else
+            {
+                 canNotAssignTypeError(dictType,valueType,str(name),errpos);
+                 value->Release();
+                 value = NULL;
+            }
          }
     }
     if (queryAttributeInList(virtualAtom, attrs))
@@ -3137,6 +3169,7 @@ IHqlExpression * HqlGram::leaveLamdaExpression(attribute * paramattr, attribute 
 #endif
 class PseudoPatternScope : public CHqlScope
 {
+    using CHqlScope::defineSymbol;
 public:
     PseudoPatternScope(IHqlExpression * _patternList);
 
@@ -3157,8 +3190,8 @@ public:
 
     virtual bool isImplicit() const { return false; }
     virtual bool isPlugin() const { return false; }
-    virtual int getPropInt(IIdAtom *, int dft) const { PSEUDO_UNIMPLEMENTED; return dft; }
-    virtual bool getProp(IIdAtom *, StringBuffer &) const { PSEUDO_UNIMPLEMENTED; return false; }
+    virtual int getPropInt(IAtom *, int dft) const { PSEUDO_UNIMPLEMENTED; return dft; }
+    virtual bool getProp(IAtom *, StringBuffer &) const { PSEUDO_UNIMPLEMENTED; return false; }
 
     virtual IHqlScope * clone(HqlExprArray & children, HqlExprArray & symbols) { throwUnexpected(); }
     virtual IHqlScope * queryConcreteScope() { return this; }
@@ -3220,6 +3253,8 @@ void HqlGram::processForwardModuleDefinition(const attribute & errpos)
     }
 
     HqlGramCtx * parentCtx = new HqlGramCtx(lookupCtx, inSignedModule);
+    // since the forward scope lives longer than this HqlGram clear the container to prevent access to invalid memory
+    parentCtx->clearParentContainer();
     saveContext(*parentCtx, true);
     Owned<IHqlScope> newScope = createForwardScope(queryGlobalScope(), parentCtx, lookupCtx.queryParseContext());
     IHqlExpression * newScopeExpr = queryExpression(newScope);
@@ -3751,7 +3786,7 @@ IHqlExpression *HqlGram::lookupSymbol(IIdAtom * searchName, const attribute& err
                 else
                     reportError(ERR_OBJ_NOSUCHFIELD, errpos, "Object does not have a member named '%s'", str(searchName));
             }
-            else if ((modScope != containerScope) && !isExported(resolved))
+            else if (!isExported(resolved) && !modScope->isEquivalentScope(*containerScope))
                 reportError(HQLERR_CannotAccessShared, errpos, "Cannot access SHARED symbol '%s' in another module", str(searchName));
             return resolved.getClear();
         }
@@ -3888,6 +3923,17 @@ IHqlExpression *HqlGram::lookupSymbol(IIdAtom * searchName, const attribute& err
         // recover: to avoid reload the definition again and again
         return createSymbol(searchName, createConstant(0), ob_private);
     }
+    catch (IException * e)
+    {
+        unsigned code = e->errorCode();
+        if (code == ERR_ABORT_PARSING)
+            throw;
+        StringBuffer msg;
+        e->errorMessage(msg);
+        e->Release();
+        reportError(code, errpos, "%s", msg.str());
+        return nullptr;
+    }
     return NULL;
 }
 
@@ -3915,7 +3961,13 @@ unsigned HqlGram::checkCompatible(ITypeInfo * t1, ITypeInfo * t2, const attribut
         StringBuffer msg("Type mismatch - expected ");
         getFriendlyTypeStr(t1,msg).append(" value, given ");
         getFriendlyTypeStr(t2,msg);
-        reportError(ERR_EXPECTED, ea, "%s", msg.str());
+        if (wasLegacyAssignable(t1, t2) || wasLegacyAssignable(t2, t1))
+        {
+            reportWarning(CategoryCast, ERR_TYPE_INCOMPATIBLE, ea.pos, "%s", msg.str());
+            return wasLegacyAssignable(t1, t2) ? 1 : 2;
+        }
+        else
+            reportError(ERR_EXPECTED, ea, "%s", msg.str());
     }
 
     return 0;
@@ -4113,7 +4165,7 @@ IHqlExpression* HqlGram::checkServiceDef(IHqlScope* serviceScope,IIdAtom * name,
                 checkSvcAttrNoValue(attr, errpos);
             }
             else if ((name == userMatchFunctionAtom) || (name == costAtom) || (name == allocatorAtom) || (name == extendAtom) || (name == passParameterMetaAtom) ||
-                     (name == namespaceAtom) || (name==prototypeAtom) || (name == foldAtom) || (name == nofoldAtom))
+                     (name == namespaceAtom) || (name==prototypeAtom) || (name == foldAtom) || (name == nofoldAtom) || (name == deprecatedAtom))
             {
             }
             else if (name == holeAtom)
@@ -5213,7 +5265,10 @@ void HqlGram::ensureType(attribute &a, ITypeInfo * type)
             StringBuffer msg("Incompatible types: expected ");
             getFriendlyTypeStr(type, msg).append(", given ");
             getFriendlyTypeStr(expr->queryType(),msg);
-            reportError(ERR_TYPE_INCOMPATIBLE, a, "%s", msg.str());
+            if (wasLegacyAssignable(type, exprType))
+                reportWarning(CategoryCast, ERR_TYPE_INCOMPATIBLE, a.pos, "%s", msg.str());
+            else
+                reportError(ERR_TYPE_INCOMPATIBLE, a, "%s", msg.str());
         }
         expr = a.getExpr();
         a.setExpr(ensureExprType(expr, type));
@@ -5825,8 +5880,8 @@ IHqlExpression * HqlGram::createDatasetFromList(attribute & listAttr, attribute 
 
     if ((list->getOperator() == no_list) && (list->numChildren() == 0))
     {
-        OwnedHqlExpr list = createValue(no_null);
-        OwnedHqlExpr table = createDataset(no_temptable, LINK(list), createComma(record.getClear(), LINK(attrs)));
+        OwnedHqlExpr list = createValue(no_null, makeNullType());
+        OwnedHqlExpr table = createDataset(no_temptable, { LINK(list), record.getClear(), LINK(attrs) });
         return convertTempTableToInlineTable(*errorHandler, listAttr.pos, table);
     }
 
@@ -6089,7 +6144,7 @@ IHqlExpression * HqlGram::processSortList(const attribute & errpos, node_operato
                     if (attr == prefetchAtom) ok = true;
                     if (attr == mergeAtom) ok = true;
                     if (attr == groupedAtom) ok = true;
-                    /* no break */
+                    //fallthrough
                 case no_group:
                     if (attr == allAtom) ok = true;
                     if (attr == localAtom) ok = true;
@@ -6102,7 +6157,7 @@ IHqlExpression * HqlGram::processSortList(const attribute & errpos, node_operato
                     break;
                 case no_topn:
                     if (attr == bestAtom) ok = true;
-                    /* no break */
+                    //fallthrough
                 case no_sort:
                     if (attr == localAtom) ok = true;
                     if (attr == skewAtom) ok = true;
@@ -6118,7 +6173,7 @@ IHqlExpression * HqlGram::processSortList(const attribute & errpos, node_operato
                 case no_mergejoin:
                     if (attr == dedupAtom) ok = true;
                     if (attr == assertAtom) ok = true;
-                    /* no break */
+                    //fallthrough
                 case no_nwayjoin:
                     if (attr == localAtom) ok = true;
                     if (attr == mofnAtom) ok = true;
@@ -6237,7 +6292,7 @@ IHqlExpression * HqlGram::createLoopCondition(IHqlExpression * leftDs, IHqlExpre
     if (!filter) filter = createAttribute(_omitted_Atom);
     if (!loopCond) loopCond= createAttribute(_omitted_Atom);
 
-    return createComma(count, filter, loopCond);
+    return createComma({count, filter, loopCond });
 }
 
 void HqlGram::reportError(int errNo, const attribute& a, const char* format, ...)
@@ -6274,13 +6329,13 @@ static bool includeError(HqlLookupContext & ctx, WarnErrorCategory category)
         return true;
 }
 
-void HqlGram::doReportWarning(WarnErrorCategory category, int warnNo, const char *msg, const char *filename, int lineno, int column, int pos)
+void HqlGram::doReportWarning(WarnErrorCategory category, ErrorSeverity severity, int warnNo, const char *msg, const char *filename, int lineno, int column, int pos)
 {
-	if (includeError(lookupCtx, category))
-	{
-		Owned<IError> error = createError(category, queryDefaultSeverity(category), warnNo, msg, filename, lineno, column, pos);
-		report(error);
-	}
+    if (includeError(lookupCtx, category))
+    {
+        Owned<IError> error = createError(category, severity, warnNo, msg, filename, lineno, column, pos);
+        report(error);
+    }
 }
 
 void HqlGram::reportMacroExpansionPosition(IError * warning, HqlLex * lexer)
@@ -6297,10 +6352,11 @@ void HqlGram::reportMacroExpansionPosition(IError * warning, HqlLex * lexer)
 
     expandingMacroPosition = true;
     unsigned code = warning->errorCode();
-    if (warning->getSeverity() == SeverityFatal)
+    ErrorSeverity severity = warning->getSeverity();
+    if (severity == SeverityFatal)
         errorHandler->reportError(code, s.str(), str(lexer->querySourcePath()), lexer->get_yyLineNo(), lexer->get_yyColumn(), 0);
     else
-        doReportWarning(warning->getCategory(), code, s.str(), str(lexer->querySourcePath()), lexer->get_yyLineNo(), lexer->get_yyColumn(), 0);
+        doReportWarning(warning->getCategory(), severity, code, s.str(), str(lexer->querySourcePath()), lexer->get_yyLineNo(), lexer->get_yyColumn(), 0);
     expandingMacroPosition = false;
 }
 
@@ -6359,7 +6415,7 @@ void HqlGram::reportWarningVa(WarnErrorCategory category, int warnNo, const attr
 void HqlGram::reportWarning(WarnErrorCategory category, int warnNo, const char *msg, int lineno, int column)
 {
     if (errorHandler && !errorDisabled && includeError(lookupCtx, category))
-        doReportWarning(category, warnNo, msg, querySourcePathText(), lineno, column, 0);
+        doReportWarning(category, queryDefaultSeverity(category), warnNo, msg, querySourcePathText(), lineno, column, 0);
 }
 
 
@@ -6412,7 +6468,7 @@ void HqlGram::report(IError* error)
 void HqlGram::reportWarning(WarnErrorCategory category, int warnNo, const char *msg, const char *filename, int lineno, int column, int pos)
 {
     if (errorHandler && !errorDisabled)
-        doReportWarning(category, warnNo, msg, filename, lineno, column, pos);
+        doReportWarning(category, queryDefaultSeverity(category), warnNo, msg, filename, lineno, column, pos);
 }
 
 size32_t HqlGram::errCount()
@@ -6797,8 +6853,8 @@ IHqlExpression * HqlGram::checkParameter(const attribute * errpos, IHqlExpressio
             IHqlExpression * record = formal->queryRecord();
             if (record->numChildren() == 0)
                 break;
-            // fallthrough
         }
+        // fallthrough
     default:
         if (formalTC == type_row)
             formalType = formalType->queryChildType();
@@ -6819,9 +6875,16 @@ IHqlExpression * HqlGram::checkParameter(const attribute * errpos, IHqlExpressio
                             getFriendlyTypeStr(formal,tp1).str(),
                             getFriendlyTypeStr(actual,tp2).str());
                 }
-                reportError(ERR_PARAM_TYPEMISMATCH, *errpos, "%s", s.str());
+                if (wasLegacyAssignable(formalType, actualType))
+                    reportWarning(CategoryCast, ERR_TYPE_INCOMPATIBLE, errpos->pos, "%s", s.str());
+                else
+                {
+                    reportError(ERR_PARAM_TYPEMISMATCH, *errpos, "%s", s.str());
+                    return nullptr;
+                }
             }
-            return NULL;
+            else
+                return nullptr;
         }
         break;
     }
@@ -7200,13 +7263,13 @@ IHqlExpression * HqlGram::createBuildIndexFromIndex(attribute & indexAttr, attri
 
     IHqlExpression * select;
     if (sourceDataset)
-        select = createDatasetF(no_newusertable, LINK(sourceDataset), LINK(record), LINK(transform), NULL); //createUniqueId(), NULL);
+        select = createDataset(no_newusertable, { LINK(sourceDataset), LINK(record), LINK(transform) });
     else if (transform)
-        select = createDatasetF(no_newusertable, LINK(dataset), LINK(record), LINK(transform), NULL); //createUniqueId(), NULL);
+        select = createDataset(no_newusertable, { LINK(dataset), LINK(record), LINK(transform) });
     else
     {
         IHqlExpression * newRecord = checkBuildIndexRecord(LINK(record), errpos);
-        select = createDatasetF(no_selectfields, LINK(dataset), newRecord, NULL); //createUniqueId(), NULL);
+        select = createDataset(no_selectfields, { LINK(dataset), newRecord });
     }
 
     HqlExprArray args;
@@ -7537,6 +7600,31 @@ void HqlGram::checkSoapRecord(attribute & errpos)
     OwnedHqlExpr mapped = checkOutputRecord(record, errpos, allConstant, true);
 }
 
+inline bool hasHttpMarkupFlag(IHqlExpression *flags)
+{
+    if (!flags)
+        return false;
+    return (queryAttributeInList(jsonAtom, flags)!=nullptr || queryAttributeInList(xmlAtom, flags)!=nullptr);
+}
+
+IHqlExpression * HqlGram::processHttpMarkupFlag(__int64 op)
+{
+    if (op == (__int64) no_httpcall)
+        return createAttribute(jsonAtom);
+    return nullptr;
+}
+
+IHqlExpression * HqlGram::processHttpMarkupFlag(__int64 op, IHqlExpression *flags)
+{
+    if (op != (__int64) no_httpcall || hasHttpMarkupFlag(flags))
+        return flags;
+    return createComma(createAttribute(jsonAtom), flags);
+}
+
+IHqlExpression * HqlGram::processHttpMarkupFlag(__int64 op, IHqlExpression *flags, IHqlExpression *p1)
+{
+    return createComma(processHttpMarkupFlag(op, flags), p1);
+}
 
 IHqlExpression * HqlGram::checkIndexRecord(IHqlExpression * record, const attribute & errpos, OwnedHqlExpr & indexAttrs)
 {
@@ -7958,7 +8046,7 @@ IHqlExpression * HqlGram::createIndexFromRecord(IHqlExpression * record, IHqlExp
     finalRecord.setown(cleanIndexRecord(finalRecord));
 
     OwnedHqlExpr transform = createClearTransform(finalRecord, errpos);
-    return createDataset(no_newkeyindex, ds, createComma(LINK(finalRecord), replaceOperator(transform, no_newtransform), newAttrs.getClear()));
+    return createDataset(no_newkeyindex, { ds, LINK(finalRecord), replaceOperator(transform, no_newtransform), newAttrs.getClear() });
 }
 
 
@@ -8128,7 +8216,7 @@ void HqlGram::checkProjectedFields(IHqlExpression * e, attribute & errpos)
                     if (hadVariableAggregate)
                         reportError(ERR_AGG_FIELD_AFTER_VAR, errpos, "Field %s: Fields cannot follow a variable length aggregate in the record", id ? str(id) : "");
 
-                    if (value->isGroupAggregateFunction())
+                    if (value->isGroupAggregateFunction() && (value->queryType()->getTypeCode() != type_any))
                         hadVariableAggregate = true;
                 }
 
@@ -8188,29 +8276,6 @@ bool HqlGram::isExplicitlyDistributed(IHqlExpression *e)
         return true;
     return false;
 }
-
-static bool isFromFile(IHqlExpression * expr)
-{
-    for (;;)
-    {
-        switch (expr->getOperator())
-        {
-        case no_table:
-            return true;
-        case no_usertable:
-            if (isAggregateDataset(expr))
-                return false;
-            //fallthrough...
-        case no_filter:
-        case no_hqlproject:
-            expr = expr->queryChild(0);
-            break;
-        default:
-            return false;
-        }
-    }
-}
-
 
 static const char * getName(IHqlExpression * e)
 {
@@ -8288,7 +8353,6 @@ void HqlGram::checkJoinFlags(const attribute &err, IHqlExpression * join)
     bool lonly = join->hasAttribute(leftonlyAtom);
     bool ronly = join->hasAttribute(rightonlyAtom);
     bool fonly = join->hasAttribute(fullonlyAtom);
-    bool lo = join->hasAttribute(leftouterAtom) || lonly;
     bool ro = join->hasAttribute(rightouterAtom) || ronly;
     bool fo = join->hasAttribute(fullouterAtom) || fonly;
     bool keep = join->hasAttribute(keepAtom);
@@ -9885,7 +9949,7 @@ IHqlExpression * HqlGram::checkEmbedBody(const attribute & errpos, DefineIdSt * 
                                 err = strchr(err, ':') + 1;
                                 while (isspace(*err))
                                     err++;
-                                pos.lineno = embedText->getStartLine()+line-1;
+                                pos.lineno = body->getStartLine()+line-1;
                                 pos.column = col;
                                 pos.position = 0;
                             }
@@ -9983,7 +10047,6 @@ IHqlExpression * HqlGram::normalizeFunctionExpression(const attribute &idattr, D
 
 void HqlGram::defineSymbolInScope(IHqlScope * scope, DefineIdSt * defineid, IHqlExpression * expr, const attribute & idattr, int assignPos, int semiColonPos)
 {
-    IHqlScope * exprScope = expr->queryScope();
     IHqlExpression * scopeExpr = queryExpression(scope);
     IIdAtom * moduleName = nullptr;
     if (!inType)
@@ -10097,7 +10160,7 @@ void HqlGram::defineSymbolProduction(attribute & nameattr, attribute & paramattr
         if (etype && etype->getTypeCode()==type_record)
         {
             IHqlExpression *recordDef = queryExpression(etype);
-            expr.setown(createDatasetF(no_table, createConstant(str(name)), LINK(recordDef), LINK(expr), NULL));
+            expr.setown(createDataset(no_table, { createConstant(str(name)), LINK(recordDef), LINK(expr) }));
         }
         break;
 
@@ -10183,8 +10246,15 @@ void HqlGram::defineSymbolProduction(attribute & nameattr, attribute & paramattr
                     {
                         if (!matchType->assignableFrom(etype))
                         {
-                            canNotAssignTypeError(type, etype, nameattr);
-                            expr.setown(createNullExpr(matchType));
+                            if (wasLegacyAssignable(matchType, etype))
+                            {
+                                canNotAssignTypeWarn(matchType, etype,str(name),nameattr);
+                            }
+                            else
+                            {
+                                canNotAssignTypeError(type, etype, str(name), nameattr);
+                                expr.setown(createNullExpr(matchType));
+                            }
                         }
                     }
                     else
@@ -10210,15 +10280,23 @@ void HqlGram::defineSymbolProduction(attribute & nameattr, attribute & paramattr
             {
                 if (queryRecord(type) != queryNullRecord())
                 {
-                    canNotAssignTypeError(type,etype,nameattr);
-                    switch (type->getTypeCode())
+                    if (wasLegacyAssignable(type, etype))
                     {
-                    case type_record:
-                        expr.set(queryNullRecord());
-                        break;
-                    default:
-                        expr.setown(createNullExpr(type));
-                        break;
+                        canNotAssignTypeWarn(type,etype,str(name),nameattr);
+                        expr.setown(forceEnsureExprType(expr, type));
+                    }
+                    else
+                    {
+                        canNotAssignTypeError(type,etype,str(name),nameattr);
+                        switch (type->getTypeCode())
+                        {
+                        case type_record:
+                            expr.set(queryNullRecord());
+                            break;
+                        default:
+                            expr.setown(createNullExpr(type));
+                            break;
+                        }
                     }
                 }
             }
@@ -10592,7 +10670,7 @@ void HqlGram::checkNonGlobalModule(const attribute & errpos, IHqlExpression * sc
 }
 
 
-IHqlExpression * HqlGram::createLibraryInstance(const attribute & errpos, IHqlExpression * name, IHqlExpression * func, HqlExprArray & actuals)
+IHqlExpression * HqlGram::createLibraryInstance(const attribute & errpos, IHqlExpression * name, IHqlExpression * func, HqlExprArray & actuals, IHqlExpression * attrs)
 {
     if (!checkParameters(func, actuals, errpos))
         return createNullScope();
@@ -10662,6 +10740,9 @@ IHqlExpression * HqlGram::createLibraryInstance(const attribute & errpos, IHqlEx
 
     HqlExprArray realActuals;
     inputMapper.mapLogicalToReal(realActuals, actuals);
+    if (attrs)
+        attrs->unwindList(realActuals, no_comma);
+
     OwnedHqlExpr bound = bindParameters(errpos, newFunction, realActuals);
     if (!needToMapOutputs)
         return bound.getClear();
@@ -10748,7 +10829,7 @@ IHqlExpression * HqlGram::createIffDataset(IHqlExpression * record, IHqlExpressi
             OwnedHqlExpr left = createSelector(no_left, ds, seq);
             OwnedHqlExpr selectedValue = createSelectExpr(LINK(left), LINK(rhs));
             OwnedHqlExpr transform = createSingleValueTransform(record, selectedValue);
-            return createDatasetF(no_hqlproject, LINK(ds), LINK(transform), LINK(seq), NULL);
+            return createDataset(no_hqlproject, { LINK(ds), LINK(transform), LINK(seq) });
         }
 
     }
@@ -10766,7 +10847,7 @@ IHqlExpression * HqlGram::createIff(attribute & condAttr, attribute & leftAttr, 
     OwnedHqlExpr record = createRecord(field);
     OwnedHqlExpr lhs = createIffDataset(record, left);
     OwnedHqlExpr rhs = createIffDataset(record, right);
-    OwnedHqlExpr ifDs = createDatasetF(no_if, condAttr.getExpr(), lhs.getClear(), rhs.getClear(), NULL);
+    OwnedHqlExpr ifDs = createDataset(no_if, { condAttr.getExpr(), lhs.getClear(), rhs.getClear() });
     OwnedHqlExpr row1 = createRow(no_selectnth, ifDs.getClear(), getSizetConstant(1));
     return createSelectExpr(LINK(row1), LINK(field));
 }
@@ -10792,9 +10873,9 @@ IHqlExpression * HqlGram::createListIndex(attribute & list, attribute & which, I
         reportError(ERR_NO_MULTI_ARRAY, list, "Multi dimension array index is not supported");
 
     if (childType && isDatasetType(childType))
-        return createDataset(no_rowsetindex, expr.getClear(), createComma(which.getExpr(), attr));
+        return createDataset(no_rowsetindex, { expr.getClear(), which.getExpr(), attr });
     else
-        return createList(no_index, LINK(childType), createComma(expr.getClear(), which.getExpr(), attr));
+        return createValue(no_index, LINK(childType), { expr.getClear(), which.getExpr(), attr }, true);
 }
 
 void HqlGram::checkCompatibleTransforms(HqlExprArray & values, IHqlExpression * record, attribute & errpos)
@@ -10810,17 +10891,18 @@ void HqlGram::checkCompatibleTransforms(HqlExprArray & values, IHqlExpression * 
     }
 }
 
-void HqlGram::canNotAssignTypeError(ITypeInfo* expected, ITypeInfo* given, const attribute& errpos)
+void HqlGram::canNotAssignTypeError(ITypeInfo* expected, ITypeInfo* given, const char * name, const attribute& errpos)
 {
-    StringBuffer msg("Incompatible types: can not assign ");
+    VStringBuffer msg("Incompatible types for %s: can not assign ", name);
     getFriendlyTypeStr(given, msg).append(" to ");
     getFriendlyTypeStr(expected, msg);
+
     reportError(ERR_TYPE_INCOMPATIBLE, errpos, "%s", msg.str());
 }
 
-void HqlGram::canNotAssignTypeWarn(ITypeInfo* expected, ITypeInfo* given, const attribute& errpos)
+void HqlGram::canNotAssignTypeWarn(ITypeInfo* expected, ITypeInfo* given, const char * name, const attribute& errpos)
 {
-    StringBuffer msg("Incompatible types: should cast ");
+    VStringBuffer msg("Incompatible types for %s: should cast ", name);
     getFriendlyTypeStr(given, msg).append(" to a ");
     getFriendlyTypeStr(expected, msg);
     reportWarning(CategoryCast, ERR_TYPE_INCOMPATIBLE, errpos.pos, "%s", msg.str());
@@ -11433,6 +11515,7 @@ static void getTokenText(StringBuffer & msg, int token)
     case PERSIST: msg.append("PERSIST"); break;
     case PHYSICALFILENAME: msg.append("PHYSICALFILENAME"); break;
     case PIPE: msg.append("PIPE"); break;
+    case PLANE: msg.append("PLANE"); break;
     case __PLATFORM__: msg.append("__PLATFORM__"); break;
     case POWER: msg.append("POWER"); break;
     case PREFETCH: msg.append("PREFETCH"); break;
@@ -11445,6 +11528,7 @@ static void getTokenText(StringBuffer & msg, int token)
     case PULL: msg.append("PULL"); break;
     case PULLED: msg.append("PULLED"); break;
     case QUANTILE: msg.append("QUANTILE"); break;
+    case QUEUE: msg.append("QUEUE"); break;
     case QUOTE: msg.append("QUOTE"); break;
     case RANDOM: msg.append("RANDOM"); break;
     case RANGE: msg.append("RANGE"); break;
@@ -11844,8 +11928,8 @@ void HqlGram::syntaxError(const char *s, int token, int *expected)
                 return;
             }
         }
-        // fall into...
     }
+        //fallthrough
     
     default:
         msg.append(s);
@@ -12236,23 +12320,20 @@ IHqlExpression * HqlGram::createProjectRow(attribute & rowAttr, attribute & tran
 
 void HqlGram::beginTransform(ITypeInfo * recordType, IHqlExpression * originalRecord)
 {
-    if (curTransform)
-    {
-        TransformSaveInfo * saved = new TransformSaveInfo;
-        saved->curTransform.setown(curTransform);
-        saved->transformScope.setown(transformScope);
-        saved->transformRecord.setown(curTransformRecord.getClear());
-        transformSaveStack.append(*saved);
-    }
+    TransformSaveInfo * saved = new TransformSaveInfo;
+    saved->curTransform.setown(curTransform);
+    saved->transformScope.setown(transformScope);
+    saved->transformRecord.setown(curTransformRecord.getClear());
+    saved->selfReplacer.swap(curSelfReplacer);
+    transformSaveStack.append(*saved);
 
     assertex(recordType->getTypeCode() == type_record);
     curTransform = createOpenValue(no_transform, makeTransformType(LINK(recordType)));
     curTransformRecord.set(originalRecord);
+    OwnedHqlExpr self = getSelf(curTransform);
+    curSelfReplacer.setown(new SelfReferenceReplacer(this, self));
     transformScope = createPrivateScope();
     enterScope(transformScope, false, false);
-
-    //The processing for a transform uses target->queryTransformExtra() to record whether it has been assigned to
-    lockTransformMutex();
 }
 
 IHqlExpression * HqlGram::endTransform(const attribute &errpos)
@@ -12260,21 +12341,17 @@ IHqlExpression * HqlGram::endTransform(const attribute &errpos)
     if (!curTransform)
         return NULL;
 
-    ::Release(transformScope);
-    transformScope = NULL;
     leaveScope(errpos);
-    unlockTransformMutex();
-    IHqlExpression *ret = curTransform->closeExpr();
-    curTransform = NULL;
-    curTransformRecord.clear();
-    if (transformSaveStack.ordinality())
-    {
-        Owned<TransformSaveInfo> saved = &transformSaveStack.popGet();
-        transformScope = saved->transformScope.getClear();
-        curTransform = saved->curTransform.getClear();
-        curTransformRecord.swap(saved->transformRecord);
-    }
-    return ret;
+    OwnedHqlExpr ret = curTransform->closeExpr();
+
+    Owned<TransformSaveInfo> saved = &transformSaveStack.popGet();
+    ::Release(transformScope);
+    transformScope = saved->transformScope.getClear();
+    curTransform = saved->curTransform.getClear();
+    curTransformRecord.swap(saved->transformRecord);
+    curSelfReplacer.swap(saved->selfReplacer);
+
+    return ret.getClear();
 }
 
 
@@ -12768,7 +12845,6 @@ IHqlExpression *HqlGram::yyParse(bool _parsingTemplateAttribute, bool catchAbort
         }
         else if (!catchAbort)
             throw;
-
 
         e->Release();
         return NULL;

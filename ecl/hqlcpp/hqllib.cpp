@@ -47,7 +47,7 @@ static IHqlExpression * queryLibraryInputSequence(IHqlExpression * expr)
     return arg;
 }
 
-HqlCppLibrary::HqlCppLibrary(HqlCppTranslator & _translator, IHqlExpression * libraryInterface, ClusterType _clusterType) : translator(_translator), inputMapper(libraryInterface), clusterType(_clusterType)
+HqlCppLibrary::HqlCppLibrary(HqlCppTranslator & _translator, IHqlExpression * libraryInterface, ClusterType _clusterType) : translator(_translator), clusterType(_clusterType), inputMapper(libraryInterface)
 {
     assertex(libraryInterface->getOperator() == no_funcdef);
     scopeExpr = libraryInterface->queryChild(0);
@@ -408,7 +408,7 @@ static IHqlExpression * convertScalarToDataset(IHqlExpression * expr)
             IHqlExpression * field = expr->queryChild(1);
             OwnedHqlExpr record = createRecord(field);
             OwnedHqlExpr assign = createAssign(createSelectExpr(createSelector(no_self, record, NULL), LINK(field)), LINK(newExpr));
-            OwnedHqlExpr row = createRow(no_projectrow, LINK(ds), createComma(createValue(no_transform, makeTransformType(record->getType()), LINK(assign)), LINK(selSeq)));
+            OwnedHqlExpr row = createRow(no_projectrow, { LINK(ds), createValue(no_transform, makeTransformType(record->getType()), LINK(assign)), LINK(selSeq) });
             return LINK(row);
             //Following is more strictly correct, but messes up the resourcing.
             //return createDatasetFromRow(LINK(row));

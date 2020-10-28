@@ -221,7 +221,7 @@ public:
         keyFileIO.setown(keyFile->open(IFOread));
         if(!keyFileIO)
             throw MakeStringException(0, "Could not read index file %s", filename);
-        keyIndex.setown(createKeyIndex(filename, 0, *keyFileIO, false, false)); // MORE - should we care about crc?
+        keyIndex.setown(createKeyIndex(filename, 0, *keyFileIO, (unsigned) -1, false, false)); // MORE - should we care about crc?
         unsigned flags = keyIndex->getFlags();
         variableWidth = ((flags & HTREE_VARSIZE) == HTREE_VARSIZE);
         if((flags & HTREE_QUICK_COMPRESSED_KEY) == HTREE_QUICK_COMPRESSED_KEY)
@@ -230,7 +230,7 @@ public:
             quickCompressed = false;
         else
             throw MakeStringException(0, "Index file %s did not have compression flags set, unsupported", filename);
-        unsigned optionalFlags = (HTREE_VARSIZE | HTREE_QUICK_COMPRESSED_KEY | HTREE_TOPLEVEL_KEY | HTREE_FULLSORT_KEY);
+        unsigned optionalFlags = (HTREE_VARSIZE | HTREE_QUICK_COMPRESSED_KEY | HTREE_TOPLEVEL_KEY | HTREE_FULLSORT_KEY | TRAILING_HEADER_ONLY | USE_TRAILING_HEADER);
         unsigned requiredFlags = COL_PREFIX;
 #ifdef _DEBUG
         if((flags & ~optionalFlags) != requiredFlags)
@@ -298,6 +298,7 @@ public:
     size32_t queryKeyedSize() const { return keyedsize; }
     size32_t queryRowSize() const { return rowsize; }
     unsigned queryCRC() { return crc.get(); }
+    unsigned getFlags() { return keyIndex->getFlags(); }
     unsigned queryCount() const { return count; }
     bool isVariableWidth() const { return variableWidth; }
     bool isQuickCompressed() const { return quickCompressed; }
@@ -363,6 +364,7 @@ public:
         header->setPropInt("@keyedSize",reader.queryKeyedSize());
         header->setPropBool("@variableWidth",isvar);
         header->setPropBool("@quickCompressed",reader.isQuickCompressed());
+        header->setPropBool("@noSeek",(reader.getFlags() & TRAILING_HEADER_ONLY) != 0);
 #if 0
         PROGLOG("rowSize = %d",rowsize);
         PROGLOG("keyedSize = %d",reader.queryKeyedSize());
@@ -401,22 +403,27 @@ public:
     {
     }
         
-    void init (char const * filename, bool overwrite, size32_t _keyedsize, size32_t _rowsize, bool variableWidth, bool quickCompressed, unsigned nodeSize) 
+    void init (char const * filename, bool overwrite, size32_t _keyedsize, size32_t _rowsize, bool variableWidth, bool quickCompressed, unsigned nodeSize, bool noSeek)
     {
         keyedsize = _keyedsize;
         rowsize = _rowsize;
         reccount = 0;
         keyFile.setown(createIFile(filename));
-        if(!overwrite && (keyFile->isFile() != notFound))
+        if(!overwrite && (keyFile->isFile() != fileBool::notFound))
             throw MakeStringException(0, "Found preexisting index file %s (overwrite not selected)", filename);
         keyFileIO.setown(keyFile->openShared(IFOcreate, IFSHfull)); // not sure if needs shared here
         if(!keyFileIO)
             throw MakeStringException(0, "Could not write index file %s", filename);
         keyStream.setown(createIOStream(keyFileIO));
-        unsigned flags = COL_PREFIX | HTREE_FULLSORT_KEY | HTREE_COMPRESSED_KEY;
-        if(variableWidth)
+        if (noSeek)
+            keyStream.setown(createNoSeekIOStream(keyStream));
+
+        unsigned flags = COL_PREFIX | HTREE_FULLSORT_KEY | HTREE_COMPRESSED_KEY | USE_TRAILING_HEADER;
+        if (noSeek)
+            flags |= TRAILING_HEADER_ONLY;
+        if (variableWidth)
             flags |= HTREE_VARSIZE;
-        if(quickCompressed)
+        if (quickCompressed)
             flags |= HTREE_QUICK_COMPRESSED_KEY;
         keyBuilder.setown(createKeyBuilder(keyStream, flags, rowsize, nodeSize, keyedsize, 0, nullptr, false, false)); // MORE - support for sequence other than 0...
     }
@@ -495,7 +502,7 @@ public:
     CKeyFileWriter(const char *filename, IPropertyTree *_header, bool overwrite, unsigned nodeSize)
         : header(createPTreeFromIPT(_header))
     {
-        writer.init(filename,overwrite,header->getPropInt("@keyedSize"), header->getPropInt("@rowSize"), header->getPropBool("@variableWidth"), header->getPropBool("@quickCompressed"), header->getPropInt("@nodeSize", NODESIZE));
+        writer.init(filename,overwrite,header->getPropInt("@keyedSize"), header->getPropInt("@rowSize"), header->getPropBool("@variableWidth"), header->getPropBool("@quickCompressed"), header->getPropInt("@nodeSize", NODESIZE), header->getPropBool("@noSeek"));
         size32_t rowsize = header->getPropInt("@rowSize");
         bool isvar = header->getPropBool("@variableWidth");
         buffer.init(rowsize,isvar);
@@ -724,7 +731,7 @@ public:
         : CKeyDiff(oldIndex, newIndex, newTLK)
     {
         file.setown(createIFile(filename));
-        if(!overwrite && (file->isFile() != notFound))
+        if(!overwrite && (file->isFile() != fileBool::notFound))
             throw MakeStringException(0, "Found preexisting key patch file %s (overwrite not selected)", filename);
         fileIO.setown(file->open(IFOcreate));
         if(!fileIO)
@@ -1210,11 +1217,11 @@ public:
     {
     }
 
-    void open(char const * tlkName, bool overwrite, unsigned keyedsize, unsigned rowsize, bool variableWidth, bool quickCompressed, unsigned nodeSize)
+    void open(char const * tlkName, bool overwrite, unsigned keyedsize, unsigned rowsize, bool variableWidth, bool quickCompressed, unsigned nodeSize, bool noSeek)
     {
         filename.set(tlkName);
         writer.setown(new CKeyWriter());
-        writer->init(tlkName, overwrite, keyedsize, rowsize, variableWidth, quickCompressed, nodeSize);
+        writer->init(tlkName, overwrite, keyedsize, rowsize, variableWidth, quickCompressed, nodeSize, noSeek);
     }
 
     virtual int run()
@@ -1416,10 +1423,11 @@ private:
         if(progressCallback)
             oldInput->setProgressCallback(progressCallback.getLink(), progressFrequency);
         rowsize = oldInput->queryRowSize();
+        bool noSeek = (oldInput->getFlags() & TRAILING_HEADER_ONLY) != 0;
         newOutput.setown(new CKeyWriter());
-        newOutput->init(newIndex, overwrite, keyedsize, rowsize, oldInput->isVariableWidth(), oldInput->isQuickCompressed(), oldInput->getNodeSize());
+        newOutput->init(newIndex, overwrite, keyedsize, rowsize, oldInput->isVariableWidth(), oldInput->isQuickCompressed(), oldInput->getNodeSize(), noSeek);
         if(tlkGen)
-            tlkGen->open(newTLK, overwrite, keyedsize, rowsize, oldInput->isVariableWidth(), oldInput->isQuickCompressed(), oldInput->getNodeSize());
+            tlkGen->open(newTLK, overwrite, keyedsize, rowsize, oldInput->isVariableWidth(), oldInput->isQuickCompressed(), oldInput->getNodeSize(), noSeek);
         newcurr.init(rowsize, oldInput->isVariableWidth());
         newprev.init(rowsize, oldInput->isVariableWidth());
         oldcurr.init(rowsize, oldInput->isVariableWidth());

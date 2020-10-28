@@ -153,6 +153,9 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
             <xsl:if test="string(@ActivityInfoCacheSeconds) != ''">
                 <ActivityInfoCacheSeconds><xsl:value-of select="@ActivityInfoCacheSeconds"/></ActivityInfoCacheSeconds>
             </xsl:if>
+            <xsl:if test="string(@ActivityInfoCacheAutoRebuildSeconds) != ''">
+                <ActivityInfoCacheAutoRebuildSeconds><xsl:value-of select="@ActivityInfoCacheAutoRebuildSeconds"/></ActivityInfoCacheAutoRebuildSeconds>
+            </xsl:if>
             <xsl:if test="string(@enableLogDaliConnection) != ''">
                 <LogDaliConnection><xsl:value-of select="@enableLogDaliConnection"/></LogDaliConnection>
             </xsl:if>
@@ -240,6 +243,12 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
             </xsl:if>
             <xsl:if test="string(@ThorSlaveLogThreadPoolSize) != ''">
                 <ThorSlaveLogThreadPoolSize><xsl:value-of select="@ThorSlaveLogThreadPoolSize"/></ThorSlaveLogThreadPoolSize>
+            </xsl:if>
+            <xsl:if test="string(@WUResultMaxSizeMB) != ''">
+                <WUResultMaxSizeMB><xsl:value-of select="@WUResultMaxSizeMB"/></WUResultMaxSizeMB>
+            </xsl:if>
+            <xsl:if test="string(@WUResultDownloadFlushThreshold) != ''">
+                <WUResultDownloadFlushThreshold><xsl:value-of select="@WUResultDownloadFlushThreshold"/></WUResultDownloadFlushThreshold>
             </xsl:if>
             <xsl:if test="string(@AWUsCacheTimeout) != ''">
                 <AWUsCacheMinutes><xsl:value-of select="@AWUsCacheTimeout"/></AWUsCacheMinutes>
@@ -479,6 +488,9 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
             <xsl:if test="string(@MachineUsageCacheMinutes) != ''">
                 <MachineUsageCacheMinutes><xsl:value-of select="@MachineUsageCacheMinutes"/></MachineUsageCacheMinutes>
             </xsl:if>
+            <xsl:if test="string(@MachineUsageCacheAutoRebuildMinutes) != ''">
+                <MachineUsageCacheAutoRebuildMinutes><xsl:value-of select="@MachineUsageCacheAutoRebuildMinutes"/></MachineUsageCacheAutoRebuildMinutes>
+            </xsl:if>
         </EspService>
         
         <EspBinding name="{$bindName}" service="{$serviceName}" protocol="{$bindingNode/@protocol}" type="{$bindType}" plugin="{$servicePlugin}" netAddress="0.0.0.0" port="{$bindingNode/@port}">
@@ -662,6 +674,12 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
                     <xsl:attribute name="description">Generic KeyVal store for HPCC Applications</xsl:attribute>
                     <xsl:attribute name="name">HPCCApps</xsl:attribute>
                     <xsl:attribute name="default">true</xsl:attribute>
+                </xsl:element>
+                <xsl:element name="Store">
+                    <xsl:attribute name="description">JWT token cache</xsl:attribute>
+                    <xsl:attribute name="name">JWTAuth</xsl:attribute>
+                    <xsl:attribute name="default">false</xsl:attribute>
+                    <xsl:attribute name="maxValSize">32768</xsl:attribute>
                 </xsl:element>
             </xsl:element>
         </EspService>

@@ -38,6 +38,11 @@ private:
     unsigned reportRate;
     CIArrayOf<CGraphBase> activeGraphs;
     UnsignedArray graphStarts;
+    cost_type thorMasterCostRate = 0;
+    cost_type thorSlaveCostRate = 0;
+    cost_type costLimit = 0;
+    cost_type workunitCost = 0;
+
     
     void doReportGraph(IStatisticGatherer & stats, CGraphBase *graph)
     {
@@ -70,7 +75,7 @@ private:
         catch (IException *e)
         {
             StringBuffer s;
-            LOG(MCwarning, unknownJob, "Failed to update progress information: %s", e->errorMessage(s).str());
+            LOG(MCwarning, thorJob, "Failed to update progress information: %s", e->errorMessage(s).str());
             e->Release();
         }
     }
@@ -83,7 +88,20 @@ private:
         formatGraphTimerScope(graphScope, wfid, graphname, 0, graph.queryGraphId());
         unsigned duration = msTick()-startTime;
         updateWorkunitStat(wu, SSTsubgraph, graphScope, StTimeElapsed, timer, milliToNano(duration));
+        if (costLimit || finished)
+        {
+            const unsigned clusterWidth = queryNodeClusterWidth();
+            const cost_type sgCost = calcCost(thorMasterCostRate, duration) + calcCost(thorSlaveCostRate, duration) * clusterWidth;
+            if (finished)
+                wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTsubgraph, graphScope, StCostExecute, NULL, sgCost, 1, 0, StatsMergeReplace);
 
+            const cost_type totalCost = workunitCost + sgCost;
+            if (totalCost > costLimit)
+            {
+                LOG(MCwarning, thorJob, "ABORT job cost exceeds limit");
+                graph.fireException(MakeThorException(TE_CostExceeded, "Job cost exceeds limit"));
+            }
+        }
         if (finished)
         {
             if (memcmp(graphname,"graph",5)==0)
@@ -137,7 +155,7 @@ private:
             catch (IException *E)
             {
                 StringBuffer s;
-                LOG(MCwarning, unknownJob, "Failed to update progress information: %s", E->errorMessage(s).str());
+                LOG(MCwarning, thorJob, "Failed to update progress information: %s", E->errorMessage(s).str());
                 E->Release();
             }
         }
@@ -169,7 +187,7 @@ private:
         catch (IException *e)
         {
             StringBuffer s;
-            LOG(MCwarning, unknownJob, "Failed to update progress information: %s", e->errorMessage(s).str());
+            LOG(MCwarning, thorJob, "Failed to update progress information: %s", e->errorMessage(s).str());
             e->Release();
         }
     }
@@ -180,6 +198,12 @@ public:
     {
         lastReport = msTick();
         reportRate = globals->getPropInt("@watchdogProgressInterval", 30);
+        IPropertyTree *costs = queryCostsConfiguration();
+        if (costs)
+        {
+            thorMasterCostRate = money2cost_type(costs->getPropReal("thor/@master"));
+            thorSlaveCostRate = money2cost_type(costs->getPropReal("thor/@slave"));
+        }
     }
 
     virtual void takeHeartBeat(MemoryBuffer &progressMb)
@@ -188,7 +212,7 @@ public:
         if (0 == activeGraphs.ordinality())
         {
             StringBuffer urlStr;
-            LOG(MCdebugProgress, unknownJob, "heartbeat packet received with no active graphs");
+            LOG(MCdebugProgress, thorJob, "heartbeat packet received with no active graphs");
             return;
         }
         size32_t compressedProgressSz = progressMb.remaining();
@@ -206,12 +230,12 @@ public:
                 ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
                 if (!graph)
                 {
-                    LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
+                    LOG(MCdebugProgress, thorJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
                     break;
                 }
                 if (!graph->deserializeStats(slave, uncompressedMb))
                 {
-                    LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
+                    LOG(MCdebugProgress, thorJob, "heartbeat error in graph %" GIDPF "d", graphId);
                     break;
                 }
             }
@@ -227,6 +251,22 @@ public:
     void startGraph(CGraphBase *graph)
     {
         synchronized block(mutex);
+
+        IConstWorkUnit & wu =  graph->queryJob().queryWorkUnit();
+        workunitCost = aggregateCost(&wu);
+
+        const IPropertyTree *costs = queryCostsConfiguration();
+        double softLimit = 0.0, hardLimit = 0.0;
+        if (costs)
+        {
+            softLimit = costs->getPropReal("@limit");
+            hardLimit = costs->getPropReal("@hardlimit");
+        }
+        double tmpcostLimit = wu.getDebugValueReal("maxCost", softLimit);
+        if (hardLimit && ((tmpcostLimit == 0) || (tmpcostLimit > hardLimit)))
+            costLimit = money2cost_type(hardLimit);
+        else
+            costLimit = money2cost_type(tmpcostLimit);
         activeGraphs.append(*LINK(graph));
         unsigned startTime = msTick();
         graphStarts.append(startTime);
