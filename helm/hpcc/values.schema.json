@@ -134,6 +134,18 @@
       "description": "thor process",
       "type": "array",
       "items": { "$ref": "#/definitions/thor" }
+    },
+    "kibana": {
+      "description": "HPCC managed Elastic Stack deployment Kibana (log visualizer) component"
+    },
+    "logstash": {
+      "description": "HPCC managed Elastic Stack deployment Logstash (log ETL) component"
+    },
+    "elasticsearch": {
+      "description": "HPCC managed Elastic Stack deployment ElasticSearch (log processor) component"
+    },
+    "filebeat": {
+      "description": "HPCC managed Elastic Stack deployment Filebeat (log agent) component"
     }
   },
   "required": [
@@ -393,9 +405,85 @@
         "detail": {
           "type": "integer",
           "description": "Log output verbosity"
+        },
+        "managedElasticStack": {
+          "description": "Locally managed Elastic Stack for HPCC Component log processing",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "kibana": {
+              "type": "object",
+              "description": "Optional front-end for managed Elastic Stack",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "processor": {
+          "description": "*FUTURE* Optional HPCC Component log processors - Only required as alternatives to managed Elastic Stack",
+          "type": "array",
+          "items": { "$ref": "#/definitions/logprocessor"}
         }
       },
       "additionalProperties": { "type": ["integer", "string", "boolean"] }
+    },
+    "logprocessor": {
+      "type": "object",
+      "required": [ "type" ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "managed": {
+          "type": "boolean"
+        },
+        "options": {
+          "description": "*FUTURE NOT SURE IF ACTUALLY NEEDED* back-end specific options",
+          "type": "array",
+          "items": { "$ref": "#/definitions/logprocessoroption" }
+        },
+        "logmap": {
+          "description": "*FUTURE NOT SURE IF ACTUALLY NEEDED* Maps component log entries to log processor container",
+          "type": "array",
+          "items": { "$ref": "#/definitions/logmap" }
+        }
+      }
+    },
+    "logmap": {
+      "description": "*FUTURE* HPCC Component log processors - Only required as alternatives to managed Elastic Stack",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "hpcclog": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "logprocessoroption": {
+      "description": "*FUTURE* Log processor specific options",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
     },
     "egress": {
       "type": "object",
