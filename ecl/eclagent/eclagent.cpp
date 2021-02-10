@@ -565,11 +565,11 @@ EclAgent::EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bo
             w->setXmlParams(_queryXML);
         updateSuppliedXmlParams(w);
     }
-    IPropertyTree *costs = queryCostsConfiguration();
-    if (costs)
+    agentMachineCost = getMachineCostRate();
+    if (agentMachineCost > 0.0)
     {
-        agentMachineCost = money2cost_type(costs->getPropReal("@agent"));
-        if (agentMachineCost)
+        IPropertyTree *costs = queryCostsConfiguration();
+        if (costs)
         {
             double softCostLimit = costs->getPropReal("@limit");
             double guillotineCost = wu->getDebugValueReal("maxCost", softCostLimit);
@@ -1876,6 +1876,23 @@ void EclAgent::doProcess()
                 throw makeStringException(0, "Attempting to execute a workunit that hasn't been compiled");
             if (checkVersion && ((eclccCodeVersion > ACTIVITY_INTERFACE_VERSION) || (eclccCodeVersion < MIN_ACTIVITY_INTERFACE_VERSION)))
                 failv(0, "Workunit was compiled for eclagent interface version %d, this eclagent requires version %d..%d", eclccCodeVersion, MIN_ACTIVITY_INTERFACE_VERSION, ACTIVITY_INTERFACE_VERSION);
+            if (checkVersion && eclccCodeVersion == 652)
+            {
+                // Any workunit compiled using eclcc 7.12.0-7.12.18 is not compatible
+                StringBuffer buildVersion, eclVersion;
+                w->getBuildVersion(StringBufferAdaptor(buildVersion), StringBufferAdaptor(eclVersion));
+                const char *version = strstr(buildVersion, "7.12.");
+
+                //Avoid matching a version number in the path that was used to build (enclosed in [] at the end)
+                const char *extra = strchr(buildVersion, '[');
+                if (version && (!extra || version < extra))
+                {
+                    const char *point = version + strlen("7.12.");
+                    unsigned pointVer = atoi(point);
+                    if (pointVer <= 18)
+                        failv(0, "Workunit was compiled by eclcc version %s which is not compatible with this runtime", buildVersion.str());
+                }
+            }
             if(noRetry && (w->getState() == WUStateFailed))
                 throw MakeStringException(0, "Ecl agent started in 'no retry' mode for failed workunit, so failing");
             w->setState(WUStateRunning);
@@ -2371,7 +2388,7 @@ void EclAgentWorkflowMachine::noteTiming(unsigned wfid, timestamp_type startTime
     updateWorkunitStat(wu, SSTworkflow, scope, StWhenStarted, nullptr, startTime, 0);
     updateWorkunitStat(wu, SSTworkflow, scope, StTimeElapsed, nullptr, elapsedNs, 0);
 
-    const cost_type cost = calcCost(agent.queryAgentMachineCost(), nanoToMilli(elapsedNs)) + aggregateCost(wu, scope, true);
+    const cost_type cost = money2cost_type(calcCost(agent.queryAgentMachineCost(), nanoToMilli(elapsedNs))) + aggregateCost(wu, scope, true);
     if (cost)
         wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), SSTworkflow, scope, StCostExecute, NULL, cost, 1, 0, StatsMergeReplace);
 }
@@ -3580,7 +3597,6 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
             daliDownMonitor.setown(new CDaliDownMonitor(daliEp));
             addMPConnectionMonitor(daliDownMonitor);
 
-            LOG(MCoperatorInfo, "hthor build %s", BUILD_TAG);
             startLogMsgParentReceiver();
             connectLogMsgManagerToDali();
 
@@ -3654,6 +3670,8 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
             uid.append("WLOCAL_").append((unsigned)GetCurrentProcessId());
             wuid.set(uid);
         }
+        setDefaultJobId(wuid.str());
+        LOG(MCoperatorInfo, "hthor build %s", BUILD_TAG);
 
 #ifdef MONITOR_ECLAGENT_STATUS
         if (serverstatus)

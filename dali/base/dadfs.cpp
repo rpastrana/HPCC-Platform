@@ -3215,6 +3215,20 @@ public:
     virtual bool getAccessedTime(CDateTime &dt) = 0;                            // get date and time last accessed (returns false if not set)
     virtual void setAccessedTime(const CDateTime &dt) = 0;                      // set date and time last accessed
     virtual bool isExternal() const { return external; }
+
+    virtual int getExpire()
+    {
+        return queryAttributes().getPropInt("@expireDays", -1);
+    }
+
+    virtual void setExpire(int expireDays)
+    {
+        DistributedFilePropertyLock lock(this);
+        if (expireDays == -1)
+            queryAttributes().removeProp("@expireDays"); // Never expire
+        else
+            queryAttributes().setPropInt("@expireDays", expireDays);
+    }
 };
 
 class CDistributedFile: public CDistributedFileBase<IDistributedFile>
@@ -5059,6 +5073,8 @@ protected:
             {
                 CDfsLogicalFileName subfn;
                 subfn.set(name);
+                if (subfn.isForeign() || subfn.isExternal())
+                    continue; // can't be owned by a super in this environment, no locking
                 CFileLock fconnlockSub;
                 // JCSMORE - this is really not right, but consistent with previous version
                 // MORE: Use CDistributedSuperFile::linkSuperOwner(false) - ie. unlink
@@ -6990,7 +7006,7 @@ public:
 #define GROUP_CACHE_INTERVAL (1000*60)
 #define GROUP_EXCEPTION_CACHE_INTERVAL (1000*60*10)
 
-static GroupType translateGroupType(const char *groupType)
+GroupType translateGroupType(const char *groupType)
 {
     if (!groupType)
         return grp_unknown;
@@ -10103,12 +10119,12 @@ void initClusterAndStoragePlaneGroups(bool force, IPropertyTree *oldEnvironment,
     StringBuffer response;
     init.constructGroups(force, response, oldEnvironment);
     if (response.length())
-        PROGLOG("DFS group initialization : %s", response.str()); // should this be a syslog?
+        MLOG("DFS group initialization : %s", response.str()); // should this be a syslog?
 
     response.clear();
     init.constructStorageGroups(false, response);
     if (response.length())
-        PROGLOG("StoragePlane group initialization : %s", response.str()); // should this be a syslog?
+        MLOG("StoragePlane group initialization : %s", response.str()); // should this be a syslog?
 }
 
 bool resetClusterGroup(const char *clusterName, const char *type, bool spares, StringBuffer &response, unsigned timems)

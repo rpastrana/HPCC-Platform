@@ -1259,6 +1259,19 @@ private:
             rc = ldap_search_ext_s(m_pLdapConn, m_pszDN, m_scope, m_pszFilter, m_pszAttrs, 0, svrCtrls, NULL, &timeOut, 0, &m_pPageBlock);
             if (rc != LDAP_SUCCESS)
             {
+                if (rc == LDAP_NO_SUCH_OBJECT)
+                {
+                    if (m_pCookie)
+                    {
+                        ber_bvfree(m_pCookie);
+                        m_pCookie = NULL;
+                    }
+#ifdef _DEBUG
+                    DBGLOG("CPagedLDAPSearch::requestNextPage: ldap_search_ext_s() : No Such Object : DN=%s", m_pszDN);
+#endif
+                    return false;
+                }
+
                 int err = GetLastError();
                 if (err && rc != LDAP_PARTIAL_RESULTS)//389DirectoryServer sometimes returns rc, but GetLastError returns 0. In this scenario continuing the query succeeds
                 {
@@ -1535,16 +1548,16 @@ public:
                 }
             }
 
-            //Create base LDAP OU tree. Specify PT_DEFAULT to ensure each OU
-            //grants access to both Administrators and to Authenticated Users
-            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_DEFAULT), PT_DEFAULT);
-            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_FILE_SCOPE), PT_DEFAULT);
-            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_VIEW_SCOPE), PT_DEFAULT);
-            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_WORKUNIT_SCOPE), PT_DEFAULT);
-            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_SUDOERS), PT_DEFAULT);
+            //Create base LDAP OU tree. Specify PT_ADMINISTRATORS_ONLY to ensure each OU
+            //grants access to Administrators only
+            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_DEFAULT), PT_ADMINISTRATORS_ONLY);
+            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_FILE_SCOPE), PT_ADMINISTRATORS_ONLY);
+            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_VIEW_SCOPE), PT_ADMINISTRATORS_ONLY);
+            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_WORKUNIT_SCOPE), PT_ADMINISTRATORS_ONLY);
+            createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(RT_SUDOERS), PT_ADMINISTRATORS_ONLY);
 
-            createLdapBasedn(NULL, m_ldapconfig->getUserBasedn(), PT_DEFAULT);
-            createLdapBasedn(NULL, m_ldapconfig->getGroupBasedn(), PT_DEFAULT);
+            createLdapBasedn(NULL, m_ldapconfig->getUserBasedn(), PT_ADMINISTRATORS_ONLY);
+            createLdapBasedn(NULL, m_ldapconfig->getGroupBasedn(), PT_ADMINISTRATORS_ONLY);
             createdOU = true;
         }
     }
@@ -1562,7 +1575,7 @@ public:
     virtual void setResourceBasedn(const char* rbasedn, SecResourceType rtype)
     {
         m_ldapconfig->setResourceBasedn(rbasedn, rtype);
-        createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(rtype), PT_DEFAULT);
+        createLdapBasedn(NULL, m_ldapconfig->getResourceBasedn(rtype), PT_ADMINISTRATORS_ONLY);
     }
 
     void calcPWExpiry(CDateTime &dt, unsigned len, char * val)
@@ -4620,7 +4633,7 @@ public:
         
         ISecUser* user = NULL;
         CLdapSecResource resource(newname);
-        addResource(rtype, *user, &resource, PT_DEFAULT, basedn, sd.get(), false);
+        addResource(rtype, *user, &resource, PT_ADMINISTRATORS_ONLY, basedn, sd.get(), false);
     }
 
     void normalizeDn(const char* dn, StringBuffer& ndn)

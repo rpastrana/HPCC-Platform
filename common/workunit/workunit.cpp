@@ -299,6 +299,7 @@ protected:
             case SSTworkflow:
             case SSTgraph:
                 // SSTworkflow and SSTgraph may be safely ignored.  They are not required to produce the statistics.
+                expandProcessTreeFromStats(rootTarget, target, &cur);
                 continue;
             case SSTfunction:
                 //MORE:Should function scopes be included in the graph scope somehow, and if so how?
@@ -3990,7 +3991,19 @@ public:
         if (workUnitTraceLevel > 1)
             DBGLOG("Releasing locked workunit %s", queryWuid());
         if (c)
-            c->unlockRemote();
+        {
+            try
+            {
+                c->unlockRemote();
+            }
+            catch (IException *E)
+            {
+                // Exceptions here should be very uncommon - but there's also not a lot we can do if we get one
+                // Allowing them to be thrown out of the destructor is going to terminate the program which is NOT what we want.
+                EXCLOG(E);
+                ::Release(E);
+            }
+        }
     }
 
     virtual IConstWorkUnit * unlock()
@@ -8456,6 +8469,9 @@ void CLocalWorkUnit::setStatistic(StatisticCreatorType creatorType, const char *
 
     if (!statTree)
     {
+        /* NB: Sasha archive uses this structure directly
+         * if it changes, the code in saarch.cpp needs updating
+         */
         statTree = stats->addPropTree("Statistic");
         statTree->setProp("@creator", creator);
         statTree->setProp("@scope", scope);
@@ -12791,12 +12807,7 @@ static void clearAliases(IPropertyTree * queryRegistry, const char * id)
 
     StringBuffer xpath;
     xpath.append("Alias[@id=\"").append(lcId).append("\"]");
-
-    Owned<IPropertyTreeIterator> iter = queryRegistry->getElements(xpath);
-    ForEach(*iter)
-    {
-        queryRegistry->removeProp(xpath.str());
-    }
+    while (queryRegistry->removeProp(xpath));
 }
 
 IPropertyTree * addNamedQuery(IPropertyTree * queryRegistry, const char * name, const char * wuid, const char * dll, bool library, const char *userid, const char *snapshot)
@@ -13383,17 +13394,46 @@ extern WORKUNIT_API void addTimeStamp(IWorkUnit * wu, StatisticScopeType scopeTy
     wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scopestr, kind, NULL, getTimeStampNowValue(), 1, 0, StatsMergeAppend);
 }
 
-extern WORKUNIT_API cost_type calculateThorCost(unsigned __int64 ms, unsigned clusterWidth)
+static double getCpuSize(const char *resourceName)
 {
-    IPropertyTree *costs = queryCostsConfiguration();
-    if (costs)
-    {
-        cost_type thor_master_rate = money2cost_type(costs->getPropReal("thor/@master"));
-        cost_type thor_slave_rate = money2cost_type(costs->getPropReal("thor/@slave"));
+    const char * cpuRequestedStr = queryComponentConfig().queryProp(resourceName);
+    if (!cpuRequestedStr)
+        return 0.0;
+    char * endptr;
+    double cpuRequested = strtod(cpuRequestedStr, &endptr);
+    if (cpuRequested < 0.0)
+        return 0.0;
+    if (*endptr == 'm')
+        cpuRequested /= 1000;
+    return cpuRequested;
+}
 
-        return calcCost(thor_master_rate, ms) + calcCost(thor_slave_rate, ms) * clusterWidth;
-    }
-    return 0;
+static double getCostCpuHour()
+{
+    double costCpuHour = queryGlobalConfig().getPropReal("cost/@perCpu");
+    if (costCpuHour < 0.0)
+        return 0.0;
+    return costCpuHour;
+}
+
+extern WORKUNIT_API double getMachineCostRate()
+{
+    return getCostCpuHour() * getCpuSize("resources/@cpu") ;
+};
+
+extern WORKUNIT_API double getThorManagerRate()
+{
+    return getCostCpuHour() * getCpuSize("managerResources/@cpu");
+}
+
+extern WORKUNIT_API double getThorWorkerRate()
+{
+    return getCostCpuHour() * getCpuSize("workerResources/@cpu");
+}
+
+extern WORKUNIT_API double calculateThorCost(unsigned __int64 ms, unsigned clusterWidth)
+{
+    return calcCost(getThorManagerRate(), ms) + calcCost(getThorWorkerRate(), ms) * clusterWidth;
 }
 
 void aggregateStatistic(StatsAggregation & result, IConstWorkUnit * wu, const WuScopeFilter & filter, StatisticKind search)

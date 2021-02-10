@@ -101,9 +101,14 @@ void * checked_calloc(size_t size, size_t num, char const * label)
     return ret;
 }
 
-inline bool checkIsCompressed(unsigned int flags, size32_t fixedSize, bool grouped)
+inline bool checkWriteIsCompressed(unsigned int flags, size32_t fixedSize, bool grouped)
 {
     return ((flags & TDWnewcompress) || ((flags & TDXcompress) && ((0 == fixedSize) || (fixedSize+(grouped?1:0) >= MIN_ROWCOMPRESS_RECSIZE))));
+}
+
+inline bool checkReadIsCompressed(unsigned int flags, size32_t fixedSize, bool grouped)
+{
+    return ((flags & TDXcompress) && ((0 == fixedSize) || (fixedSize+(grouped?1:0) >= MIN_ROWCOMPRESS_RECSIZE)));
 }
 
 //=====================================================================================================
@@ -546,7 +551,7 @@ void CHThorDiskWriteActivity::open()
     Linked<IRecordSize> groupedMeta = input->queryOutputMeta()->querySerializedDiskMeta();
     if (grouped)
         groupedMeta.setown(createDeltaRecordSize(groupedMeta, +1));
-    blockcompressed = checkIsCompressed(helper.getFlags(), serializedOutputMeta.getFixedSize(), grouped);//TDWnewcompress for new compression, else check for row compression
+    blockcompressed = checkWriteIsCompressed(helper.getFlags(), serializedOutputMeta.getFixedSize(), grouped);//TDWnewcompress for new compression, else check for row compression
     void *ekey;
     size32_t ekeylen;
     helper.getEncryptKey(ekeylen,ekey);
@@ -1703,7 +1708,7 @@ public:
 private:
     bool waitForPipe()
     {
-        Owned<IPipeProcessException> pipeException;
+        Owned<IException> pipeException;
         try
         {
             if (firstRead)
@@ -1716,8 +1721,9 @@ private:
             if (!readTransformer->eos())
                 return true;
         }
-        catch (IPipeProcessException *e)
+        catch (IException *e)
         {
+            // NB: the original exception is probably a IPipeProcessException, but because InterruptableSemaphore rethrows it, we must catch it as an IException
             pipeException.setown(e);
         }
         verifyPipe();
@@ -1806,7 +1812,7 @@ public:
 
     virtual void execute()
     {
-        Owned<IPipeProcessException> pipeException;
+        Owned<IException> pipeException;
         try
         {
             for (;;)
@@ -1831,8 +1837,9 @@ public:
             if (!recreate)
                 closePipe();
         }
-        catch (IPipeProcessException *e)
+        catch (IException *e)
         {
+            // NB: the original exception is probably a IPipeProcessException, but because InterruptableSemaphore rethrows it, we must catch it as an IException
             pipeException.setown(e);
         }
         verifyPipe();
@@ -6306,8 +6313,8 @@ void CHThorWorkUnitWriteActivity::execute()
     size32_t outputLimit = agent.queryWorkUnit()->getDebugValueInt(OPT_OUTPUTLIMIT, agent.queryWorkUnit()->getDebugValueInt(OPT_OUTPUTLIMIT_LEGACY, defaultDaliResultLimit));
     if (flags & POFmaxsize)
         outputLimit = helper.getMaxSize();
-    if (outputLimit>defaultDaliResultOutputMax)
-        throw MakeStringException(0, "Dali result outputs are restricted to a maximum of %d MB, the current limit is %d MB. A huge dali result usually indicates the ECL needs altering.", defaultDaliResultOutputMax, defaultDaliResultLimit);
+    if (outputLimit>daliResultOutputMax)
+        throw MakeStringException(0, "Dali result outputs are restricted to a maximum of %d MB, the current limit is %d MB. A huge dali result usually indicates the ECL needs altering.", daliResultOutputMax, defaultDaliResultLimit);
     assertex(outputLimit<=0x1000); // 32bit limit because MemoryBuffer/CMessageBuffers involved etc.
     outputLimit *= 0x100000;
     MemoryBuffer rowdata;
@@ -8278,7 +8285,7 @@ void CHThorDiskReadBaseActivity::resolve()
             fdesc.setown(ldFile->getFileDescriptor());
             gatherInfo(fdesc);
             if (ldFile->isExternal())
-                compressed = checkIsCompressed(helper.getFlags(), fixedDiskRecordSize, false);//grouped=FALSE because fixedDiskRecordSize already includes grouped
+                compressed = checkWriteIsCompressed(helper.getFlags(), fixedDiskRecordSize, false);//grouped=FALSE because fixedDiskRecordSize already includes grouped
             IDistributedFile *dFile = ldFile->queryDistributedFile();
             if (dFile)  //only makes sense for distributed (non local) files
             {
@@ -8359,7 +8366,7 @@ void CHThorDiskReadBaseActivity::gatherInfo(IFileDescriptor * fileDesc)
     }
     else
     {
-        compressed = checkIsCompressed(helper.getFlags(), fixedDiskRecordSize, false);//grouped=FALSE because fixedDiskRecordSize already includes grouped
+        compressed = checkReadIsCompressed(helper.getFlags(), fixedDiskRecordSize, false); //grouped=FALSE because fixedDiskRecordSize already includes grouped
     }
     void *k;
     size32_t kl;
@@ -9015,6 +9022,12 @@ const void *CHThorDiskNormalizeActivity::nextRow()
             {
                 try
                 {
+                    if (unlikely(translator))
+                    {
+                        MemoryBufferBuilder aBuilder(translatedRow.clear(), 0);
+                        translator->translate(aBuilder, *this, next);
+                        next = aBuilder.getSelf();
+                    }
                     expanding = helper.first(next);
                 }
                 catch(IException * e)
@@ -9105,7 +9118,16 @@ const void *CHThorDiskAggregateActivity::nextRow()
                 const byte * next = prefetchBuffer.queryRow();
                 size32_t sizeRead = prefetchBuffer.queryRowSize();
                 if (segMonitorsMatch(next))
-                    helper.processRow(outBuilder, next);
+                {
+                    if (unlikely(translator))
+                    {
+                        MemoryBufferBuilder aBuilder(translatedRow.clear(), 0);
+                        translator->translate(aBuilder, *this, next);
+                        helper.processRow(outBuilder, aBuilder.getSelf());
+                    }
+                    else
+                        helper.processRow(outBuilder, next);
+                }
                 prefetchBuffer.finishedRow();
                 localOffset += sizeRead;
             }
@@ -9277,7 +9299,16 @@ const void *CHThorDiskGroupAggregateActivity::nextRow()
                     size32_t sizeRead = prefetchBuffer.queryRowSize();
 
                     if (segMonitorsMatch(next))
-                        helper.processRow(next, this);
+                   {
+                        if (unlikely(translator))
+                        {
+                            MemoryBufferBuilder aBuilder(translatedRow.clear(), 0);
+                            translator->translate(aBuilder, *this, next);
+                            helper.processRow(aBuilder.getSelf(), this);
+                        }
+                        else
+                            helper.processRow(next, this);
+                    }
 
                     prefetchBuffer.finishedRow();
                     localOffset += sizeRead;
@@ -11128,7 +11159,6 @@ void CHThorNewDiskReadActivity::ready()
     if (helper.getFlags() & TDRlimitskips)
         limit = (unsigned __int64) -1;
     stopAfter = helper.getChooseNLimit();
-    assertex(stopAfter != 0);
     if (!helper.transformMayFilter() && !helper.hasMatchFilter())
         remoteLimit = stopAfter;
     finishedParts = false;

@@ -1539,6 +1539,12 @@ void HqlCppTranslator::checkAbort()
 // Without this restriction it becomes much easier.
 void HqlCppTranslator::cacheOptions()
 {
+    size32_t outputLimit = wu()->getDebugValueInt("outputLimitMb", 0);
+    if (outputLimit > daliResultOutputMax)
+        throwError2(HQLERR_OutputLimitMaxExceeded, daliResultOutputMax, outputLimit);
+    if (outputLimit > futureResultOutputMax)
+        WARNING2(CategoryDeprecated, HQLERR_OutputLimitFutureMaxExceeded, futureResultOutputMax, outputLimit);
+
     SCMStringBuffer targetText;
     wu()->getDebugValue("targetClusterType", targetText);
     ClusterType clusterType = getClusterType(targetText.s.str());
@@ -3884,7 +3890,9 @@ void HqlCppTranslator::buildStmt(BuildCtx & _ctx, IHqlExpression * expr)
                 //Add a group for each branch of a sequential to ensure all branches are independent
                 if (op == no_sequential)
                     subctx.addGroup();
-                buildStmt(subctx, expr->queryChild(idx));
+                IHqlExpression * cur = expr->queryChild(idx);
+                if (!cur->isAttribute())
+                    buildStmt(subctx, cur);
             }
             return;
         }

@@ -1,6 +1,6 @@
 ﻿define([
     "dojo/_base/declare",
-    "dojo/store/Memory",
+    "src/Memory",
     "dojo/store/Observable",
 
     "dijit/registry",
@@ -17,7 +17,7 @@
 
     "dijit/layout/BorderContainer",
     "dijit/layout/ContentPane"
-], function (declare, Memory, Observable,
+], function (declare, MemoryMod, Observable,
     registry,
     OnDemandGrid, Keyboard, Selection, ColumnResizer, DijitRegistry,
     _Widget,
@@ -49,11 +49,11 @@
         //  Implementation ---
         createGrid: function (args) {
             this.idProperty = args.idProperty;
-            var store = new Memory({
+            var store = new MemoryMod.Memory({
                 idProperty: this.idProperty,
                 data: []
             });
-            this.store = Observable(store);
+            this.store = new Observable(store);
 
             this.grid = new declare([OnDemandGrid, Keyboard, Selection, ColumnResizer, DijitRegistry])({
                 store: this.store,

@@ -233,6 +233,7 @@ class Regression:
                     query.setIgnoreResult(self.args.ignoreResult)
                     query.setJobname(time.strftime("%y%m%d-%H%M%S"))
                     timeout = query.getTimeout()
+                    logger.debug("Query timeout:%d", -1, timeout)
                     oldCnt = cnt
 
                 started = False
@@ -247,11 +248,12 @@ class Regression:
                                 self.timeouts[startThreadId] = timeout
                             else:
                                 self.timeouts[startThreadId] = self.timeout
+                                timeout = self.timeout
 
-                            self.taskParam[startThreadId]['timeoutValue'] = self.timeout
+                            self.taskParam[startThreadId]['timeoutValue'] = timeout
                             query = suiteItems[self.taskParam[startThreadId]['taskId']]
-                            query.setTimeout(self.timeout)
-                            #logger.debug("self.timeout[%d]:%d", startThreadId, self.timeouts[startThreadId])
+                            logger.debug("self.timeout:%d, self.timeouts[thread:%d]:%d", self.timeout, startThreadId, self.timeouts[startThreadId])
+                            query.setTimeout(timeout)
                             self.taskParam[startThreadId]['jobName'] = query.getJobname()
                             self.taskParam[startThreadId]['retryCount'] = int(self.config.maxAttemptCount)
                             self.exitmutexes[startThreadId].acquire()
@@ -330,6 +332,7 @@ class Regression:
             pass
 
         except KeyboardInterrupt as e:
+            logger.warning(repr(e))
             exc = e
             pass
 
@@ -337,9 +340,9 @@ class Regression:
             #Some of them finished, others are not yet, but should check the still running tasks' timeout and retry state
             for threadId in range(self.maxthreads):
                 if self.exitmutexes[threadId].locked():
-                    if exc != None:
-                        print(("Thread :%d, is locked" % (threadId)))
                     query = suiteItems[self.taskParam[threadId]['taskId']]
+                    if exc != None:
+                        logger.warning("Thread :%d, is locked for %s. Terminate it." % (threadId,  query.ecl))
                     self.retryCount = int(self.config.maxAttemptCount)
                     self.CheckTimeout(self.taskParam[threadId]['taskId']+1, threadId,  query)
 
@@ -351,7 +354,7 @@ class Regression:
             self.closeLogging()
 
             if exc != None:
-                print(str(exc)+"(line: "+str(inspect.stack()[0][2])+")")
+                logger.debug(str(exc)+"(line: "+str(inspect.stack()[0][2])+")")
                 raise(exc)
 
 
@@ -374,7 +377,7 @@ class Regression:
                 wuid =  queryWuid(query.getJobname(),  query.getTaskId())
                 self.retryCount -= 1;
                 if self.retryCount> 0:
-                    self.timeouts[threadId] =  self.timeout
+                    self.timeouts[threadId] = query.getTimeout()
                     self.loggermutex.acquire()
                     logger.warn("%3d. %s has not started yet. Reset due to timeout after %d sec (%d retry attempt(s) remain)." % (cnt, query.ecl, self.timeouts[threadId],  self.retryCount),  extra={'taskId':cnt})
                     logger.debug("%3d. Task parameters: thread id: %d, ecl:'%s',state:'%s', retry count:%d." % (cnt, threadId,  query.ecl,   wuid['state'],  self.retryCount),  extra={'taskId':cnt})
@@ -455,6 +458,7 @@ class Regression:
             raise(e)
 
         except KeyboardInterrupt as e:
+            logger.warning(repr(e))
             suite.close()
             raise(e)
 
@@ -500,6 +504,7 @@ class Regression:
             raise(e)
 
         except KeyboardInterrupt as e:
+            logger.warning(repr(e))
             eclfile.close()
             raise(e)
 
@@ -526,14 +531,6 @@ class Regression:
                     wuid = 'Not found'
                     query.setWuid(wuid)
                     query.diff = query.getEclccWarningChanges()
-                    report[0].addResult(query)
-                elif query.testFail():
-                    logger.debug("Intentionally fails",  extra={'taskId':cnt})
-                    res = True
-                    wuid="No WUID"
-                    url = "N/A (Intentionally fails)"
-                    query.setWuid(wuid)
-                    query.diff = ''
                     report[0].addResult(query)
                 else:
                     eclCmd = ECLcmd()
@@ -569,13 +566,23 @@ class Regression:
                             PrintException(repr(e) + " runQuery() ")
 
                     wuid = query.getWuid()
-                    logger.debug("CMD result: '%s', wuid:'%s'"  % ( res,  wuid),  extra={'taskId':cnt})
                     if wuid == 'Not found':
                         res = False
+                        wuid="No WUID"
+                    if query.testFail():
+                        logger.debug("Intentionally fails",  extra={'taskId':cnt})
+                        if res == False:
+                            res = True
+                    logger.debug("CMD result: '%s', wuid:'%s'"  % ( res,  wuid),  extra={'taskId':cnt})
+                   
             else:
-                res = False
-                report[0].addResult(query)
                 wuid="N/A"
+                if query.testFail():
+                    res = True
+                    report[0].addResult(query)
+                else:
+                    res = False
+                    report[0].addResult(query)
 
             if wuid and wuid.startswith("W"):
                 if self.config.useSsl.lower() == 'true':
@@ -586,6 +593,7 @@ class Regression:
                 url += "/?Widget=WUDetailsWidget&Wuid="
                 url += wuid
             elif query.testFail():
+                url = "N/A"
                 res = True
             else:
                 url = "N/A"
@@ -595,6 +603,8 @@ class Regression:
             elapsTime = time.time()-startTime
             if res:
                 logger.info("%3d. Pass %s - %s (%d sec)" % (cnt, query.getBaseEclRealName(), wuid,  elapsTime),  extra={'taskId':cnt})
+                if query.testFail():
+                    logger.info("%3d. Intentionally fails" % (cnt),  extra={'taskId':cnt})
                 logger.info("%3d. URL %s" % (cnt,url))
             else:
                 if not wuid or not wuid.startswith("W"):
@@ -608,6 +618,7 @@ class Regression:
             query.setElapsTime(elapsTime)
             self.exitmutexes[th].release()
         except Exception as e:
+            PrintException(repr(e) + " runQuery()")
             logger.error("Unexpected error:'%s' (line: %s ) :%s " %( sys.exc_info()[0], str(inspect.stack()[0][2]),  repr(e) ) ,  extra={'taskId':cnt})
             elapsTime = time.time()-startTime
             query.setElapsTime(elapsTime)

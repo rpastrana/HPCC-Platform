@@ -245,7 +245,7 @@ define([
                         .lazyRender()
                         ;
                 }
-            }
+            };
         },
 
         doSearch: function (searchText) {
@@ -398,7 +398,7 @@ define([
             this.wuCopyButton = new Button({
                 id: this.id + "WUCopyButton",
                 showLabel: false,
-                iconClass: 'iconCopy',
+                iconClass: "iconCopy",
                 title: this.i18n.CopyWUIDs
             }).placeAt(this.openButton.domNode, "before");
             Clippy.attachDomNode(this.wuCopyButton.domNode, function () {
@@ -417,7 +417,7 @@ define([
                 columns: {
                     col1: selector({
                         width: 27,
-                        selectorType: 'checkbox',
+                        selectorType: "checkbox",
                         sortable: false
                     }),
                     Priority: {
@@ -450,12 +450,12 @@ define([
                             var img = row.getStateImage();
                             if (context.activity.isInstanceOfQueue(row)) {
                                 if (row.ClusterType === 3) {
-                                    return "<img src='" + img + "'/>&nbsp;<a href='#' class='dgrid-row-url'>" + _name + "</a>";
+                                    return "<img src='" + img + "'/>&nbsp;<a href='#' onClick='return false;' class='dgrid-row-url'>" + _name + "</a>";
                                 } else {
                                     return "<img src='" + img + "'/>&nbsp;" + _name;
                                 }
                             }
-                            return "<img src='" + img + "'/>&nbsp;<a href='#' class='dgrid-row-url'>" + row.Wuid + "</a>";
+                            return "<img src='" + img + "'/>&nbsp;<a href='#' onClick='return false;' class='dgrid-row-url'>" + row.Wuid + "</a>";
                         }
                     }),
                     GID: {
@@ -463,7 +463,7 @@ define([
                         formatter: function (_gid, row) {
                             if (context.activity.isInstanceOfWorkunit(row)) {
                                 if (row.GraphName) {
-                                    return "<a href='#' class='dgrid-row-url2'>" + row.GraphName + "-" + row.GID + "</a>";
+                                    return "<a href='#' onClick='return false;' class='dgrid-row-url2'>" + row.GraphName + "-" + row.GID + "</a>";
                                 }
                             }
                             return "";
@@ -490,7 +490,7 @@ define([
                 getSelected: function () {
                     var retVal = [];
                     for (var id in this.selection) {
-                        var item = context.activity.resolve(id)
+                        var item = context.activity.resolve(id);
                         if (item) {
                             retVal.push(item);
                         }
@@ -658,8 +658,8 @@ define([
                 }
             });
 
-            this.wuCopyButton.set("disabled", !wuSelected)
-            this.wuCopyButton.set("iconClass", !wuSelected ? "iconCopyDisabled" : "iconCopy")
+            this.wuCopyButton.set("disabled", !wuSelected);
+            this.wuCopyButton.set("iconClass", !wuSelected ? "iconCopyDisabled" : "iconCopy");
             this.clusterPauseButton.set("disabled", !clusterNotPausedSelected);
             this.clusterResumeButton.set("disabled", !clusterPausedSelected);
             this.clusterClearButton.set("disabled", !clusterHasItems);

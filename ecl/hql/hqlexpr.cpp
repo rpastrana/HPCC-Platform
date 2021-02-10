@@ -360,6 +360,7 @@ static IHqlExpression * cachedNullRecord;
 static IHqlExpression * cachedNullRowRecord;
 static IHqlExpression * cachedOne;
 static IHqlExpression * cachedLocalAttribute;
+static IHqlExpression * cachedNullUidAttribute;
 static IHqlExpression * cachedContextAttribute;
 static IHqlExpression * constantTrue;
 static IHqlExpression * constantFalse;
@@ -447,6 +448,7 @@ MODULE_INIT(INIT_PRIORITY_HQLINTERNAL)
     cachedNullRowRecord = createRecord(nonEmptyAttr);
     cachedOne = createConstant(1);
     cachedLocalAttribute = createAttribute(localAtom);
+    cachedNullUidAttribute = createAttribute(_uid_Atom);
     cachedContextAttribute = createAttribute(contextAtom);
     constantTrue = createConstant(createBoolValue(true));
     constantFalse = createConstant(createBoolValue(false));
@@ -494,6 +496,7 @@ MODULE_EXIT()
     constantBlankString->Release();
     blank->Release();
     cachedContextAttribute->Release();
+    cachedNullUidAttribute->Release();
     cachedLocalAttribute->Release();
     cachedOne->Release();
     cachedActiveTableExpr->Release();
@@ -1207,13 +1210,13 @@ void HqlParseContext::noteExternalLookup(IHqlScope * parentScope, IHqlExpression
                 if (!moduleName)
                     moduleName = "";
 
-                VStringBuffer xpath("Depend[@module=\"%s\"][@name=\"%s\"]", moduleName, str(expr->queryName()));
+                VStringBuffer xpath("Depend[@module=\"%s\"][@name=\"%s\"]", moduleName, str(expr->queryId()));
 
                 if (!meta.dependencies->queryPropTree(xpath.str()))
                 {
                     IPropertyTree * depend = meta.dependencies->addPropTree("Depend");
                     depend->setProp("@module", moduleName);
-                    depend->setProp("@name", str(expr->queryName()));
+                    depend->setProp("@name", str(expr->queryId()));
                 }
             }
         }
@@ -1246,7 +1249,7 @@ void HqlParseContext::noteExternalLookup(IHqlScope * parentScope, IHqlExpression
 void HqlParseContext::createDependencyEntry(IHqlScope * parentScope, IIdAtom * id)
 {
     const char * moduleName = parentScope ? parentScope->queryFullName() : "";
-    const char * nameText = id ? str(lower(id)) : "";
+    const char * nameText = id ? str(id) : "";
 
     StringBuffer xpath;
     xpath.append("Attr[@module=\"").append(moduleName).append("\"][@name=\"").append(nameText).append("\"]");
@@ -4034,6 +4037,7 @@ IHqlExpression * CHqlExpression::calcNormalizedSelector() const
     if ((normalizedLeft != left) || (operands.ordinality() > 2))
     {
         HqlExprArray args;
+        args.ensureCapacity(2);
         args.append(*LINK(normalizedLeft));
         args.append(OLINK(operands.item(1)));
         return doCreateSelectExpr(args);
@@ -4081,6 +4085,7 @@ CHqlRealExpression::~CHqlRealExpression()
 IHqlExpression *CHqlRealExpression::closeExpr()
 {
     updateFlagsAfterOperands();
+    operands.trimMemory();
     return CHqlExpression::closeExpr();
 }
 
@@ -4570,6 +4575,21 @@ void CHqlRealExpression::updateFlagsAfterOperands()
 #ifdef VERIFY_EXPR_INTEGRITY
 switch (op)
     {
+    case no_sequential:
+    case no_orderedactionlist:
+        {
+            bool hadAttr = false;
+            ForEachChild(i, this)
+            {
+                IHqlExpression * cur = queryChild(i);
+                if (cur->isAttribute())
+                    hadAttr = true;
+                else if (cur->isAction() && hadAttr)
+                    throwUnexpected();
+
+            }
+            break;
+        }
     case no_select:
 #ifdef CHECK_RECORD_CONSISTENCY
         {
@@ -4947,7 +4967,7 @@ void CHqlRealExpression::appendSingleOperand(IHqlExpression * arg0)
     if (!arg0)
         return;
 
-    operands.ensure(1);
+    operands.ensureSpace(1);
     doAppendOperand(*arg0);
 }
 
@@ -5169,7 +5189,7 @@ void expandOperands(HqlExprArray & args, const std::initializer_list<IHqlExpress
         }
     }
 
-    args.ensure(count);
+    args.ensureSpace(count);
     for (auto & cur : operands)
     {
         //Skip null entries
@@ -6009,7 +6029,7 @@ void CHqlSelectBaseExpression::setOperands(IHqlExpression * left, IHqlExpression
 {
     //Need to be very careful about the order that this is done in, since queryType() depends on operand2
     unsigned max = attr ? 3 : 2;
-    operands.ensure(max);
+    operands.ensureSpace(max);
     operands.append(*left);
     operands.append(*right);
     if (attr)
@@ -7597,7 +7617,7 @@ IHqlExpression * CHqlNamedSymbol::cloneSymbol(IIdAtom * optid, IHqlExpression * 
 
     CHqlNamedSymbol * e = new CHqlNamedSymbol(newid, moduleId, LINK(newbody), LINK(newfuncdef), isExported(), isShared(), symbolFlags, text, startLine, startColumn, startpos, bodypos, endpos);
     //NB: do not all doAppendOpeand() because the parameters to a named symbol do not change it's attributes - e.g., whether pure.
-    e->operands.ensure(newoperands->ordinality());
+    e->operands.ensureCapacity(newoperands->ordinality());
     ForEachItemIn(idx, *newoperands)
         e->operands.append(OLINK(newoperands->item(idx)));
     return e->closeExpr();
@@ -7677,7 +7697,7 @@ IError * queryAnnotatedWarning(const IHqlExpression * expr)
 CHqlAnnotationWithOperands::CHqlAnnotationWithOperands(IHqlExpression *_body, HqlExprArray & _args)
 : CHqlAnnotation(_body)
 {
-    operands.ensure(_args.ordinality());
+    operands.ensureCapacity(_args.ordinality());
     ForEachItemIn(i, _args)
         operands.append(OLINK(_args.item(i)));
 }
@@ -8256,7 +8276,7 @@ void CHqlScope::sethash()
     //MORE: Should symbols also be added as operands - would make more sense....
     SymbolTableIterator iter(symbols);
     HqlExprCopyArray sortedSymbols;
-    sortedSymbols.ensure(symbols.count());
+    sortedSymbols.ensureCapacity(symbols.count());
     for (iter.first(); iter.isValid(); iter.next()) 
     {
         IHqlExpression *cur = symbols.mapToValue(&iter.query());
@@ -13355,7 +13375,10 @@ extern IHqlExpression * createCompound(const HqlExprArray & actions)
 
 extern IHqlExpression * createActionList(node_operator op, const HqlExprArray & actions)
 {
-    switch (actions.ordinality())
+    unsigned numActions = actions.ordinality();
+    while (numActions && actions.item(numActions-1).isAttribute())
+        numActions--;
+    switch (numActions)
     {
     case 0:
         return createValue(no_null, makeVoidType());
@@ -13725,6 +13748,11 @@ extern HQL_API IHqlExpression * createConstantOne()
 extern HQL_API IHqlExpression * createLocalAttribute()
 {
     return LINK(cachedLocalAttribute);
+}
+
+extern HQL_API IHqlExpression * createNullUidAttribute()
+{
+    return LINK(cachedNullUidAttribute);
 }
 
 IHqlExpression * cloneOrLink(IHqlExpression * expr, HqlExprArray & children)
@@ -15299,7 +15327,7 @@ extern HQL_API bool isSimplifiedRecord(IHqlExpression * expr, bool isKey)
 void unwindChildren(HqlExprArray & children, IHqlExpression * expr)
 {
     unsigned max = expr->numChildren();
-    children.ensure(max);
+    children.ensureSpace(max);
     for (unsigned idx=0; idx < max; idx++)
     {
         IHqlExpression * child = expr->queryChild(idx);
@@ -15311,7 +15339,9 @@ void unwindChildren(HqlExprArray & children, IHqlExpression * expr)
 void unwindChildren(HqlExprArray & children, const IHqlExpression * expr, unsigned first)
 {
     unsigned max = expr->numChildren();
-    children.ensure(max-first);
+    if (first >= max)
+        return;
+    children.ensureSpace(max-first);
     for (unsigned idx=first; idx < max; idx++)
     {
         IHqlExpression * child = expr->queryChild(idx);
@@ -15322,7 +15352,9 @@ void unwindChildren(HqlExprArray & children, const IHqlExpression * expr, unsign
 
 void unwindChildren(HqlExprArray & children, const IHqlExpression * expr, unsigned first, unsigned max)
 {
-    children.ensure(max-first);
+    if (first >= max)
+        return;
+    children.ensureSpace(max-first);
     for (unsigned idx=first; idx < max; idx++)
     {
         IHqlExpression * child = expr->queryChild(idx);
@@ -15334,7 +15366,9 @@ void unwindChildren(HqlExprArray & children, const IHqlExpression * expr, unsign
 void unwindChildren(HqlExprCopyArray & children, const IHqlExpression * expr, unsigned first)
 {
     unsigned max = expr->numChildren();
-    children.ensure(max-first);
+    if (first >= max)
+        return;
+    children.ensureSpace(max-first);
     for (unsigned idx=first; idx < max; idx++)
     {
         IHqlExpression * child = expr->queryChild(idx);
@@ -15346,7 +15380,9 @@ void unwindChildren(HqlExprCopyArray & children, const IHqlExpression * expr, un
 void unwindRealChildren(HqlExprArray & children, const IHqlExpression * expr, unsigned first)
 {
     unsigned max = expr->numChildren();
-    children.ensure(max-first);
+    if (first >= max)
+        return;
+    children.ensureSpace(max-first);
     for (unsigned idx=first; idx < max; idx++)
     {
         IHqlExpression * child = expr->queryChild(idx);
@@ -15359,14 +15395,22 @@ void unwindRealChildren(HqlExprArray & children, const IHqlExpression * expr, un
 void unwindAttributes(HqlExprArray & children, const IHqlExpression * expr)
 {
     unsigned max = expr->numChildren();
+    unsigned numAttrs = 0;
     for (unsigned idx=0; idx < max; idx++)
     {
         IHqlExpression * child = expr->queryChild(idx);
         if (child->isAttribute())
+            numAttrs++;
+    }
+
+    if (numAttrs)
+    {
+        children.ensureSpace(numAttrs);
+        for (unsigned idx=0; idx < max; idx++)
         {
-            //Subsequent calls to ensure are quick no-ops
-            children.ensure(max - idx);
-            children.append(*LINK(child));
+            IHqlExpression * child = expr->queryChild(idx);
+            if (child->isAttribute())
+                children.append(*LINK(child));
         }
     }
 }
