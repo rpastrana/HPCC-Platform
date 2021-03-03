@@ -55,7 +55,8 @@ typedef enum _SQLLogicType
     Unicode_LogicType,
     Numeric_LogicType,
     Integer_LogicType,
-    Decimal_LogicType
+    Decimal_LogicType,
+	NestedDS_LogicType
 } SQLLogicType;
 
 interface ISQLExpression : public CInterface, public IInterface
@@ -491,6 +492,8 @@ public:
             return Decimal_LogicType;
         else if (strnicmp(type,"DECIMAL",7)==0)
             return Decimal_LogicType;
+        else if (strnicmp(type,"DATASET",7)==0)
+        	return NestedDS_LogicType;
         else
             return Unknown_LogicType;
     }

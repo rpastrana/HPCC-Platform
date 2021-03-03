@@ -72,6 +72,8 @@ SQLFieldsExpression::~SQLFieldsExpression()
          return Decimal_LogicType;
      else if (strnicmp(type,"DECIMAL",7)==0)
          return Decimal_LogicType;
+     else if (strnicmp(type,"DATASET",7)==0)
+         return NestedDS_LogicType;
      else
          return Unknown_LogicType;
  }

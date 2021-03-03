@@ -191,6 +191,9 @@ void ECLEngine::generateSelectECL(HPCCSQLTreeWalker * selectsqlobj, StringBuffer
     out.clear();
     out.append("import std;\n"); /* ALL Generated ECL will import std, even if std lib not used */
 
+    out.append("NormalizeToXMLString(cds) := FUNCTIONMACRO\n\tP := PROJECT(cds, TRANSFORM({STRING x}, SELF.x := (STRING)TOXML(LEFT)));\n\tR := ROLLUP(P,TRUE,TRANSFORM({STRING x}, SELF.x := LEFT.x + RIGHT.x));\n\tRETURN R[1].x;\nENDMACRO;\n");
+//    out.append("NormalizeToJSONString(cds) := FUNCTIONMACRO\n\tP := PROJECT(cds, TRANSFORM({STRING x}, SELF.x := (STRING)TOJSON(LEFT)));\n\tR := ROLLUP(P,TRUE,TRANSFORM({STRING x}, SELF.x := LEFT.x + RIGHT.x));\n\tRETURN R[1].x;\nENDMACRO;\n");
+
     //Prepared statement parameters are handled by ECL STORED service workflow statements
     if (selectsqlobj->hasWhereClause())
         selectsqlobj->getWhereClause()->eclDeclarePlaceHolders(out, 0,0);
@@ -613,7 +616,10 @@ void ECLEngine::generateSelectStruct(HPCCSQLTreeWalker * selectsqlobj, IProperti
         else
         {
             eclEntities->setProp("NONSCALAREXPECTED", "TRUE");
-            selectStructSB.appendf("%s %s := %s.%s;", col->getECLType(), col->getNameOrAlias(), datasource, col->getName());
+            if (strncmp(col->getECLType(), "DATASET", 7)==0)
+                selectStructSB.appendf("STRING %s := NormalizeToXMLString(%s.%s);", col->getNameOrAlias(), datasource, col->getName());
+            else
+                selectStructSB.appendf("%s %s := %s.%s;", col->getECLType(), col->getNameOrAlias(), datasource, col->getName());
         }
 
         selectStructSB.append("\n");
@@ -685,7 +691,7 @@ bool ECLEngine::processIndex(HPCCFile * indexfiletouse, StringBuffer & keyedandw
         bool currfilterfieldexistsinindexfile = false;
         for (int indexfilecolumnindex = 0; indexfilecolumnindex < indexfilecolumns->length(); indexfilecolumnindex++)
         {
-            HPCCColumnMetaData currcol = indexfilecolumns->item(indexfilecolumnindex);
+            HPCCColumnMetaData & currcol = indexfilecolumns->item(indexfilecolumnindex);
             const char * currindexfilecolname = currcol.getColumnName();
             if(stricmp( filterclauseuniquenames.item(uniquenamesidx), currindexfilecolname)==0)
             {
@@ -848,7 +854,7 @@ void ECLEngine::findAppropriateIndex(StringArray * relindexes, HPCCSQLTreeWalker
                 IArrayOf<HPCCColumnMetaData> * columns = indexfile->getColumns();
                 ForEachItemIn(colidx, *columns)
                 {
-                    HPCCColumnMetaData currcol = columns->item(colidx);
+                    HPCCColumnMetaData & currcol = columns->item(colidx);
                     if (currcol.isKeyedField())
                     {
                         ForEachItemIn(uniqueidx, uniquenames)
