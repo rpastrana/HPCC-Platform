@@ -144,8 +144,28 @@ ESPResponse GetLogsResponse
     [min_ver("1.02")] unsigned int TotalLogLinesAvailable;
 };
 
-ESPservice [auth_feature("WsLogAccess:READ"), version("1.02"), default_client_version("1.02"), exceptions_inline("xslt/exceptions.xslt")] ws_logaccess
+ESPStruct ColumnInfo
 {
+    string Name;
+    string MapsToHPCCLogColumn; //enum?
+    string Type; //enum?
+    string SourceTable; //ie source table in DB, index pattern in Elastic
+    string SourceStore; //ie source Database in DB
+};
+
+ESPRequest GetLogAccessColInfoRequest
+{
+    ESPenum LogSelectColumnMode SelectColumnMode(2);
+};
+
+ESPResponse GetLogAccessColInfoResponse
+{
+    ESParray<ESPstruct ColumnInfo> Columns;
+};
+
+ESPservice [auth_feature("WsLogAccess:READ"), version("1.03"), default_client_version("1.02"), exceptions_inline("xslt/exceptions.xslt")] ws_logaccess
+{
+    ESPmethod [min_ver("1.03")] GetLogAccessColInfo(GetLogAccessColInfoRequest, GetLogAccessColInfoResponse);
     ESPmethod GetLogAccessInfo(GetLogAccessInfoRequest, GetLogAccessInfoResponse);
     ESPmethod GetLogs(GetLogsRequest, GetLogsResponse);
 };

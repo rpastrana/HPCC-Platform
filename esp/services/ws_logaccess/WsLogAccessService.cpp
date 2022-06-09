@@ -193,6 +193,13 @@ ILogAccessFilter * buildBinaryLogFilter(IConstBinaryLogFilter * binaryfilter)
     }
 }
 
+bool Cws_logaccessEx::onGetLogAccessColInfo(IEspContext &context, IEspGetLogAccessColInfoRequest &req, IEspGetLogAccessColInfoResponse & resp)
+{
+    bool success = false;
+
+    return success;
+}
+
 bool Cws_logaccessEx::onGetLogs(IEspContext &context, IEspGetLogsRequest &req, IEspGetLogsResponse & resp)
 {
     if (!m_remoteLogAccessor)

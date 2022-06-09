@@ -31,6 +31,8 @@ public:
     virtual void init(const IPropertyTree *cfg, const char *process, const char *service);
     virtual bool onGetLogAccessInfo(IEspContext &context, IEspGetLogAccessInfoRequest &req, IEspGetLogAccessInfoResponse &resp);
     virtual bool onGetLogs(IEspContext &context, IEspGetLogsRequest &req, IEspGetLogsResponse & resp);
+    virtual bool onGetLogAccessColInfo(IEspContext &context, IEspGetLogAccessColInfoRequest &req, IEspGetLogAccessColInfoResponse & resp);
+    
 };
 
 #endif
