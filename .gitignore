@@ -14,3 +14,7 @@ eclcc.log
 *.pyc
 ./helm/examples/azure/sa/env-sa
 ./dockerfiles/platform-build-incremental/hpcc.gitpatch
+dockerfiles/platform-build-incremental/hpcc.gitpatch
+.gitignore
+helm/managed/logging/elastic/Chart.lock
+helm/managed/logging/elastic/charts/*

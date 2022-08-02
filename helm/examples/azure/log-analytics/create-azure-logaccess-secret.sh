@@ -49,6 +49,7 @@ errormessage=$(${k8scommand} get secret ${secretname} 2>&1)
 if [[ $? -eq 0 ]]
 then
   echo "WARNING: Target secret '${secretname}' already exists! Delete it and re-run if secret update desired."
+  echo "Sample delete command: 'kubectl delete secret azure-logaccess'"
   echo "${errormessage}"
   exit 1
 fi
