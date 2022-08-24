@@ -30,7 +30,7 @@ class Esdl2XSDCmd : public EsdlHelperConvertCmd
 {
 public:
     Esdl2XSDCmd() : optUnversionedNamespace(false), optInterfaceVersion(0), optAllAnnot(false), optNoAnnot(false),
-                    optEnforceOptional(true), optRawOutput(false), optXformTimes(1), optFlags(DEPFLAG_COLLAPSE|DEPFLAG_ARRAYOF),
+                    optEnforceOptional(true), optRawOutput(false), optXformTimes(1), optFlags(DEPFLAG_COLLAPSE|DEPFLAG_ARRAYOF|DEPFLAG_STRINGARRAY ),
                     outfileext(".xsd")
     {}
 
