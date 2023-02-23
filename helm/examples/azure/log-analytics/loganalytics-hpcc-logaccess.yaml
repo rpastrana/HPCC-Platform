@@ -34,32 +34,22 @@ global:
       columnType: "string"
     - type: "audience"
       searchColumn: "hpcc_log_audience"
-      EnumValues:
-      - Code: OPR
-        Label: Operator
-      - Code: USR
-        Label: User
-      - Code: PRO
-        Label: Programmer
-      - Code: ADT
-        Label: Audit
+      enumValues:
+      - code: OPR
+      - code: USR
+      - code: PRO
+      - code: ADT
       columnMode: "DEFAULT"
       columnType: "enum"
     - type: "class"
       searchColumn: "hpcc_log_class"
-      EnumValues:
-      - Code: DIS
-        Label: Disaster
-      - Code: ERR
-        Label: Error
-      - Code: WRN
-        Label: Warning
-      - Code: INF
-        Label: Information
-      - Code: PRO
-        Label: Progress
-      - Code: MET
-        Label: Metric
+      enumValues:
+      - code: DIS
+      - code: ERR
+      - code: WRN
+      - code: INF
+      - code: PRO
+      - code: MET
       columnMode: "DEFAULT"
       columnType: "enum"
     - type: "instance"

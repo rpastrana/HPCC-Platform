@@ -44,14 +44,14 @@ bool Cws_logaccessEx::onGetLogAccessInfo(IEspContext &context, IEspGetLogAccessI
                         if (column.hasProp("@columnMode"))
                             espLogColumn->setColumnMode(column.queryProp("@columnMode"));
 
-                        if (column.hasProp("EnumValues"))
+                        if (column.hasProp("enumValues"))
                         {
-                            Owned<IPropertyTreeIterator> enumValues = column.getElements("EnumValues");
+                            Owned<IPropertyTreeIterator> enumValues = column.getElements("enumValues");
                             StringArray enumValuesArr;
                             ForEach(*enumValues)
                             {
                                 IPropertyTree &enumVal = enumValues->query();
-                                enumValuesArr.append(enumVal.queryProp("@Code"));
+                                enumValuesArr.append(enumVal.queryProp("@code"));
                             }
                             espLogColumn->setEnumeratedValues(enumValuesArr);
                         }
