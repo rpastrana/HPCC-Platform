@@ -225,7 +225,7 @@ static void submitKQLQuery(std::string & readBuffer, const char * token, const c
 
         if (curl_easy_setopt(curlHandle, CURLOPT_USERAGENT, "HPCC Systems Log Access client") != CURLE_OK)
             throw makeStringExceptionV(-1, "%s: Log query request: Could not set 'CURLOPT_USERAGENT' option!", COMPONENT_NAME);
-
+ 
         if (curl_easy_setopt(curlHandle, CURLOPT_ERRORBUFFER, curlErrBuffer) != CURLE_OK)
             throw makeStringExceptionV(-1, "%s: Access token request: Could not set 'CURLOPT_ERRORBUFFER' option!", COMPONENT_NAME);
 
