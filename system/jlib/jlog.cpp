@@ -2783,6 +2783,68 @@ void IContextLogger::logOperatorException(IException *E, const char *file, unsig
     va_end(args);
 }
 
+void LogTrace::setGlobalId(const char* id)
+{
+    if (!isEmptyString(id))
+    {
+        m_globalId.set(id);
+    }
+    else
+    {
+        std::string uid = createUniqueIdString();
+        m_globalId.set(uid.c_str());
+    }
+}
+
+LogTrace::LogTrace()
+{
+    setGlobalId(nullptr);
+}
+
+LogTrace::LogTrace(const char * globalId)
+{
+    setGlobalId(globalId);
+}
+
+LogTrace::LogTrace(const char * globalId, const char * localId, const char * callerId)
+{
+    m_globalId.set(globalId);
+    m_localId.set(localId);
+    m_callerId.set(callerId);
+}
+
+StringBuffer & LogTrace::appendGloballyUniqueId(StringBuffer &s)
+{
+    std::string uid = createUniqueIdString();
+    return s.append(uid.c_str());
+}
+
+const char* LogTrace::getGlobalId()
+{
+    return m_globalId.get();
+}
+
+void LogTrace::setCallerId(const char* id)
+{
+    m_callerId.set(id);
+}
+
+const char* LogTrace::getCallerId()
+{
+    return m_callerId.get();
+}
+
+const char* LogTrace::getLocalId()
+{
+    return m_localId.get();
+}
+
+//StringBuffer & LogTrace::appendGloballyUniqueId(StringBuffer &s)
+//{
+//    std::string uid = createUniqueIdString();
+//    return s.append(uid.c_str());
+//}
+
 class DummyLogCtx : implements IContextLogger
 {
 private:
@@ -2791,6 +2853,7 @@ private:
     StringBuffer localId;
     StringAttr globalIdHeader;
     StringAttr callerIdHeader;
+    //LogTrace logTrace;
 
 public:
     // It's a static object - we don't want to actually link-count it...
@@ -2835,14 +2898,17 @@ public:
     }
     virtual void setCallerId(const char *id) override
     {
+        //logTrace.setCallerId(id);
         callerId.set(id);
     }
     virtual const char *queryGlobalId() const
     {
+        //return logTrace.getGlobalId();
         return globalId.get();
     }
     virtual const char *queryCallerId() const override
     {
+        //return logTrace.getCaller
         return callerId.str();
     }
     virtual const char *queryLocalId() const

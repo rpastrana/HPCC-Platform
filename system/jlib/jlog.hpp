@@ -1665,4 +1665,27 @@ extern jlib_decl bool fetchLogByAudience(LogQueryResultDetails & resultDetails, 
 extern jlib_decl bool  fetchLogByClass(LogQueryResultDetails & resultDetails, StringBuffer & returnbuf, IRemoteLogAccess & logAccess, LogMsgClass logclass, LogAccessTimeRange timeRange, StringArray & cols, LogAccessLogFormat format);
 extern jlib_decl IRemoteLogAccess * queryRemoteLogAccessor();
 
+class jlib_decl LogTrace : public CInterface
+{
+public:
+    static constexpr const char * HTTP_HEADER_HPCC_GLOBAL_ID = "Global-Id";
+    static constexpr const char * HTTP_HEADER_HPCC_CALLER_ID = "Caller-Id";
+
+private:
+    StringAttr   m_globalId;
+    StringAttr   m_localId;
+    StringAttr   m_callerId;
+public:
+    LogTrace();
+    LogTrace(const char * globalId);
+    LogTrace(const char * globalId, const char * localId, const char * callerId);
+    
+    void setGlobalId(const char* id);
+    const char* getGlobalId();
+    void setCallerId(const char* id);
+    const char* getCallerId();
+    const char* getLocalId();
+    StringBuffer &appendGloballyUniqueId(StringBuffer &s);
+};
+
 #endif
