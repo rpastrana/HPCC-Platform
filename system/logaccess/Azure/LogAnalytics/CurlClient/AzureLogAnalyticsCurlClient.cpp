@@ -367,6 +367,7 @@ AzureLogAnalyticsCurlClient::AzureLogAnalyticsCurlClient(IPropertyTree & logAcce
                 m_componentsTimestampField = logMap.queryProp(logMapTimeStampColAtt);
             else
                 m_componentsTimestampField = defaultHPCCLogComponentTSCol;
+            m_disableComponentNameJoins = logMap.getPropBool("disableJoins", false);
         }
         else if (streq(logMapType, "class"))
         {
@@ -405,18 +406,19 @@ AzureLogAnalyticsCurlClient::AzureLogAnalyticsCurlClient(IPropertyTree & logAcce
 
 void AzureLogAnalyticsCurlClient::getMinReturnColumns(StringBuffer & columns, bool & includeComponentName)
 {
-    includeComponentName = false;
-    //timestamp, message - Note: omponent information in default ALA format is expensive and therefore avoided
     columns.appendf("\n| project %s, %s", m_globalIndexTimestampField.str(), defaultHPCCLogMessageCol);
+    if (includeComponentName)
+        columns.appendf(", %s", defaultHPCCLogComponentCol);
 }
 
 void AzureLogAnalyticsCurlClient::getDefaultReturnColumns(StringBuffer & columns, bool & includeComponentName)
 {
-    includeComponentName = false;
     //timestamp, class, audience, jobid, seq, threadid - Note: component information in default ALA format is expensive and therefore avoided
     columns.appendf("\n| project %s, %s, %s, %s, %s, %s, %s",
     m_globalIndexTimestampField.str(), defaultHPCCLogMessageCol, m_classSearchColName.str(),
     m_audienceSearchColName.str(), m_workunitSearchColName.str(), defaultHPCCLogSeqCol, defaultHPCCLogThreadIDCol);
+    if (includeComponentName)
+        columns.appendf(", %s", defaultHPCCLogComponentCol);
 }
 
 bool generateHPCCLogColumnstAllColumns(StringBuffer & kql, const char * colName)
@@ -679,7 +681,7 @@ void AzureLogAnalyticsCurlClient::populateKQLQueryString(StringBuffer & queryStr
         queryIndex.set(m_globalIndexSearchPattern.str());
 
         StringBuffer searchColumns;
-        bool includeComponentName = false;
+        bool includeComponentName = !m_disableComponentNameJoins;
         searchMetaData(searchColumns, options.getReturnColsMode(), options.getLogFieldNames(), includeComponentName, options.getLimit(), options.getStartFrom());
         if (includeComponentName)
             declareContainerIndexJoinTable(queryString, options);
