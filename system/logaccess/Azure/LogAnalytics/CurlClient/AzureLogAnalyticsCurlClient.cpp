@@ -405,17 +405,17 @@ AzureLogAnalyticsCurlClient::AzureLogAnalyticsCurlClient(IPropertyTree & logAcce
 
 void AzureLogAnalyticsCurlClient::getMinReturnColumns(StringBuffer & columns, bool & includeComponentName)
 {
-    includeComponentName = false;
+    includeComponentName = true;
     //timestamp, message - Note: omponent information in default ALA format is expensive and therefore avoided
-    columns.appendf("\n| project %s, %s", m_globalIndexTimestampField.str(), defaultHPCCLogMessageCol);
+    columns.appendf("\n| project %s, %s, %s", m_globalIndexTimestampField.str(), m_componentsSearchColName.str(), defaultHPCCLogMessageCol);
 }
 
 void AzureLogAnalyticsCurlClient::getDefaultReturnColumns(StringBuffer & columns, bool & includeComponentName)
 {
-    includeComponentName = false;
+    includeComponentName = true;
     //timestamp, class, audience, jobid, seq, threadid - Note: component information in default ALA format is expensive and therefore avoided
-    columns.appendf("\n| project %s, %s, %s, %s, %s, %s, %s",
-    m_globalIndexTimestampField.str(), defaultHPCCLogMessageCol, m_classSearchColName.str(),
+    columns.appendf("\n| project %s, %s, %s, %s, %s, %s, %s, %s",
+    m_globalIndexTimestampField.str(), m_componentsSearchColName.str(), defaultHPCCLogMessageCol, m_classSearchColName.str(),
     m_audienceSearchColName.str(), m_workunitSearchColName.str(), defaultHPCCLogSeqCol, defaultHPCCLogThreadIDCol);
 }
 
@@ -679,7 +679,7 @@ void AzureLogAnalyticsCurlClient::populateKQLQueryString(StringBuffer & queryStr
         queryIndex.set(m_globalIndexSearchPattern.str());
 
         StringBuffer searchColumns;
-        bool includeComponentName = false;
+        bool includeComponentName = true;
         searchMetaData(searchColumns, options.getReturnColsMode(), options.getLogFieldNames(), includeComponentName, options.getLimit(), options.getStartFrom());
         if (includeComponentName)
             declareContainerIndexJoinTable(queryString, options);
