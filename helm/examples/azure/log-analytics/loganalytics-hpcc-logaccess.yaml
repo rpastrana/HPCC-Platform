@@ -32,6 +32,7 @@ global:
       keyColumn: "ContainerID"
       columnMode: "MIN"
       columnType: "string"
+      disableJoins: false
     - type: "audience"
       searchColumn: "hpcc_log_audience"
       enumValues:
