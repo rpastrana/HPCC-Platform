@@ -20,6 +20,49 @@
 #ifndef JTRACE_HPP
 #define JTRACE_HPP
 
+class jlib_decl LogTrace
+{
+private:
+    StringAttr   globalId;
+    StringAttr   callerId;
+    StringAttr   localId;
+
+    static constexpr const char * DEFAULT_GLOBALID_HEADER = "HPCC-Global-Id";
+    static constexpr const char * DEFAULT_CALLERID_HEADER = "HPCC-Caller-Id";
+
+    StringAttr   globalIdHTTPHeaderName;
+    StringAttr   callerIdHTTPHeaderName;
+
+public:
+    LogTrace() 
+    {
+        setGlobalIdHTTPHeaderName(DEFAULT_GLOBALID_HEADER);
+        setCallerIdHTTPHeaderName(DEFAULT_CALLERID_HEADER);
+    }
+
+    LogTrace(const char * globalId);
+
+    const char* queryGlobalId() const;
+    const char* queryCallerId() const;
+    const char* queryLocalId() const;
+    const char* queryGlobalIdHTTPHeaderName() const { return globalIdHTTPHeaderName.get(); }
+    const char* queryCallerIdHTTPHeaderName() const { return callerIdHTTPHeaderName.get(); }
+
+    //StringBuffer & appendGloballyUniqueId(StringBuffer &s);
+    
+    const char* assignGlobalId();
+    const char* assignLocalId();
+
+    void setGlobalIdHTTPHeaderName(const char* headerName) {globalIdHTTPHeaderName.set(headerName);};
+    void setCallerIdHTTPHeaderName(const char* headerName) {callerIdHTTPHeaderName.set(headerName);};
+
+    //can these be private with abstract methods exposed to create/set these values?
+    void setGlobalId(const char* id);
+    void setCallerId(const char* id);
+    void setLocalId(const char* id);
+};
+
+
 /*
   To use feature-level tracing flags, protect the tracing with a test such as:
   

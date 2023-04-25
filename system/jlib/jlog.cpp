@@ -28,6 +28,7 @@
 #include "jmisc.hpp"
 #include "jprop.hpp"
 #include "lnuid.h"
+#include "jtrace.hpp"
 
 using namespace ln_uid;
 
@@ -2783,77 +2784,15 @@ void IContextLogger::logOperatorException(IException *E, const char *file, unsig
     va_end(args);
 }
 
-void LogTrace::setGlobalId(const char* id)
-{
-    if (!isEmptyString(id))
-    {
-        m_globalId.set(id);
-    }
-    else
-    {
-        std::string uid = createUniqueIdString();
-        m_globalId.set(uid.c_str());
-    }
-}
-
-LogTrace::LogTrace()
-{
-    setGlobalId(nullptr);
-}
-
-LogTrace::LogTrace(const char * globalId)
-{
-    setGlobalId(globalId);
-}
-
-LogTrace::LogTrace(const char * globalId, const char * localId, const char * callerId)
-{
-    m_globalId.set(globalId);
-    m_localId.set(localId);
-    m_callerId.set(callerId);
-}
-
-StringBuffer & LogTrace::appendGloballyUniqueId(StringBuffer &s)
-{
-    std::string uid = createUniqueIdString();
-    return s.append(uid.c_str());
-}
-
-const char* LogTrace::getGlobalId()
-{
-    return m_globalId.get();
-}
-
-void LogTrace::setCallerId(const char* id)
-{
-    m_callerId.set(id);
-}
-
-const char* LogTrace::getCallerId()
-{
-    return m_callerId.get();
-}
-
-const char* LogTrace::getLocalId()
-{
-    return m_localId.get();
-}
-
-//StringBuffer & LogTrace::appendGloballyUniqueId(StringBuffer &s)
-//{
-//    std::string uid = createUniqueIdString();
-//    return s.append(uid.c_str());
-//}
-
 class DummyLogCtx : implements IContextLogger
 {
 private:
-    StringAttr globalId;
-    StringAttr callerId;
-    StringBuffer localId;
-    StringAttr globalIdHeader;
-    StringAttr callerIdHeader;
-    //LogTrace logTrace;
+    //StringAttr globalId;
+    //StringAttr callerId;
+    //StringBuffer localId;
+    //StringAttr globalIdHeader;
+    //StringAttr callerIdHeader;
+    LogTrace logTrace;
 
 public:
     // It's a static object - we don't want to actually link-count it...
@@ -2893,42 +2832,38 @@ public:
     }
     virtual void setGlobalId(const char *id, SocketEndpoint &ep, unsigned pid) override
     {
-        globalId.set(id);
-        appendGloballyUniqueId(localId.clear());
+        logTrace.setGlobalId(id);
     }
     virtual void setCallerId(const char *id) override
     {
-        //logTrace.setCallerId(id);
-        callerId.set(id);
+        logTrace.setCallerId(id);
     }
     virtual const char *queryGlobalId() const
     {
-        //return logTrace.getGlobalId();
-        return globalId.get();
+        return logTrace.queryGlobalId();
     }
     virtual const char *queryCallerId() const override
     {
-        //return logTrace.getCaller
-        return callerId.str();
+        return logTrace.queryCallerId();
     }
     virtual const char *queryLocalId() const
     {
-        return localId.str();
+        return logTrace.queryLocalId();
     }
     virtual void setHttpIdHeaders(const char *global, const char *caller)
     {
         if (global && *global)
-            globalIdHeader.set(global);
+            logTrace.setGlobalIdHTTPHeaderName(global);
         if (caller && *caller)
-            callerIdHeader.set(caller);
+            logTrace.setCallerIdHTTPHeaderName(caller);
     }
     virtual const char *queryGlobalIdHttpHeader() const
     {
-        return globalIdHeader.str();
+        return logTrace.queryGlobalIdHTTPHeaderName();
     }
     virtual const char *queryCallerIdHttpHeader() const
     {
-        return callerIdHeader.str();
+        return logTrace.queryCallerIdHTTPHeaderName();
     }
 } dummyContextLogger;
 
