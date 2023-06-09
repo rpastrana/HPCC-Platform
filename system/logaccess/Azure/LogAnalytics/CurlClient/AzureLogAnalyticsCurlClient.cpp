@@ -540,6 +540,7 @@ void AzureLogAnalyticsCurlClient::populateKQLQueryString(StringBuffer & queryStr
 
     StringBuffer queryValue;
     std::string queryField = m_globalSearchColName.str();
+    std::string queryOperator = " =~ ";
 
     filter->toString(queryValue);
     switch (filter->filterType())
@@ -641,7 +642,13 @@ void AzureLogAnalyticsCurlClient::populateKQLQueryString(StringBuffer & queryStr
         break;
     }
     case LOGACCESS_FILTER_wildcard:
-        throw makeStringExceptionV(-1, "%s: Wild Card filter detected within exact term filter!", COMPONENT_NAME);
+        if (queryValue.isEmpty())
+            throw makeStringExceptionV(-1, "%s: Wildcard filter cannot be empty!", COMPONENT_NAME);
+
+        queryOperator = " contains ";
+        DBGLOG("%s: Searching log entries by wildcard filter: '%s %s %s'...", COMPONENT_NAME, queryField.c_str(), queryOperator.c_str(), queryValue.str());
+
+        break;
     case LOGACCESS_FILTER_or:
     case LOGACCESS_FILTER_and:
     {
@@ -671,7 +678,9 @@ void AzureLogAnalyticsCurlClient::populateKQLQueryString(StringBuffer & queryStr
     //TableName
     //| where Fieldname =~ 'value'
     //queryString.append("\n| where ").append(queryField.c_str()).append(" =~ '").append(queryValue.str()).append("'");
-    queryString.append(" ").append(queryField.c_str()).append(" =~ '").append(queryValue.str()).append("'");
+    //queryString.append(" ").append(queryField.c_str()).append(" =~ '").append(queryValue.str()).append("'");
+    queryString.append(" ").append(queryField.c_str()).append(queryOperator.c_str()).append(queryValue.str()).append("'");
+    
 }
 
 void AzureLogAnalyticsCurlClient::declareContainerIndexJoinTable(StringBuffer & queryString, const LogAccessConditions & options)
