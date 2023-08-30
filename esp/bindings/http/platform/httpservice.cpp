@@ -214,7 +214,7 @@ int CEspHttpServer::processRequest()
     {
         //Mock http headers from request
         Owned<IProperties> mockClientContext = createProperties();
-        serverSpan->createClientSpan("MockExternalCall")->injectSpanContext(mockClientContext);
+        serverSpan->createClientSpan("MockExternalCall")->getSpanContext(mockClientContext, true);
 
         // Print out mockClientContext
         Owned<IPropertyIterator> iter(mockClientContext->getIterator());

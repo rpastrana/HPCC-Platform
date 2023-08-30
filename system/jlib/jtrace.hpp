@@ -66,19 +66,16 @@ public:
     void setLocalId(const char* id);
 };
 
-//class CHPCCHttpTextMapCarrier;
+class CHPCCHttpTextMapCarrier;
 
 interface ISpan : extends IInterface
 {
     virtual void setSpanAttribute(const char * key, const char * val) = 0;
     virtual void setSpanAttributes(const IProperties * attributes) = 0;
     virtual void addSpanEvent(const char * eventName) = 0;
-
-    virtual void querySpanContextProperties(IProperties * contextProps) = 0;
-    //virtual bool injectSpanContext(CHPCCHttpTextMapCarrier * carrier) = 0;
-    virtual bool injectSpanContext(IProperties * contextProps) = 0;
-
-    virtual void toString(StringBuffer & out) = 0;
+    virtual bool getSpanContext(CHPCCHttpTextMapCarrier * carrier) const = 0;
+    virtual bool getSpanContext(IProperties * ctxProps, bool otelFormatted) const = 0;
+    virtual void toString(StringBuffer & out) const = 0;
 
     virtual ISpan * createClientSpan(const char * name) = 0;
     virtual ISpan * createInternalSpan(const char * name) = 0;
