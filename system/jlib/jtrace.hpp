@@ -58,8 +58,9 @@ extern jlib_decl IProperties * getClientHeaders(const ISpan * span);
 
 interface ITraceManager : extends IInterface
 {
-    virtual ISpan * createServerSpan(const char * name, StringArray & httpHeaders, SpanFlags flags = SpanFlags::None) = 0;
-    virtual ISpan * createServerSpan(const char * name, const IProperties * httpHeaders, SpanFlags flags = SpanFlags::None) = 0;
+    virtual ISpan * createNullSpan() const = 0;
+    virtual ISpan * createServerSpan(const char * name, StringArray & httpHeaders, SpanFlags flags = SpanFlags::None) const = 0;
+    virtual ISpan * createServerSpan(const char * name, const IProperties * httpHeaders, SpanFlags flags = SpanFlags::None) const = 0;
     virtual bool isTracingEnabled() const = 0;
     virtual bool alwaysCreateGlobalIds() const = 0;
     virtual const char * getTracedComponentName() const = 0;

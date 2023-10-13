@@ -535,8 +535,8 @@ protected:
     CSpan * localParentSpan = nullptr;
 };
 
-static Owned<ISpan> noopSpan;
-class CNoopSpan : public CInterfaceOf<ISpan>
+static Owned<ISpan> nullSpan;
+class CNullSpan : public CInterfaceOf<ISpan>
 {
 public:
     virtual void setSpanAttribute(const char * key, const char * val) override {};
@@ -552,21 +552,21 @@ public:
     virtual const char* queryCallerId() const override { return nullptr; };
     virtual const char* queryLocalId() const override { return nullptr; };
 
-    virtual ISpan * createClientSpan(const char * name) override { return getInstance(); };
-    virtual ISpan * createInternalSpan(const char * name) override { return getInstance(); };
+    virtual ISpan * createClientSpan(const char * name) override { return getNullSpan(); };
+    virtual ISpan * createInternalSpan(const char * name) override { return getNullSpan(); };
 
-    static ISpan * getInstance()
+    static ISpan * getNullSpan()
     {
-        if(!noopSpan.get())
-            noopSpan.setown(new CNoopSpan());
+        if(!nullSpan)
+            nullSpan.setown(new CNullSpan());
 
-        return noopSpan.getLink();
+        return nullSpan.getLink();
     }
 
 private:
-    CNoopSpan() = default;
-    CNoopSpan(const CNoopSpan&) = delete;
-    CNoopSpan& operator=(const CNoopSpan&) = delete;
+    CNullSpan() = default;
+    CNullSpan(const CNullSpan&) = delete;
+    CNullSpan& operator=(const CNullSpan&) = delete;
 };
 
 class CInternalSpan : public CSpan
@@ -950,23 +950,20 @@ public:
         throw makeStringExceptionV(-1, "TraceManager must be intialized!");
     }
 
-    ISpan * createServerSpan(const char * name, StringArray & httpHeaders, SpanFlags flags) override
+    ISpan * createServerSpan(const char * name, StringArray & httpHeaders, SpanFlags flags) const override
     {
-        if (isTracingEnabled())
-        {
-            Owned<IProperties> headerProperties = getHeadersAsProperties(httpHeaders);
-            return new CServerSpan(name, moduleName.get(), headerProperties, flags);
-        }
-        else
-            return CNoopSpan::getInstance();
+        Owned<IProperties> headerProperties = getHeadersAsProperties(httpHeaders);
+        return new CServerSpan(name, moduleName.get(), headerProperties, flags);
     }
 
-    ISpan * createServerSpan(const char * name, const IProperties * httpHeaders, SpanFlags flags) override
+    ISpan * createServerSpan(const char * name, const IProperties * httpHeaders, SpanFlags flags) const override
     {
-        if (isTracingEnabled())
-            return new CServerSpan(name, moduleName.get(), httpHeaders, flags);
-        else
-            return CNoopSpan::getInstance();
+        return new CServerSpan(name, moduleName.get(), httpHeaders, flags);
+    }
+
+    ISpan * createNullSpan() const override
+    {
+        return CNullSpan::getNullSpan();
     }
 
     const char * getTracedComponentName() const override
