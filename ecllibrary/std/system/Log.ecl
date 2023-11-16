@@ -89,4 +89,14 @@ EXPORT generateGloballyUniqueId() := lib_logging.Logging.generateGloballyUniqueI
 
 EXPORT getElapsedMs() := lib_logging.Logging.getElapsedMs();
 
+/*
+ * Gets the current query transactionID.  eclagent and thor not yet implemented.
+ *
+ * Returns the the unique Id.
+ */
+
+EXPORT getTraceID() := lib_logging.Logging.getTraceID();
+
+EXPORT getSpanID() := lib_logging.Logging.getSpanID();
+
 END;

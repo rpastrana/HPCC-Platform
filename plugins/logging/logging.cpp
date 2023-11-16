@@ -22,7 +22,7 @@
 #include "logging.hpp"
 #include "jlog.hpp"
 
-#define LOGGING_VERSION "LOGGING 1.0.1"
+#define LOGGING_VERSION "LOGGING 1.0.2"
 static const char * compatibleVersions[] = {
     "LOGGING 1.0.0 [66aec3fb4911ceda247c99d6a2a5944c]", // linux version
     LOGGING_VERSION,
@@ -42,6 +42,8 @@ static const char * EclDefinition =
 "  varstring getCallerId() : c,context,entrypoint='logGetCallerId'; \n"
 "  varstring generateGloballyUniqueId() : c,entrypoint='logGenerateGloballyUniqueId'; \n"
 "  unsigned4 getElapsedMs() : c,context,entrypoint='logGetElapsedMs'; \n"
+"  varstring getTraceID() : c,context,entrypoint='logGetTraceID'; \n"
+"  varstring getSpanID() : c,context,entrypoint='logGetSpanID'; \n"
 "END;";
 
 LOGGING_API bool getECLPluginDefinition(ECLPluginDefinitionBlock *pb) 
@@ -116,4 +118,36 @@ LOGGING_API char * LOGGING_CALL logGenerateGloballyUniqueId()
 LOGGING_API unsigned int LOGGING_CALL logGetElapsedMs(ICodeContext *ctx)
 {
     return ctx->getElapsedMs();
+}
+
+LOGGING_API char * LOGGING_CALL logGetTraceID(ICodeContext *ctx)
+{
+    StringBuffer ret;
+    Owned<IProperties> httpHeaders = ctx->queryContextLogger().getClientHeaders();
+    if (httpHeaders)
+    {
+        ret.set(httpHeaders->queryProp("traceID"));
+        if (ret.length() == 0)
+            ret.set("empty traceID");
+    }
+    else
+        ret.set("emptyheaders");
+
+    return ret.detach();
+}
+
+LOGGING_API char * LOGGING_CALL logGetSpanID(ICodeContext *ctx)
+{
+    StringBuffer ret;
+    Owned<IProperties> httpHeaders = ctx->queryContextLogger().getClientHeaders();
+    if (httpHeaders)
+    {
+        ret.set(httpHeaders->queryProp("spanID"));
+        if (ret.length() == 0)
+            ret.set("empty spanID");
+    }
+    else
+        ret.set("emptyheaders");
+
+    return ret.detach();
 }

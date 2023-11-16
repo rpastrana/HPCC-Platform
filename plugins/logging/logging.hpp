@@ -42,7 +42,8 @@ LOGGING_API char * LOGGING_CALL logGetCallerId(ICodeContext *ctx);
 LOGGING_API char * LOGGING_CALL logGetLocalId(ICodeContext *ctx);
 LOGGING_API char * LOGGING_CALL logGenerateGloballyUniqueId();
 LOGGING_API unsigned int LOGGING_CALL logGetElapsedMs(ICodeContext *ctx);
-
+LOGGING_API char * LOGGING_CALL logGetTraceID(ICodeContext *ctx);
+LOGGING_API char * LOGGING_CALL logGetSpanID(ICodeContext *ctx);
 }
 
 #endif
