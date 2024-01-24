@@ -539,6 +539,15 @@ public:
         //Record the span as complete before we output the logging for the end of the span
         if (span != nullptr)
             span->End();
+
+        queryLogMsgManager()->removeTraceId(logMsgTraceInfoId);
+
+        LogMsgTraceInfoId parentTraceInfoId = unknownTrace.queryTraceID();
+        ISpan * parentSpan = queryParentSpan();
+        if (parentSpan != nullptr)
+            parentTraceInfoId = parentSpan->getLogTraceInfoId();
+
+        setDefaultTraceInfo(parentTraceInfoId, true);
     }
 
     const char * getSpanID() const
@@ -734,6 +743,15 @@ public:
     {
         return span ? span->IsRecording() : false;
     }
+    virtual unsigned __int64 getLogTraceInfoId() const override
+    {
+        return logMsgTraceInfoId;
+    }
+
+    virtual ISpan * queryParentSpan() const override
+    {
+        return nullptr;
+    }
 
 protected:
     CSpan(const char * spanName)
@@ -753,6 +771,7 @@ protected:
             if (span != nullptr)
             {
                 storeSpanContext();
+                logMsgTraceInfoId = setDefaultTraceInfo(traceID.get(), spanID.get(), true);
             }
         }
     }
@@ -821,6 +840,7 @@ protected:
     opentelemetry::trace::StartSpanOptions opts;
     nostd::shared_ptr<opentelemetry::trace::Span> span;
 
+    LogMsgTraceInfoId logMsgTraceInfoId = unknownTrace.queryTraceID();
 };
 
 class CNullSpan : public CInterfaceOf<ISpan>
@@ -839,6 +859,9 @@ public:
     virtual void toString(StringBuffer & out) const override {}
     virtual void getLogPrefix(StringBuffer & out) const override {}
     virtual bool isRecording() const { return false; }
+
+    virtual ISpan * queryParentSpan() const override { return getNullSpan();}
+    virtual unsigned __int64 getLogTraceInfoId() const override { return unknownTrace.queryTraceID();}
 
     virtual const char* queryGlobalId() const override { return nullptr; }
     virtual const char* queryCallerId() const override { return nullptr; }
@@ -870,6 +893,11 @@ protected:
     }
 
 public:
+    virtual ISpan * queryParentSpan() const override
+    {
+        return localParentSpan;
+    }
+
     virtual void getSpanContext(IProperties * ctxProps) const override
     {
         CSpan::getSpanContext(ctxProps);
