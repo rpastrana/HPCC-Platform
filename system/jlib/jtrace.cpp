@@ -541,8 +541,8 @@ public:
             span->End();
 
         queryLogMsgManager()->removeTraceId(logMsgTraceInfoId);
-
-        LogMsgTraceInfoId parentTraceInfoId = unknownTrace.queryTraceID();
+        logMsgTraceInfoId = UnknownTraceInfoId;
+        LogMsgTraceInfoId parentTraceInfoId = UnknownTraceInfoId;
         ISpan * parentSpan = queryParentSpan();
         if (parentSpan != nullptr)
             parentTraceInfoId = parentSpan->getLogTraceInfoId();
@@ -840,7 +840,7 @@ protected:
     opentelemetry::trace::StartSpanOptions opts;
     nostd::shared_ptr<opentelemetry::trace::Span> span;
 
-    LogMsgTraceInfoId logMsgTraceInfoId = unknownTrace.queryTraceID();
+    LogMsgTraceInfoId logMsgTraceInfoId = UnknownTraceInfoId;
 };
 
 class CNullSpan : public CInterfaceOf<ISpan>
@@ -1442,6 +1442,11 @@ static Owned<ISpan> nullSpan = new CNullSpan();
 ISpan * getNullSpan()
 {
     return nullSpan.getLink();
+}
+
+ISpan * queryNullSpan()
+{
+    return nullSpan.get();
 }
 
 void initTraceManager(const char * componentName, const IPropertyTree * componentConfig, const IPropertyTree * globalConfig)
