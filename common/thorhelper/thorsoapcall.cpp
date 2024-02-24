@@ -738,7 +738,7 @@ interface IWSCAsyncFor: public IInterface
     virtual void processException(const Url &url, ConstPointerArray &inputRows, IException *e) = 0;
     virtual void checkTimeLimitExceeded(unsigned * _remainingMS) = 0;
 
-    virtual void createHttpRequest(Url &url, StringBuffer &request) = 0;
+    virtual void createHttpRequest(Url &url, StringBuffer &request, IProperties * traceHeaders) = 0;
     virtual int readHttpResponse(StringBuffer &response, ISocket *socket, bool &keepAlive, StringBuffer &contentType) = 0;
     virtual void processResponse(Url &url, StringBuffer &response, ColumnProvider * meta, const char *contentType) = 0;
 
@@ -1938,7 +1938,7 @@ private:
         }
     }
 
-    void createHttpRequest(Url &url, StringBuffer &request)
+    void createHttpRequest(Url &url, StringBuffer &request, IProperties * traceHeaders)
     {
         // Create the HTTP POST request
         if (master->wscType == STsoap)
@@ -1972,7 +1972,7 @@ private:
         if (!httpHeaderBlockContainsHeader(httpheaders, ACCEPT_ENCODING))
             request.appendf("%s: gzip, deflate\r\n", ACCEPT_ENCODING);
 #endif
-        Owned<IProperties> traceHeaders = master->logctx.getClientHeaders();
+        //Owned<IProperties> traceHeaders = master->logctx.getClientHeaders();
         if (traceHeaders)
         {
             Owned<IPropertyIterator> iter = traceHeaders->getIterator();
@@ -2434,7 +2434,24 @@ public:
         unsigned retryInterval = 0;
 
         Url &url = master->urlArray.item(idx);
-        createHttpRequest(url, request);
+        StringBuffer spanName("SoapCall ");
+        url.getUrlString(spanName);
+
+        Owned<ISpan> clientSpan;
+        ISpan * activeSpan = master->logctx.queryActiveSpan();
+        clientSpan.setown(activeSpan->createClientSpan(spanName.str()));
+        //master->logctx.setActiveSpan(clientSpan.get());
+
+        Owned<IProperties> clientHeaders = ::getClientHeaders(clientSpan);
+
+        clientSpan->getClientHeaders(clientHeaders.get());
+        //fprintf(stderr, "clientspan clientheader: %s\n", clientHeaders->queryProp("traceparent"));
+
+        createHttpRequest(url, request, clientHeaders.get());
+        clientSpan->setSpanAttribute("target_host", url.host.get());
+        //clientSpan->setSpanAttribute("target_url", url.)
+        //clientSpan->setSpanAttribute("target_port", connUrl.host.get());
+
         unsigned startidx = idx;
         while (!master->aborted)
         {
@@ -2456,7 +2473,10 @@ public:
 
                     checkTimeLimitExceeded(&remainingMS);  // after ep.set which might make a potentially long getaddrinfo lookup ...
                     if (strieq(url.method, "https"))
+                    {
                         proto = PersistentProtocol::ProtoTLS;
+                        clientSpan->setSpanAttribute("target_protocol", "https");
+                    }
                     bool shouldClose = false;
                     Owned<ISocket> psock = master->usePersistConnections() ? persistentHandler->getAvailable(&ep, &shouldClose, proto) : nullptr;
                     if (psock)
@@ -2504,6 +2524,7 @@ public:
                 {
                     if (master->timeLimitExceeded)
                     {
+                        clientSpan->recordError("time_limit_exceeded");
                         master->logctx.CTXLOG("%s exiting: time limit (%ums) exceeded", getWsCallTypeName(master->wscType), master->timeLimitMS);
                         processException(url, inputRows, e);
                         return;
@@ -2511,6 +2532,7 @@ public:
 
                     if (e->errorCode() == ROXIE_ABORT_EVENT)
                     {
+                        clientSpan->recordError("roxie_abort");//simplified error msg, or verbose log style message?
                         StringBuffer s;
                         master->logctx.CTXLOG("%s exiting: Roxie Abort : %s", getWsCallTypeName(master->wscType),e->errorMessage(s).str());
                         throw;
@@ -2523,18 +2545,23 @@ public:
                             idx = 0;
                         if (idx==startidx)
                         {
+                            clientSpan->recordException(e);
                             StringBuffer s;
                             master->logctx.CTXLOG("Exception %s", e->errorMessage(s).str());
                             processException(url, inputRows, e);
                             return;
                         }
                     } while (blacklist->blacklisted(url.port, url.host));
+
+                    //else recordException?
+                    clientSpan->recordException(e);
                 }
             }
             try
             {
                 checkTimeLimitExceeded(&remainingMS);
                 checkRoxieAbortMonitor(master->roxieAbortMonitor);
+                //per spec an http client span should be created here
                 socket->write(request.str(), request.length());
                 if (soapTraceLevel > 4)
                     master->logctx.CTXLOG("%s: sent request (%s) to %s:%d", getWsCallTypeName(master->wscType),master->service.str(), url.host.str(), url.port);
@@ -2544,6 +2571,7 @@ public:
                 bool keepAlive2;
                 StringBuffer contentType;
                 int rval = readHttpResponse(response, socket, keepAlive2, contentType);
+                clientSpan->setSpanAttribute("http.code", (int64_t)rval);
                 keepAlive = keepAlive && keepAlive2;
 
                 if (soapTraceLevel > 4)
@@ -2575,6 +2603,8 @@ public:
                     else if (keepAlive)
                         persistentHandler->add(socket, &ep, proto);
                 }
+
+                clientSpan->recordSuccess("SoapCall Succeded");
                 break;
             }
             catch (IReceivedRoxieException *e)
@@ -2596,6 +2626,7 @@ public:
                         master->logctx.CTXLOG("Server busy (1001), retrying");
                         retryInterval = 10;
                     }
+                    //report this in span?
                     e->Release();
                 }
                 else
@@ -2606,6 +2637,7 @@ public:
                         processException(url, e->errorRow(), e);
                     else
                         processException(url, inputRows, e);
+                    clientSpan->recordException(e);
                     break;
                 }
             }
@@ -2640,6 +2672,7 @@ public:
                 }
                 numRetries++;
                 master->logctx.CTXLOG("Retrying: attempt %d of %d", numRetries, master->maxRetries);
+                clientSpan->recordException(e);
                 e->Release();
             }
             catch (std::exception & es)
@@ -2647,15 +2680,28 @@ public:
                 if (master->usePersistConnections() && isReused)
                     persistentHandler->doneUsing(socket, false);
                 if(dynamic_cast<std::bad_alloc *>(&es))
+                {
+                    //record in this span? will the thrown exception get recorded in higher level span?
+                    clientSpan->recordError("std::exception: out of memory (std::bad_alloc) in CWSCAsyncFor processQuery");
                     throw MakeStringException(-1, "std::exception: out of memory (std::bad_alloc) in CWSCAsyncFor processQuery");
+                }
+
+                //record in this span? will the thrown exception get recorded in higher level span?
+                clientSpan->recordError(es.what());
                 throw MakeStringException(-1, "std::exception: standard library exception (%s) in CWSCAsyncFor processQuery",es.what());
             }
             catch (...)
             {
                 if (master->usePersistConnections() && isReused)
                     persistentHandler->doneUsing(socket, false);
+                clientSpan->recordError("Unknown exception in processQuery");
+                //record in this span? will the thrown exception get recorded in higher level span?
                 throw MakeStringException(-1, "Unknown exception in processQuery");
             }
+
+            //StringBuffer spanMsg;
+            //clientSpan->toString(spanMsg);
+            //fprintf(stderr, "CWSCAsyncFor::Do(%d) %s\n", idx, spanMsg.str());
         }
     }
     inline virtual const char *getResponsePath() { return responsePath; }
