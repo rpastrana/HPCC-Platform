@@ -753,6 +753,37 @@ public:
         return nullptr;
     }
 
+    virtual void recordSuccess(const char * successMessage) override
+    {
+        if (span != nullptr)
+        {
+            span->SetStatus(opentelemetry::trace::StatusCode::kOk, successMessage);
+        }
+    }
+
+    virtual void recordError(const char * errorMessage, int errorCode) override
+    {
+        if (span != nullptr)
+        {
+            span->SetStatus(opentelemetry::trace::StatusCode::kError, errorMessage);
+            if (errorCode != UNKNOWN_ERROR_CODE)
+                span->SetAttribute("error.code", errorCode);
+        }
+    }
+
+    virtual void recordException(IException * e)
+    {
+        if (span != nullptr)
+        {
+            StringBuffer msg;
+            e->errorMessage(msg);
+            recordError(msg.str(), e->errorCode());
+
+            span->AddEvent("Exception", {{"message", msg.str()}, {"type", typeid(e).name()}});
+             //do we want to repor the IException type?
+             //"type", typeid(e).name()  ?
+        }
+    };
 protected:
     CSpan(const char * spanName)
     {
@@ -862,6 +893,10 @@ public:
 
     virtual ISpan * queryParentSpan() const override { return getNullSpan();}
     virtual unsigned __int64 getLogTraceInfoId() const override { return unknownTrace.queryTraceID();}
+
+    virtual void recordException(IException * e) override {}
+    virtual void recordError(const char * errorMessage, int errorCode) override {}
+    virtual void recordSuccess(const char * successMessage) override {}
 
     virtual const char* queryGlobalId() const override { return nullptr; }
     virtual const char* queryCallerId() const override { return nullptr; }
@@ -1402,6 +1437,14 @@ CTraceManager::CTraceManager(const char * componentName, const IPropertyTree * c
 
     auto provider = opentelemetry::trace::Provider::GetTracerProvider();
     tracer = provider->GetTracer(moduleName.get());
+
+    auto resource_attributes = opentelemetry::sdk::resource::ResourceAttributes
+    //attributes[key]   = value;
+    {
+        {"service.name", moduleName.get()}
+    //    {"service.instance.id", "instance-12"}
+    };
+    auto resource = opentelemetry::sdk::resource::Resource::Create(resource_attributes);
 }
 
 CTraceManager::CTraceManager()

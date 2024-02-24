@@ -2506,6 +2506,8 @@ A template to output a merged environment. Pass in a list with global then local
   valueFrom:
     fieldRef:
       fieldPath: spec.serviceAccountName
+- name: xOTEL_RESOURCE_ATTRIBUTES
+  value: "service.name={{ dict.name }}"
 {{ end -}}
 
 

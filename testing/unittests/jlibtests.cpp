@@ -90,6 +90,7 @@ public:
         CPPUNIT_TEST(testNullSpan);
         CPPUNIT_TEST(testClientSpanGlobalID);
         CPPUNIT_TEST(testEnsureTraceID);
+        CPPUNIT_TEST(testHPCCCarrier);
 
         //CPPUNIT_TEST(testJTraceJLOGExporterprintResources);
         //CPPUNIT_TEST(testJTraceJLOGExporterprintAttributes);
@@ -583,6 +584,28 @@ protected:
             //Log output should include traceID and spanID columns with new span value
         }
     }
+
+    void testHPCCCarrier()
+    {
+        Owned<IProperties> mockHTTPHeaders = createProperties();
+        createMockHTTPHeaders(mockHTTPHeaders, true);
+        StringBuffer out;
+        {
+            Owned<ISpan> serverSpan = queryTraceManager().createServerSpan("propegatedServerSpan", mockHTTPHeaders);
+            //CHPCCHttpTextMapCarrier * carrier = new CHPCCHttpTextMapCarrier(httpHeaders);
+            //serverSpan->getSpanContext(carrier);
+
+            //CPPUNIT_ASSERT_EQUAL_MESSAGE("Unexpected empty TraceID detected", false, isEmptyString(carrier->queryProp("traceID")));
+        }
+        
+    //if (activeSpan)
+    //{
+    //    activeSpan->inject(carrier);
+    //}
+
+//bool getSpanContext(CHPCCHttpTextMapCarrier * carrier) const
+    }
+
 
     void testMultiNestedSpanTraceOutput()
     {

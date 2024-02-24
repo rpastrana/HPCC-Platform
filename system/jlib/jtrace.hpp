@@ -55,6 +55,8 @@ enum class SpanFlags : unsigned
 };
 BITMASK_ENUM(SpanFlags);
 
+static constexpr int UNKNOWN_ERROR_CODE = -1;
+
 interface ISpan : extends IInterface
 {
     virtual void setSpanAttribute(const char * key, const char * val) = 0;
@@ -68,6 +70,9 @@ interface ISpan : extends IInterface
     virtual void getLogPrefix(StringBuffer & out) const = 0;
     virtual bool isRecording() const = 0;   // Is it worth adding any events/attributes to this span?
     virtual ISpan * queryParentSpan() const = 0;
+    virtual void recordException(IException * e) = 0;
+    virtual void recordError(const char * errorMessage, int errorCode = UNKNOWN_ERROR_CODE) = 0;
+    virtual void recordSuccess(const char * successMessage = "") = 0;
 
     //typedef unsigned __int64 LogMsgTraceInfoId; declared in jlog.hpp
     virtual unsigned __int64 getLogTraceInfoId() const = 0;
