@@ -254,7 +254,7 @@ public:
     }
 };
 
-//if Url was globally accessible we can define this in jtrace instead
+//If the above Url class was centrally located, we could define this in jtrace instead.
 //http span standards documented here: https://opentelemetry.io/docs/specs/semconv/http/http-spans/
 void setSpanURLAttributes(ISpan * clientSpan, const Url & url)
 {
@@ -988,6 +988,7 @@ public:
                const IContextLogger &_logctx, IRoxieAbortMonitor *_roxieAbortMonitor, WSCType _wscType)
         : logctx(_logctx), outputAllocator(_outputAllocator), clientCert(_clientCert), roxieAbortMonitor(_roxieAbortMonitor)
     {
+        activitySpanScope.setown(logctx.queryActiveSpan()->createInternalSpan(_wscType == STsoap ? "SoapCall Activity": "HTTPCall Activity"));
         wscMode = _wscMode;
         wscType = _wscType;
         done = 0;
@@ -1053,11 +1054,11 @@ public:
             s.setown(helper->getXpathHintsXml());
             xpathHints.setown(createPTreeFromXMLString(s.get()));
         }
-        VStringBuffer spanName("SoapCallActivity %s", helper->getService());
-        activitySpanScope.setown(logctx.queryActiveSpan()->createInternalSpan(spanName));
+
         if (wscType == STsoap)
         {
             soapaction.set(s.setown(helper->getSoapAction()));
+            activitySpanScope->setSpanAttribute("activity.soapaction", soapaction.str());
             if(soapaction.get() && !isValidHttpValue(soapaction.get()))
                 throw MakeStringException(-1, "SOAPAction value contained illegal characters: %s", soapaction.get());
 
@@ -1105,7 +1106,7 @@ public:
         
         service.set(s.setown(helper->getService()));
         service.trim();
-
+        activitySpanScope->setSpanAttribute("activity.service", service.str());
         if (wscType == SThttp)
         {
             service.toUpperCase();  //GET/PUT/POST
@@ -1127,9 +1128,9 @@ public:
 
         OwnedRoxieString hostsString(helper->getHosts());
         const char *hosts = hostsString.get();
-
         if (isEmptyString(hosts))
             throw MakeStringException(0, "%s specified no URLs", getWsCallTypeName(wscType));
+        activitySpanScope->setSpanAttribute("activity.hosts", hosts);
         if (0==strncmp(hosts, "mtls:", 5))
         {
             clientCertIssuer.set("local");
@@ -1202,6 +1203,7 @@ public:
 
         if (wscMode == SCrow)
         {
+            activitySpanScope->setSpanAttribute("activity.mode", "SCrow");
             numRowThreads = 1;
 
             numUrlThreads = helper->numParallelThreads();
@@ -1214,6 +1216,7 @@ public:
         }
         else
         {
+            activitySpanScope->setSpanAttribute("activity.mode", "SCdataset");
             unsigned totThreads = helper->numParallelThreads();
             if (totThreads < 1)
                 totThreads = 2; // default to 2 threads
@@ -2454,9 +2457,7 @@ public:
         unsigned retryInterval = 0;
 
         Url &url = master->urlArray.item(idx);
-
         createHttpRequest(url, request);
-
         unsigned startidx = idx;
         while (!master->aborted)
         {
@@ -2478,9 +2479,8 @@ public:
 
                     checkTimeLimitExceeded(&remainingMS);  // after ep.set which might make a potentially long getaddrinfo lookup ...
                     if (strieq(url.method, "https"))
-                    {
                         proto = PersistentProtocol::ProtoTLS;
-                    }
+
                     bool shouldClose = false;
                     Owned<ISocket> psock = master->usePersistConnections() ? persistentHandler->getAvailable(&ep, &shouldClose, proto) : nullptr;
                     if (psock)
@@ -2710,7 +2710,6 @@ public:
             {
                 if (master->usePersistConnections() && isReused)
                     persistentHandler->doneUsing(socket, false);
-
 
                 master->activitySpanScope->recordError(SpanError("Unknown exception in processQuery", -1, true, true));
                 throw MakeStringException(-1, "Unknown exception in processQuery");
