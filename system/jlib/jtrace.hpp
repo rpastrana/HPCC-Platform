@@ -95,10 +95,10 @@ struct SpanError
 
     /**
      * @brief Sets the span status.
-     * @param _spanFailed Flag indicating whether the span failed.
+     * @param _spanSucceeded Flag indicating whether the span succeeded.
      * @param _spanScopeEscape Flag indicating whether the exception escaped the scope of the span.
      */
-    void setSpanStatus(bool _spanFailed, bool _spanScopeEscape) { spanFailed = _spanFailed; escapeScope = _spanScopeEscape;}
+    void setSpanStatus(bool _spanSucceeded, bool _spanScopeEscape) { spanFailed = !_spanSucceeded; escapeScope = _spanScopeEscape;}
 
     /**
      * @brief Sets the error message and error code.
@@ -123,7 +123,7 @@ interface ISpan : extends IInterface
     virtual bool isRecording() const = 0;   // Is it worth adding any events/attributes to this span?
     virtual void recordException(IException * e, bool spanFailed = true, bool escapedScope = true) = 0;
     virtual void recordError(const SpanError & error = SpanError()) = 0;
-    virtual void setSpanStatus(bool spanFailed, const char * statusMessage = NO_STATUS_MESSAGE) = 0;
+    virtual void setSpanStatus(bool spanSucceeded, const char * statusMessage = NO_STATUS_MESSAGE) = 0;
 
     virtual ISpan * createClientSpan(const char * name) = 0;
     virtual ISpan * createInternalSpan(const char * name) = 0;
