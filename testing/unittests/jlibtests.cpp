@@ -289,14 +289,14 @@ protected:
         {
             OwnedSpanScope serverSpan = queryTraceManager().createServerSpan("failedErrorSpanEscaped", emptyMockHTTPHeaders);
             SpanError * error = new SpanError("hello");
-            error->setSpanStatus(true, true);
+            error->setSpanStatusSuccess(true, true);
             serverSpan->recordError(*error);
         }//{ "type": "span", "name": "failedErrorSpanEscaped", "trace_id": "634f386c18a6140544c980e0d5a15905", "span_id": "e2f59c48f63a8f82", "start": 1709675508231168974, "duration": 7731717678, "status": "Error", "kind": "Server", "description": "hello", "instrumented_library": "unittests", "events":[ { "name": "Exception", "time_stamp": 1709675512164430668, "attributes": {"escaped": 1,"message": "hello" } } ] }
 
         {
             OwnedSpanScope serverSpan = queryTraceManager().createServerSpan("failedErrEscapedMsgErrCode", emptyMockHTTPHeaders);
             SpanError * error = new SpanError();
-            error->setSpanStatus(true, true);
+            error->setSpanStatusSuccess(true, true);
             error->setError("hello", 34);
             serverSpan->recordError(*error);
         }//failedErrEscapedMsgErrCode

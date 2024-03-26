@@ -2564,10 +2564,7 @@ public:
             {
                 checkTimeLimitExceeded(&remainingMS);
                 checkRoxieAbortMonitor(master->roxieAbortMonitor);
-
-                StringBuffer spanName("SoapCall Socket Operation - ");
-                url.getUrlString(spanName);
-                Owned<ISpan> socketOperationSpan = master->activitySpanScope->createClientSpan(spanName.str());
+                Owned<ISpan> socketOperationSpan = master->activitySpanScope->createClientSpan("Socket Write");
                 setSpanURLAttributes(socketOperationSpan, url);
                 socket->write(request.str(), request.length());
 
@@ -2587,7 +2584,7 @@ public:
 
                 if (rval != 200)
                 {
-                    socketOperationSpan->setSpanStatus(false);
+                    socketOperationSpan->setSpanStatusSuccess(false);
                     if (rval == 503)
                     {
                         socketOperationSpan->recordError(SpanError("Server Too Busy", 1001, true, true));
@@ -2618,7 +2615,7 @@ public:
                         persistentHandler->add(socket, &ep, proto);
                 }
 
-                socketOperationSpan->setSpanStatus(true);
+                socketOperationSpan->setSpanStatusSuccess(true);
                 break;
             }
             catch (IReceivedRoxieException *e)

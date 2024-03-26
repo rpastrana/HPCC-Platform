@@ -748,7 +748,7 @@ public:
         return span ? span->IsRecording() : false;
     }
 
-    virtual void setSpanStatus(bool spanSucceeded, const char * statusMessage)
+    virtual void setSpanStatusSuccess(bool spanSucceeded, const char * statusMessage)
     {
         if (span != nullptr)
         {
@@ -894,7 +894,7 @@ public:
 
     virtual void recordException(IException * e, bool spanFailed, bool escapedScope) override {}
     virtual void recordError(const SpanError & error) override {};
-    virtual void setSpanStatus(bool spanSucceeded, const char * statusMessage) override {}
+    virtual void setSpanStatusSuccess(bool spanSucceeded, const char * statusMessage) override {}
 
     virtual const char* queryGlobalId() const override { return nullptr; }
     virtual const char* queryCallerId() const override { return nullptr; }
