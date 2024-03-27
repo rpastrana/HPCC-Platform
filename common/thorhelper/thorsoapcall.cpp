@@ -1203,7 +1203,6 @@ public:
 
         if (wscMode == SCrow)
         {
-            activitySpanScope->setSpanAttribute("activity.mode", "SCrow");
             numRowThreads = 1;
 
             numUrlThreads = helper->numParallelThreads();
@@ -1216,7 +1215,6 @@ public:
         }
         else
         {
-            activitySpanScope->setSpanAttribute("activity.mode", "SCdataset");
             unsigned totThreads = helper->numParallelThreads();
             if (totThreads < 1)
                 totThreads = 2; // default to 2 threads
@@ -2564,7 +2562,7 @@ public:
             {
                 checkTimeLimitExceeded(&remainingMS);
                 checkRoxieAbortMonitor(master->roxieAbortMonitor);
-                Owned<ISpan> socketOperationSpan = master->activitySpanScope->createClientSpan("Socket Write");
+                OwnedSpanScope socketOperationSpan = master->activitySpanScope->createClientSpan("Socket Write");
                 setSpanURLAttributes(socketOperationSpan, url);
                 socket->write(request.str(), request.length());
 
