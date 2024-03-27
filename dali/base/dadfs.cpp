@@ -6271,22 +6271,27 @@ public:
     virtual IDistributedFile &querySubFile(unsigned idx,bool sub) override
     {
         CriticalBlock block (sect);
-        if (sub) {
-            ForEachItemIn(i,subfiles) {
+        if (sub)
+        {
+            unsigned subfilen = idx;
+            ForEachItemIn(i,subfiles)
+            {
                 IDistributedFile &f=subfiles.item(i);
                 IDistributedSuperFile *super = f.querySuperFile();
-                if (super) {
+                if (super)
+                {
                     unsigned ns = super->numSubFiles(true);
-                    if (ns>idx)
-                        return super->querySubFile(idx,true);
-                    idx -= ns;
+                    if (ns>subfilen)
+                        return super->querySubFile(subfilen,true);
+                    subfilen -= ns;
                 }
-                else if (idx--==0)
+                else if (subfilen--==0)
                     return f;
             }
-            // fall through to error
+            throw makeStringExceptionV(-1,"CDistributedSuperFile::querySubFile(%u) for superfile %s - subfile doesn't exist ", idx, logicalName.get());
         }
-        return subfiles.item(idx);
+        else
+            return subfiles.item(idx);
     }
 
     virtual IDistributedFile *querySubFileNamed(const char *name, bool sub) override
@@ -11215,23 +11220,22 @@ public:
                 Owned<IPropertyTree> tree = getNamedPropTree(sroot,queryDfsXmlBranchName(DXB_File),"@name",tail.str(),false);
                 if (tree)
                 {
-                    if (isContainerized())
+                    // This is for bare-metal clients using ~foreign pointing at a containerized/k8s setup,
+                    // asking for the returned meta data to be remapped to point to the dafilesrv service.
+                    if (isContainerized() && hasMask(opts, GetFileTreeOpts::remapToService))
                     {
-                        // This is for bare-metal clients using ~foreign pointing at a containerized/k8s setup,
-                        // asking for the returned meta data to be remapped to point to the dafilesrv service.
-                        if (hasMask(opts, GetFileTreeOpts::remapToService))
-                        {
-                            tree.setown(createPTreeFromIPT(tree)); // copy live Dali tree, because it is about to be altered by remapGroupsToDafilesrv
-                            remapGroupsToDafilesrv(tree, true, secureService);
-                            groupResolver = nullptr; // do not attempt to resolve remapped group (it will not exist and cause addUnique to create a new anon one)
+                        tree.setown(createPTreeFromIPT(tree)); // copy live Dali tree, because it is about to be altered by remapGroupsToDafilesrv
+                        remapGroupsToDafilesrv(tree, true, secureService);
+                        groupResolver = nullptr; // do not attempt to resolve remapped group (it will not exist and cause addUnique to create a new anon one)
 
-                            const char *remotePlaneName = tree->queryProp("@group");
-                            Owned<IPropertyTree> filePlane = getStoragePlane(remotePlaneName);
-                            assertex(filePlane);
-                            // Used by DFS clients to determine if stripe and/or alias translation needed
-                            tree->setPropTree("Attr/_remoteStoragePlane", createPTreeFromIPT(filePlane));
-                        }
+                        const char *remotePlaneName = tree->queryProp("@group");
+                        Owned<IPropertyTree> filePlane = getStoragePlane(remotePlaneName);
+                        assertex(filePlane);
+                        // Used by DFS clients to determine if stripe and/or alias translation needed
+                        tree->setPropTree("Attr/_remoteStoragePlane", createPTreeFromIPT(filePlane));
                     }
+                    else
+                        tree->removeProp("Attr/_remoteStoragePlane");
 
                     Owned<IFileDescriptor> fdesc = deserializeFileDescriptorTree(tree,groupResolver,IFDSF_EXCLUDE_CLUSTERNAMES);
                     mb.append((int)1); // 1 == standard file

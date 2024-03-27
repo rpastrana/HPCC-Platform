@@ -1054,7 +1054,8 @@ public:
             s.setown(helper->getXpathHintsXml());
             xpathHints.setown(createPTreeFromXMLString(s.get()));
         }
-
+        VStringBuffer spanName("SoapCallActivity %s", helper->getService());
+        activitySpanScope.setown(logctx.queryActiveSpan()->createInternalSpan(spanName));
         if (wscType == STsoap)
         {
             soapaction.set(s.setown(helper->getSoapAction()));
@@ -2455,7 +2456,9 @@ public:
         unsigned retryInterval = 0;
 
         Url &url = master->urlArray.item(idx);
+
         createHttpRequest(url, request);
+
         unsigned startidx = idx;
         while (!master->aborted)
         {
@@ -2477,8 +2480,9 @@ public:
 
                     checkTimeLimitExceeded(&remainingMS);  // after ep.set which might make a potentially long getaddrinfo lookup ...
                     if (strieq(url.method, "https"))
+                    {
                         proto = PersistentProtocol::ProtoTLS;
-
+                    }
                     bool shouldClose = false;
                     Owned<ISocket> psock = master->usePersistConnections() ? persistentHandler->getAvailable(&ep, &shouldClose, proto) : nullptr;
                     if (psock)

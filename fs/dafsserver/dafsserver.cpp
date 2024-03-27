@@ -1234,11 +1234,14 @@ public:
     }
     virtual void serializeCursor(MemoryBuffer &tgt) const override
     {
-        throwUnexpected();
+        // we need to serialize something, because the lack of a cursor is used to signify end of stream
+        // NB: the cursor is opaque and only to be consumed by dafilesrv. When used it is simply passed back.
+        tgt.append("UNSUPPORTED");
     }
     virtual void restoreCursor(MemoryBuffer &src) override
     {
-        throwUnexpected();
+        throw makeStringExceptionV(0, "restoreCursor not supported in: %s", typeid(*this).name());
+        throwUnimplemented();
     }
     virtual void flushStatistics(CClientStats &stats) override
     {
@@ -2001,11 +2004,13 @@ class CRemoteXmlReadActivity : public CRemoteMarkupReadActivity
 public:
     CRemoteXmlReadActivity(IPropertyTree &config, IFileDescriptor *fileDesc) : PARENT(config, fileDesc, TAKxmlread)
     {
-        xpath.set("/Dataset/");
         if (customRowTag.isEmpty()) // no override
             fileDesc->queryProperties().getProp("@rowTag", xpath);
         else
+        {
+            xpath.set("/Dataset/");
             xpath.append(customRowTag);
+        }
     }
 };
 
@@ -2016,11 +2021,13 @@ class CRemoteJsonReadActivity : public CRemoteMarkupReadActivity
 public:
     CRemoteJsonReadActivity(IPropertyTree &config, IFileDescriptor *fileDesc) : PARENT(config, fileDesc, TAKjsonread)
     {
-        xpath.set("/");
         if (customRowTag.isEmpty()) // no override
             fileDesc->queryProperties().getProp("@rowTag", xpath);
         else
+        {
+            xpath.set("/");
             xpath.append(customRowTag);
+        }
     }
 };
 
@@ -2389,11 +2396,13 @@ public:
     }
     virtual void serializeCursor(MemoryBuffer &tgt) const override
     {
-        throwUnexpected();
+        // we need to serialize something, because the lack of a cursor is used to signify end of stream
+        // NB: the cursor is opaque and only to be consumed by dafilesrv. When used it is simply passed back.
+        tgt.append("UNSUPPORTED");
     }
     virtual void restoreCursor(MemoryBuffer &src) override
     {
-        throwUnexpected();
+        throw makeStringExceptionV(0, "restoreCursor not supported in: %s", typeid(*this).name());
     }
     virtual StringBuffer &getInfoStr(StringBuffer &out) const override
     {
