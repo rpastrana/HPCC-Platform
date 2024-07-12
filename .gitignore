@@ -19,3 +19,15 @@ eclcc.log
 dockerfiles/platform-build-incremental/hpcc.gitpatch
 .env
 /vcpkg.json
+helm/managed/logging/elastic/charts/elasticsearch-7.17.1.tgz
+helm/managed/logging/elastic/charts/filebeat-7.17.1.tgz
+helm/managed/logging/elastic/charts/kibana-7.17.1.tgz
+helm/managed/logging/loki-stack/charts/filebeat-7.17.3.tgz
+helm/managed/logging/loki-stack/charts/fluent-bit-2.6.0.tgz
+helm/managed/logging/loki-stack/charts/grafana-6.43.5.tgz
+helm/managed/logging/loki-stack/charts/logstash-7.17.3.tgz
+helm/managed/logging/loki-stack/charts/loki-2.16.0.tgz
+helm/managed/logging/loki-stack/charts/prometheus-15.5.4.tgz
+helm/managed/logging/loki-stack/charts/promtail-6.15.5.tgz
+helm/managed/logging/elastic/Chart.lock
+helm/managed/logging/loki-stack/requirements.lock
