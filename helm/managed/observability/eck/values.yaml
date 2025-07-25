@@ -126,7 +126,6 @@ eck-stack:
               capabilities:
                 add:
                   - SYS_ADMIN
-                  - SYS_CHROOT
             volumeMounts:
             - name: varlogcontainers
               mountPath: /var/log/containers
