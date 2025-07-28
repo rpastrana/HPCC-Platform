@@ -1,6 +1,6 @@
 # elastic4hpccobservability
 
-**elastic4hpccobservability** is a self-contained observability solution for the HPCC Platform. It leverages the Elastic Stack (Elasticsearch, Kibana, APM Server) and OpenTelemetry Collector to provide tracing observability data for HPCC clusters. This project delivers a streamlined, secure, and automated way to deploy, configure, and access observability infrastructure for testing and developmen using Helm charts.
+**elastic4hpccobservability** is a self-contained observability solution for the HPCC Platform. It leverages the Elastic Stack (Elasticsearch, Kibana, APM Server) and OpenTelemetry Collector to provide tracing and logging observability data for HPCC clusters. This project delivers a streamlined, secure, and automated way to deploy, configure, and access observability infrastructure for testing and development using Helm charts. This chart makes several assumptions including no modifications are made to the base HPCC Platform helm deployment. Customization of the HPCC Platform cluster might require counterpart changes to this chart.
 
 ---
 

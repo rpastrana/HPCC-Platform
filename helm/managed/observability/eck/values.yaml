@@ -78,6 +78,7 @@ eck-stack:
         filebeat.inputs:
         - type: filestream
           paths:
+          #Edit this list of paths to match your HPCC cluster component names
           - /var/log/containers/esdl-sandbox-*.log
           - /var/log/containers/eclwatch-*.log
           - /var/log/containers/mydali-*.log
