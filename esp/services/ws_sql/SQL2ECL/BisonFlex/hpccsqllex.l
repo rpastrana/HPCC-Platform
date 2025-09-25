@@ -23,12 +23,11 @@ limitations under the License.
 %option case-insensitive
 
 %{
-#include "HPCCSQLTreeWalker.hpp"
-
-#define YY_DECL int hpccsqllex(HPCCSQLSTYPE * yylval, yyscan_t yyscanner)
-
 // Include the generated parser header for token definitions
 // This will be available after Bison generates it
+#include "hpccsqlgram.h"
+
+#define YY_DECL int hpccsqllex(HPCCSQLSTYPE * yylval, yyscan_t yyscanner)
 
 %}
 

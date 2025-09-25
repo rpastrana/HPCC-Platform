@@ -124,3 +124,6 @@ typedef ASTNode* pHPCCSQLBASE_TREE;
 
 // Compatibility macros
 #define HPCCSQL_TOKEN_EOF -1
+
+// Additional function declarations for TreeWalker
+class HPCCSQLTreeWalker;

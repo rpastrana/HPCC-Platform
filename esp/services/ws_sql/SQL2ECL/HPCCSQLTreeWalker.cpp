@@ -1128,13 +1128,56 @@ void HPCCSQLTreeWalker::assignParameterIndexes()
 
 HPCCSQLTreeWalker::HPCCSQLTreeWalker() :  sqlType(SQLTypeUnknown), parameterizeStaticValues(true), limit(-1)
                                          ,offset(-1), selectDistinct(false)
-                                         ,overwrite(true), sourceDataType(""), parameterizedCount(-1)
+                                         ,overwrite(true), sourceDataType(""), parameterizedCount(-1), rootAST(NULL)
 {
     normalizedSQL.clear();
 }
 
+HPCCSQLTreeWalker::HPCCSQLTreeWalker(IEspContext &context, bool attemptParameterization) :
+                            limit(-1), offset(-1), selectDistinct(false), overwrite(true), sourceDataType("FLAT"), rootAST(NULL)
+{
+    parameterizeStaticValues = attemptParameterization;
+    normalizedSQL.clear();
+
+    StringBuffer username;
+    StringBuffer password;
+    context.getUserID(username);
+    context.getPassword(password);
+
+    tmpHPCCFileCache.setown(HPCCFileCache::createFileCache(username.str(), password.str()));
+    
+    // AST will be set by parser via setAST()
+}
+
 HPCCSQLTreeWalker::HPCCSQLTreeWalker(pANTLR3_BASE_TREE ast, IEspContext &context, bool attemptParameterization) :
-                            limit(-1), offset(-1), selectDistinct(false), overwrite(true), sourceDataType("FLAT")
+                            limit(-1), offset(-1), selectDistinct(false), overwrite(true), sourceDataType("FLAT"), rootAST(NULL)
+{
+    parameterizeStaticValues = attemptParameterization;
+    normalizedSQL.clear();
+
+    StringBuffer username;
+    StringBuffer password;
+    context.getUserID(username);
+    context.getPassword(password);
+
+    tmpHPCCFileCache.setown(HPCCFileCache::createFileCache(username.str(), password.str()));
+
+    sqlTreeWalker(ast);
+
+    if (sqlType == SQLTypeSelect)
+    {
+        assignParameterIndexes();
+        expandWildCardColumn();
+        verifyColAndDisambiguateName();
+    }
+    else if (sqlType == SQLTypeCall)
+    {
+        assignParameterIndexes();
+    }
+}
+
+HPCCSQLTreeWalker::HPCCSQLTreeWalker(ASTNode* ast, IEspContext &context, bool attemptParameterization) :
+                            limit(-1), offset(-1), selectDistinct(false), overwrite(true), sourceDataType("FLAT"), rootAST(ast)
 {
     parameterizeStaticValues = attemptParameterization;
     normalizedSQL.clear();
@@ -1537,4 +1580,76 @@ unsigned HPCCSQLTreeWalker::getQueryHash()
     return hashed;
 }
 */
+
+// New methods for ASTNode-based parsing
+void HPCCSQLTreeWalker::sqlTreeWalker(ASTNode* sqlAST)
+{
+    if (!sqlAST || sqlAST->childCount == 0)
+        throw MakeStringException(-1, "Error could not parse SQL Statement.");
+        
+    ASTNode* firstchild = sqlAST->children[0];
+    
+    switch (firstchild->nodeType)
+    {
+        case TOKEN_SELECT_STATEMENT:
+            setSqlType(SQLTypeSelect);
+            selectStatementTreeWalker(firstchild);
+            break;
+        case TOKEN_CALL_STATEMENT:
+            setSqlType(SQLTypeCall);
+            callStatementTreeWalker(firstchild);
+            break;
+        case TOKEN_CREATE_LOAD_TABLE_STATEMENT:
+            setSqlType(SQLTypeCreateAndLoad);
+            createAndLoadStatementTreeWalker(firstchild);
+            break;
+        default:
+            setSqlType(SQLTypeUnknown);
+            throw MakeStringException(-1, "Invalid sql tree root node found: %s", firstchild->value ? firstchild->value : "unknown");
+            break;
+    }
+}
+
+void HPCCSQLTreeWalker::selectStatementTreeWalker(ASTNode* selectsqlAST)
+{
+    // Stub implementation - TODO: implement full select statement parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: SELECT statement parsing not yet implemented for ASTNode parser\n");
+}
+
+void HPCCSQLTreeWalker::callStatementTreeWalker(ASTNode* callsqlAST) 
+{
+    // Stub implementation - TODO: implement full call statement parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: CALL statement parsing not yet implemented for ASTNode parser\n");
+}
+
+void HPCCSQLTreeWalker::createAndLoadStatementTreeWalker(ASTNode* clsqlAST)
+{
+    // Stub implementation - TODO: implement full create/load statement parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: CREATE/LOAD statement parsing not yet implemented for ASTNode parser\n");
+}
+
+ISQLExpression* HPCCSQLTreeWalker::expressionTreeWalker(ASTNode* exprAST, ASTNode* parent)
+{
+    // Stub implementation - TODO: implement expression parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: Expression parsing not yet implemented for ASTNode parser\n");
+    return NULL;
+}
+
+void HPCCSQLTreeWalker::fromTreeWalker(ASTNode* fromsqlAST)
+{
+    // Stub implementation - TODO: implement FROM clause parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: FROM clause parsing not yet implemented for ASTNode parser\n");
+}
+
+void HPCCSQLTreeWalker::limitTreeWalker(ASTNode* limitAST)
+{
+    // Stub implementation - TODO: implement LIMIT clause parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: LIMIT clause parsing not yet implemented for ASTNode parser\n");
+}
+
+void HPCCSQLTreeWalker::columnListTreeWalker(ASTNode* columnsAST, IArrayOf<SQLColumn>& collist)
+{
+    // Stub implementation - TODO: implement column list parsing
+    fprintf(stderr, "HPCCSQLTreeWalker: Column list parsing not yet implemented for ASTNode parser\n");
+}
 
