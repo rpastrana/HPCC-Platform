@@ -21,12 +21,18 @@ limitations under the License.
 %parse-param {HPCCSQLTreeWalker* context}
 
 %{
-#include "HPCCSQLTreeWalker.hpp"
-#include "hpccsqllex.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Forward declaration to avoid circular dependency
+struct HPCCSQLTreeWalker;
 
 #define YYSTYPE HPCCSQLSTYPE
 
-void yyerror(yyscan_t scanner, HPCCSQLTreeWalker* context, const char* msg);
+// Forward declarations
+void yyerror(yyscan_t scanner, struct HPCCSQLTreeWalker* context, const char* msg);
+int hpccsqllex(HPCCSQLSTYPE* yylval, yyscan_t yyscanner);
 
 typedef struct ASTNode {
     int nodeType;
@@ -39,6 +45,9 @@ typedef struct ASTNode {
 ASTNode* createASTNode(int type, const char* value);
 ASTNode* addChild(ASTNode* parent, ASTNode* child);
 void freeASTNode(ASTNode* node);
+
+// Function to scan string (will be implemented in lexer)
+void hpccsql_scan_string(const char* str, yyscan_t scanner);
 
 %}
 
@@ -91,6 +100,7 @@ void freeASTNode(ASTNode* node);
 %token JOIN_SYM LEFT LIKE LIMIT LOAD_SYM LOWER MAX_SYM MIN_SYM MOD
 %token NOT_SYM NULL_SYM OFFSET_SYM ON OR_SYM ORDER_SYM OUT_SYM OUTER
 %token POWER REPLACE_SYM RIGHT SELECT SUM TABLE_SYM TRUE_SYM UNION UPPER WHERE
+%token AND_SYM
 
 /* Operators */
 %token EQ_SYM NE LTH GTH LE GE PLUS MINUS ASTERISK DIVIDE MOD_SYM POWER_OP
@@ -113,9 +123,21 @@ void freeASTNode(ASTNode* node);
 %%
 
 root_statement:
-    select_statement    { $$ = createASTNode(TOKEN_SELECT_STATEMENT, NULL); addChild($$, $1); }
-  | call_statement      { $$ = createASTNode(TOKEN_CALL_STATEMENT, NULL); addChild($$, $1); }
-  | create_load_table_statement { $$ = createASTNode(TOKEN_CREATE_LOAD_TABLE_STATEMENT, NULL); addChild($$, $1); }
+    select_statement    { 
+        $$ = createASTNode(TOKEN_SELECT_STATEMENT, NULL); 
+        addChild($$, $1); 
+        context->setAST($$);
+    }
+  | call_statement      { 
+        $$ = createASTNode(TOKEN_CALL_STATEMENT, NULL); 
+        addChild($$, $1); 
+        context->setAST($$);
+    }
+  | create_load_table_statement { 
+        $$ = createASTNode(TOKEN_CREATE_LOAD_TABLE_STATEMENT, NULL); 
+        addChild($$, $1); 
+        context->setAST($$);
+    }
   ;
 
 select_statement:

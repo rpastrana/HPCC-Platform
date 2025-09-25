@@ -23,45 +23,12 @@ limitations under the License.
 %option case-insensitive
 
 %{
-#include "hpccsqlgram.h"
+#include "HPCCSQLTreeWalker.hpp"
 
 #define YY_DECL int hpccsqllex(HPCCSQLSTYPE * yylval, yyscan_t yyscanner)
 
-// Token definitions from original ANTLR grammar
-typedef enum {
-    TOKEN_ROOT = 1000,
-    TOKEN_SELECT_STATEMENT,
-    TOKEN_CALL_STATEMENT,
-    TOKEN_CREATE_LOAD_TABLE_STATEMENT,
-    TOKEN_CREATE_INDEX_STATEMENT,
-    TOKEN_CREATE_TABLE,
-    TOKEN_DONOT_OVERWRITE,
-    TOKEN_OVERWRITE,
-    TOKEN_LOAD_TABLE,
-    TOKEN_FROM_LIST,
-    TOKEN_FROM_TABLE,
-    TOKEN_PROC_NAME,
-    TOKEN_PROC_PARAMS,
-    TOKEN_ALIAS,
-    TOKEN_INNER_JOIN,
-    TOKEN_OUTTER_JOIN,
-    TOKEN_INDEX_HINT,
-    TOKEN_AVOID_INDEX,
-    TOKEN_COLUMN,
-    TOKEN_LISTEXP,
-    TOKEN_FUNCEXP,
-    TOKEN_PARAMPLACEHOLDER,
-    TOKEN_COLUMNWILDCARD,
-    TOKEN_TABLE_SCHEMA,
-    TOKEN_COLUMN_DEF_LIST,
-    TOKEN_COLUMN_DEF,
-    TOKEN_LANDING_ZONE,
-    TOKEN_VARIABLE_FILE,
-    TOKEN_VAR_SEPERATOR,
-    TOKEN_VAR_TERMINATOR,
-    TOKEN_VAR_ENCLOSED,
-    TOKEN_VAR_ESCAPED
-} token_types;
+// Include the generated parser header for token definitions
+// This will be available after Bison generates it
 
 %}
 
@@ -106,6 +73,7 @@ HEX_DIGIT       [0-9a-fA-F]
     /* Keywords (case insensitive) */
 {A}{D}{D}                           { return ADD_SYM; }
 {A}{L}{L}                           { return ALL; }
+{A}{N}{D}                           { return AND_SYM; }
 {A}{N}{Y}                           { return ANY; }
 {A}{S}                              { return AS_SYM; }
 {A}{S}{C}                           { return ASC; }
@@ -218,3 +186,8 @@ HEX_DIGIT       [0-9a-fA-F]
 .                                   { return yytext[0]; }
 
 %%
+
+/* User code section */
+void hpccsql_scan_string(const char* str, yyscan_t scanner) {
+    yy_scan_string(str, scanner);
+}
