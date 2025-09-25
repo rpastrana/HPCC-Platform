@@ -20,6 +20,13 @@ limitations under the License.
 %parse-param {yyscan_t scanner}
 %parse-param {HPCCSQLTreeWalker* context}
 
+%union {
+    char* strval;
+    int intval;
+    float floatval;
+    struct ASTNode* node;
+}
+
 %{
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,11 +35,11 @@ limitations under the License.
 // Forward declaration to avoid circular dependency
 struct HPCCSQLTreeWalker;
 
-#define YYSTYPE HPCCSQLSTYPE
-
-// Forward declarations
-void yyerror(yyscan_t scanner, struct HPCCSQLTreeWalker* context, const char* msg);
-int hpccsqllex(HPCCSQLSTYPE* yylval, yyscan_t yyscanner);
+// Define scanner type for reentrant parser
+#ifndef YY_TYPEDEF_YY_SCANNER_T
+#define YY_TYPEDEF_YY_SCANNER_T
+typedef void* yyscan_t;
+#endif
 
 typedef struct ASTNode {
     int nodeType;
@@ -49,14 +56,11 @@ void freeASTNode(ASTNode* node);
 // Function to scan string (will be implemented in lexer)
 void hpccsql_scan_string(const char* str, yyscan_t scanner);
 
-%}
+// Forward declarations
+void yyerror(yyscan_t scanner, struct HPCCSQLTreeWalker* context, const char* msg);
+int hpccsqllex(YYSTYPE* yylval, yyscan_t yyscanner);
 
-%union {
-    char* strval;
-    int intval;
-    float floatval;
-    struct ASTNode* node;
-}
+%}
 
 %token TOKEN_ROOT
 %token TOKEN_SELECT_STATEMENT
@@ -126,17 +130,14 @@ root_statement:
     select_statement    { 
         $$ = createASTNode(TOKEN_SELECT_STATEMENT, NULL); 
         addChild($$, $1); 
-        context->setAST($$);
     }
   | call_statement      { 
         $$ = createASTNode(TOKEN_CALL_STATEMENT, NULL); 
         addChild($$, $1); 
-        context->setAST($$);
     }
   | create_load_table_statement { 
         $$ = createASTNode(TOKEN_CREATE_LOAD_TABLE_STATEMENT, NULL); 
         addChild($$, $1); 
-        context->setAST($$);
     }
   ;
 

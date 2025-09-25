@@ -18,9 +18,9 @@ limitations under the License.
 #include "ws_sqlService.hpp"
 #include "exception_util.hpp"
 #include "jconfig.hpp"
-#include "hpccsqlgram.h"
 
-// Forward declarations for lexer functions
+// Forward declarations for lexer functions 
+typedef void* yyscan_t;
 extern int hpccsqllex_init(yyscan_t* scanner);
 extern int hpccsqllex_destroy(yyscan_t scanner);
 extern void hpccsql_scan_string(const char* str, yyscan_t scanner);
@@ -626,6 +626,24 @@ HPCCSQLTreeWalker * CwssqlEx::parseSQL(IEspContext &context, StringBuffer & sqlt
         
         if (parseResult != 0)
             throw MakeStringException(-1, "HPCCSQL Parser reported errors, request aborted.");
+
+        // The AST will have been set in the TreeWalker via setAST() during parsing
+        // Now process it by calling the tree walker on the stored AST
+        if (hpccSqlTreeWalker->rootAST)
+        {
+            hpccSqlTreeWalker->sqlTreeWalker(hpccSqlTreeWalker->rootAST);
+            
+            if (hpccSqlTreeWalker->getSqlType() == SQLTypeSelect)
+            {
+                hpccSqlTreeWalker->assignParameterIndexes();
+                hpccSqlTreeWalker->expandWildCardColumn();
+                hpccSqlTreeWalker->verifyColAndDisambiguateName();
+            }
+            else if (hpccSqlTreeWalker->getSqlType() == SQLTypeCall)
+            {
+                hpccSqlTreeWalker->assignParameterIndexes();
+            }
+        }
 
         // Clean up lexer
         hpccsqllex_destroy(scanner);

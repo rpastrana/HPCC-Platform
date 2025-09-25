@@ -66,39 +66,6 @@
 
 
 
-/* First part of user prologue.  */
-#line 23 "hpccsqlgram.y"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-// Forward declaration to avoid circular dependency
-struct HPCCSQLTreeWalker;
-
-#define YYSTYPE HPCCSQLSTYPE
-
-// Forward declarations
-void yyerror(yyscan_t scanner, struct HPCCSQLTreeWalker* context, const char* msg);
-int hpccsqllex(HPCCSQLSTYPE* yylval, yyscan_t yyscanner);
-
-typedef struct ASTNode {
-    int nodeType;
-    char* value;
-    struct ASTNode** children;
-    int childCount;
-    int childCapacity;
-} ASTNode;
-
-ASTNode* createASTNode(int type, const char* value);
-ASTNode* addChild(ASTNode* parent, ASTNode* child);
-void freeASTNode(ASTNode* node);
-
-// Function to scan string (will be implemented in lexer)
-void hpccsql_scan_string(const char* str, yyscan_t scanner);
-
-
-#line 102 "hpccsqlgram.cpp"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -281,6 +248,43 @@ enum yysymbol_kind_t
 typedef enum yysymbol_kind_t yysymbol_kind_t;
 
 
+/* Second part of user prologue.  */
+#line 30 "hpccsqlgram.y"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Forward declaration to avoid circular dependency
+struct HPCCSQLTreeWalker;
+
+// Define scanner type for reentrant parser
+#ifndef YY_TYPEDEF_YY_SCANNER_T
+#define YY_TYPEDEF_YY_SCANNER_T
+typedef void* yyscan_t;
+#endif
+
+typedef struct ASTNode {
+    int nodeType;
+    char* value;
+    struct ASTNode** children;
+    int childCount;
+    int childCapacity;
+} ASTNode;
+
+ASTNode* createASTNode(int type, const char* value);
+ASTNode* addChild(ASTNode* parent, ASTNode* child);
+void freeASTNode(ASTNode* node);
+
+// Function to scan string (will be implemented in lexer)
+void hpccsql_scan_string(const char* str, yyscan_t scanner);
+
+// Forward declarations
+void yyerror(yyscan_t scanner, struct HPCCSQLTreeWalker* context, const char* msg);
+int hpccsqllex(YYSTYPE* yylval, yyscan_t yyscanner);
+
+
+#line 288 "hpccsqlgram.cpp"
 
 
 #ifdef short
@@ -675,12 +679,12 @@ static const yytype_uint8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   126,   126,   131,   136,   144,   155,   163,   164,   168,
-     169,   173,   174,   178,   179,   183,   184,   188,   189,   190,
-     191,   195,   196,   197,   201,   202,   206,   207,   208,   212,
-     213,   217,   218,   222,   223,   224,   232,   233,   234,   235,
-     236,   237,   238,   239,   240,   241,   242,   243,   244,   245,
-     246,   250,   251,   252,   253,   254,   255,   259,   265
+       0,   130,   130,   134,   138,   145,   156,   164,   165,   169,
+     170,   174,   175,   179,   180,   184,   185,   189,   190,   191,
+     192,   196,   197,   198,   202,   203,   207,   208,   209,   213,
+     214,   218,   219,   223,   224,   225,   233,   234,   235,   236,
+     237,   238,   239,   240,   241,   242,   243,   244,   245,   246,
+     247,   251,   252,   253,   254,   255,   256,   260,   266
 };
 #endif
 
@@ -1344,37 +1348,34 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* root_statement: select_statement  */
-#line 126 "hpccsqlgram.y"
+#line 130 "hpccsqlgram.y"
                         { 
         (yyval.node) = createASTNode(TOKEN_SELECT_STATEMENT, NULL); 
         addChild((yyval.node), (yyvsp[0].node)); 
-        context->setAST((yyval.node));
     }
-#line 1354 "hpccsqlgram.cpp"
+#line 1357 "hpccsqlgram.cpp"
     break;
 
   case 3: /* root_statement: call_statement  */
-#line 131 "hpccsqlgram.y"
+#line 134 "hpccsqlgram.y"
                         { 
         (yyval.node) = createASTNode(TOKEN_CALL_STATEMENT, NULL); 
         addChild((yyval.node), (yyvsp[0].node)); 
-        context->setAST((yyval.node));
     }
-#line 1364 "hpccsqlgram.cpp"
+#line 1366 "hpccsqlgram.cpp"
     break;
 
   case 4: /* root_statement: create_load_table_statement  */
-#line 136 "hpccsqlgram.y"
+#line 138 "hpccsqlgram.y"
                                 { 
         (yyval.node) = createASTNode(TOKEN_CREATE_LOAD_TABLE_STATEMENT, NULL); 
         addChild((yyval.node), (yyvsp[0].node)); 
-        context->setAST((yyval.node));
     }
-#line 1374 "hpccsqlgram.cpp"
+#line 1375 "hpccsqlgram.cpp"
     break;
 
   case 5: /* select_statement: select_portion from_portion where_clause groupby_clause having_clause orderby_clause limit_clause  */
-#line 145 "hpccsqlgram.y"
+#line 146 "hpccsqlgram.y"
     {
         (yyval.node) = createASTNode(TOKEN_SELECT_STATEMENT, NULL);
         if ((yyvsp[-6].node)) addChild((yyval.node), (yyvsp[-6].node));
@@ -1385,340 +1386,340 @@ yyreduce:
         if ((yyvsp[-1].node)) addChild((yyval.node), (yyvsp[-1].node));
         if ((yyvsp[0].node)) addChild((yyval.node), (yyvsp[0].node));
     }
-#line 1389 "hpccsqlgram.cpp"
+#line 1390 "hpccsqlgram.cpp"
     break;
 
   case 6: /* select_statement: select_portion  */
-#line 156 "hpccsqlgram.y"
+#line 157 "hpccsqlgram.y"
     {
         (yyval.node) = createASTNode(TOKEN_SELECT_STATEMENT, NULL);
         addChild((yyval.node), (yyvsp[0].node));
     }
-#line 1398 "hpccsqlgram.cpp"
+#line 1399 "hpccsqlgram.cpp"
     break;
 
   case 7: /* select_portion: SELECT select_list  */
-#line 163 "hpccsqlgram.y"
+#line 164 "hpccsqlgram.y"
                             { (yyval.node) = createASTNode(SELECT, "SELECT"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1404 "hpccsqlgram.cpp"
+#line 1405 "hpccsqlgram.cpp"
     break;
 
   case 8: /* select_portion: SELECT DISTINCT select_list  */
-#line 164 "hpccsqlgram.y"
+#line 165 "hpccsqlgram.y"
                                 { (yyval.node) = createASTNode(SELECT, "SELECT DISTINCT"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1410 "hpccsqlgram.cpp"
+#line 1411 "hpccsqlgram.cpp"
     break;
 
   case 9: /* from_portion: FROM table_references  */
-#line 168 "hpccsqlgram.y"
+#line 169 "hpccsqlgram.y"
                            { (yyval.node) = createASTNode(FROM, "FROM"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1416 "hpccsqlgram.cpp"
+#line 1417 "hpccsqlgram.cpp"
     break;
 
   case 10: /* from_portion: %empty  */
-#line 169 "hpccsqlgram.y"
+#line 170 "hpccsqlgram.y"
                             { (yyval.node) = NULL; }
-#line 1422 "hpccsqlgram.cpp"
+#line 1423 "hpccsqlgram.cpp"
     break;
 
   case 11: /* where_clause: WHERE expression  */
-#line 173 "hpccsqlgram.y"
+#line 174 "hpccsqlgram.y"
                             { (yyval.node) = createASTNode(WHERE, "WHERE"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1428 "hpccsqlgram.cpp"
+#line 1429 "hpccsqlgram.cpp"
     break;
 
   case 12: /* where_clause: %empty  */
-#line 174 "hpccsqlgram.y"
+#line 175 "hpccsqlgram.y"
                             { (yyval.node) = NULL; }
-#line 1434 "hpccsqlgram.cpp"
+#line 1435 "hpccsqlgram.cpp"
     break;
 
   case 13: /* groupby_clause: GROUP_SYM BY_SYM column_spec  */
-#line 178 "hpccsqlgram.y"
+#line 179 "hpccsqlgram.y"
                                     { (yyval.node) = createASTNode(GROUP_SYM, "GROUP BY"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1440 "hpccsqlgram.cpp"
+#line 1441 "hpccsqlgram.cpp"
     break;
 
   case 14: /* groupby_clause: %empty  */
-#line 179 "hpccsqlgram.y"
+#line 180 "hpccsqlgram.y"
                                     { (yyval.node) = NULL; }
-#line 1446 "hpccsqlgram.cpp"
+#line 1447 "hpccsqlgram.cpp"
     break;
 
   case 15: /* having_clause: HAVING expression  */
-#line 183 "hpccsqlgram.y"
+#line 184 "hpccsqlgram.y"
                             { (yyval.node) = createASTNode(HAVING, "HAVING"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1452 "hpccsqlgram.cpp"
+#line 1453 "hpccsqlgram.cpp"
     break;
 
   case 16: /* having_clause: %empty  */
-#line 184 "hpccsqlgram.y"
+#line 185 "hpccsqlgram.y"
                             { (yyval.node) = NULL; }
-#line 1458 "hpccsqlgram.cpp"
+#line 1459 "hpccsqlgram.cpp"
     break;
 
   case 17: /* orderby_clause: ORDER_SYM BY_SYM column_spec  */
-#line 188 "hpccsqlgram.y"
+#line 189 "hpccsqlgram.y"
                                     { (yyval.node) = createASTNode(ORDER_SYM, "ORDER BY"); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1464 "hpccsqlgram.cpp"
+#line 1465 "hpccsqlgram.cpp"
     break;
 
   case 18: /* orderby_clause: ORDER_SYM BY_SYM column_spec ASC  */
-#line 189 "hpccsqlgram.y"
+#line 190 "hpccsqlgram.y"
                                      { (yyval.node) = createASTNode(ORDER_SYM, "ORDER BY ASC"); addChild((yyval.node), (yyvsp[-1].node)); }
-#line 1470 "hpccsqlgram.cpp"
+#line 1471 "hpccsqlgram.cpp"
     break;
 
   case 19: /* orderby_clause: ORDER_SYM BY_SYM column_spec DESC  */
-#line 190 "hpccsqlgram.y"
+#line 191 "hpccsqlgram.y"
                                       { (yyval.node) = createASTNode(ORDER_SYM, "ORDER BY DESC"); addChild((yyval.node), (yyvsp[-1].node)); }
-#line 1476 "hpccsqlgram.cpp"
+#line 1477 "hpccsqlgram.cpp"
     break;
 
   case 20: /* orderby_clause: %empty  */
-#line 191 "hpccsqlgram.y"
+#line 192 "hpccsqlgram.y"
                                      { (yyval.node) = NULL; }
-#line 1482 "hpccsqlgram.cpp"
+#line 1483 "hpccsqlgram.cpp"
     break;
 
   case 21: /* limit_clause: LIMIT INTEGER_NUM  */
-#line 195 "hpccsqlgram.y"
+#line 196 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(LIMIT, "LIMIT"); ASTNode* num = createASTNode(INTEGER_NUM, NULL); addChild((yyval.node), num); }
-#line 1488 "hpccsqlgram.cpp"
+#line 1489 "hpccsqlgram.cpp"
     break;
 
   case 22: /* limit_clause: LIMIT INTEGER_NUM OFFSET_SYM INTEGER_NUM  */
-#line 196 "hpccsqlgram.y"
+#line 197 "hpccsqlgram.y"
                                              { (yyval.node) = createASTNode(LIMIT, "LIMIT OFFSET"); }
-#line 1494 "hpccsqlgram.cpp"
+#line 1495 "hpccsqlgram.cpp"
     break;
 
   case 23: /* limit_clause: %empty  */
-#line 197 "hpccsqlgram.y"
+#line 198 "hpccsqlgram.y"
                                    { (yyval.node) = NULL; }
-#line 1500 "hpccsqlgram.cpp"
+#line 1501 "hpccsqlgram.cpp"
     break;
 
   case 24: /* select_list: select_item  */
-#line 201 "hpccsqlgram.y"
+#line 202 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_LISTEXP, NULL); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1506 "hpccsqlgram.cpp"
+#line 1507 "hpccsqlgram.cpp"
     break;
 
   case 25: /* select_list: select_list COMMA select_item  */
-#line 202 "hpccsqlgram.y"
+#line 203 "hpccsqlgram.y"
                                    { addChild((yyvsp[-2].node), (yyvsp[0].node)); (yyval.node) = (yyvsp[-2].node); }
-#line 1512 "hpccsqlgram.cpp"
+#line 1513 "hpccsqlgram.cpp"
     break;
 
   case 26: /* select_item: column_spec  */
-#line 206 "hpccsqlgram.y"
+#line 207 "hpccsqlgram.y"
                                    { (yyval.node) = (yyvsp[0].node); }
-#line 1518 "hpccsqlgram.cpp"
+#line 1519 "hpccsqlgram.cpp"
     break;
 
   case 27: /* select_item: literal_value  */
-#line 207 "hpccsqlgram.y"
+#line 208 "hpccsqlgram.y"
                                    { (yyval.node) = (yyvsp[0].node); }
-#line 1524 "hpccsqlgram.cpp"
+#line 1525 "hpccsqlgram.cpp"
     break;
 
   case 28: /* select_item: ASTERISK  */
-#line 208 "hpccsqlgram.y"
+#line 209 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_COLUMNWILDCARD, "*"); }
-#line 1530 "hpccsqlgram.cpp"
+#line 1531 "hpccsqlgram.cpp"
     break;
 
   case 29: /* table_references: table_reference  */
-#line 212 "hpccsqlgram.y"
+#line 213 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_FROM_LIST, NULL); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1536 "hpccsqlgram.cpp"
+#line 1537 "hpccsqlgram.cpp"
     break;
 
   case 30: /* table_references: table_references COMMA table_reference  */
-#line 213 "hpccsqlgram.y"
+#line 214 "hpccsqlgram.y"
                                            { addChild((yyvsp[-2].node), (yyvsp[0].node)); (yyval.node) = (yyvsp[-2].node); }
-#line 1542 "hpccsqlgram.cpp"
+#line 1543 "hpccsqlgram.cpp"
     break;
 
   case 31: /* table_reference: ID  */
-#line 217 "hpccsqlgram.y"
+#line 218 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_FROM_TABLE, (yyvsp[0].strval)); }
-#line 1548 "hpccsqlgram.cpp"
+#line 1549 "hpccsqlgram.cpp"
     break;
 
   case 32: /* table_reference: QUOTED_ID  */
-#line 218 "hpccsqlgram.y"
+#line 219 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_FROM_TABLE, (yyvsp[0].strval)); }
-#line 1554 "hpccsqlgram.cpp"
+#line 1555 "hpccsqlgram.cpp"
     break;
 
   case 33: /* column_spec: ID  */
-#line 222 "hpccsqlgram.y"
+#line 223 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_COLUMN, (yyvsp[0].strval)); }
-#line 1560 "hpccsqlgram.cpp"
+#line 1561 "hpccsqlgram.cpp"
     break;
 
   case 34: /* column_spec: QUOTED_ID  */
-#line 223 "hpccsqlgram.y"
+#line 224 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_COLUMN, (yyvsp[0].strval)); }
-#line 1566 "hpccsqlgram.cpp"
+#line 1567 "hpccsqlgram.cpp"
     break;
 
   case 35: /* column_spec: ID DOT ID  */
-#line 224 "hpccsqlgram.y"
+#line 225 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_COLUMN, NULL); 
                                      ASTNode* table = createASTNode(ID, (yyvsp[-2].strval));
                                      ASTNode* col = createASTNode(ID, (yyvsp[0].strval));
                                      addChild((yyval.node), col);
                                      addChild((yyval.node), table); }
-#line 1576 "hpccsqlgram.cpp"
+#line 1577 "hpccsqlgram.cpp"
     break;
 
   case 36: /* expression: column_spec  */
-#line 232 "hpccsqlgram.y"
+#line 233 "hpccsqlgram.y"
                                    { (yyval.node) = (yyvsp[0].node); }
-#line 1582 "hpccsqlgram.cpp"
+#line 1583 "hpccsqlgram.cpp"
     break;
 
   case 37: /* expression: literal_value  */
-#line 233 "hpccsqlgram.y"
+#line 234 "hpccsqlgram.y"
                                    { (yyval.node) = (yyvsp[0].node); }
-#line 1588 "hpccsqlgram.cpp"
+#line 1589 "hpccsqlgram.cpp"
     break;
 
   case 38: /* expression: expression EQ_SYM expression  */
-#line 234 "hpccsqlgram.y"
+#line 235 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(EQ_SYM, "="); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1594 "hpccsqlgram.cpp"
+#line 1595 "hpccsqlgram.cpp"
     break;
 
   case 39: /* expression: expression NE expression  */
-#line 235 "hpccsqlgram.y"
+#line 236 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(NE, "!="); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1600 "hpccsqlgram.cpp"
+#line 1601 "hpccsqlgram.cpp"
     break;
 
   case 40: /* expression: expression LTH expression  */
-#line 236 "hpccsqlgram.y"
+#line 237 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(LTH, "<"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1606 "hpccsqlgram.cpp"
+#line 1607 "hpccsqlgram.cpp"
     break;
 
   case 41: /* expression: expression GTH expression  */
-#line 237 "hpccsqlgram.y"
+#line 238 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(GTH, ">"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1612 "hpccsqlgram.cpp"
+#line 1613 "hpccsqlgram.cpp"
     break;
 
   case 42: /* expression: expression LE expression  */
-#line 238 "hpccsqlgram.y"
+#line 239 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(LE, "<="); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1618 "hpccsqlgram.cpp"
+#line 1619 "hpccsqlgram.cpp"
     break;
 
   case 43: /* expression: expression GE expression  */
-#line 239 "hpccsqlgram.y"
+#line 240 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(GE, ">="); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1624 "hpccsqlgram.cpp"
+#line 1625 "hpccsqlgram.cpp"
     break;
 
   case 44: /* expression: expression PLUS expression  */
-#line 240 "hpccsqlgram.y"
+#line 241 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(PLUS, "+"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1630 "hpccsqlgram.cpp"
+#line 1631 "hpccsqlgram.cpp"
     break;
 
   case 45: /* expression: expression MINUS expression  */
-#line 241 "hpccsqlgram.y"
+#line 242 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(MINUS, "-"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1636 "hpccsqlgram.cpp"
+#line 1637 "hpccsqlgram.cpp"
     break;
 
   case 46: /* expression: expression ASTERISK expression  */
-#line 242 "hpccsqlgram.y"
+#line 243 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(ASTERISK, "*"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1642 "hpccsqlgram.cpp"
+#line 1643 "hpccsqlgram.cpp"
     break;
 
   case 47: /* expression: expression DIVIDE expression  */
-#line 243 "hpccsqlgram.y"
+#line 244 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(DIVIDE, "/"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1648 "hpccsqlgram.cpp"
+#line 1649 "hpccsqlgram.cpp"
     break;
 
   case 48: /* expression: expression OR_SYM expression  */
-#line 244 "hpccsqlgram.y"
+#line 245 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(OR_SYM, "OR"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1654 "hpccsqlgram.cpp"
+#line 1655 "hpccsqlgram.cpp"
     break;
 
   case 49: /* expression: expression AND_SYM expression  */
-#line 245 "hpccsqlgram.y"
+#line 246 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(AND_SYM, "AND"); addChild((yyval.node), (yyvsp[-2].node)); addChild((yyval.node), (yyvsp[0].node)); }
-#line 1660 "hpccsqlgram.cpp"
+#line 1661 "hpccsqlgram.cpp"
     break;
 
   case 50: /* expression: LPAREN expression RPAREN  */
-#line 246 "hpccsqlgram.y"
+#line 247 "hpccsqlgram.y"
                                    { (yyval.node) = (yyvsp[-1].node); }
-#line 1666 "hpccsqlgram.cpp"
+#line 1667 "hpccsqlgram.cpp"
     break;
 
   case 51: /* literal_value: STRING_LITERAL  */
-#line 250 "hpccsqlgram.y"
+#line 251 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(STRING_LITERAL, (yyvsp[0].strval)); }
-#line 1672 "hpccsqlgram.cpp"
+#line 1673 "hpccsqlgram.cpp"
     break;
 
   case 52: /* literal_value: INTEGER_NUM  */
-#line 251 "hpccsqlgram.y"
+#line 252 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(INTEGER_NUM, NULL); }
-#line 1678 "hpccsqlgram.cpp"
+#line 1679 "hpccsqlgram.cpp"
     break;
 
   case 53: /* literal_value: DECIMAL_NUM  */
-#line 252 "hpccsqlgram.y"
+#line 253 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(DECIMAL_NUM, NULL); }
-#line 1684 "hpccsqlgram.cpp"
+#line 1685 "hpccsqlgram.cpp"
     break;
 
   case 54: /* literal_value: TRUE_SYM  */
-#line 253 "hpccsqlgram.y"
+#line 254 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TRUE_SYM, "TRUE"); }
-#line 1690 "hpccsqlgram.cpp"
+#line 1691 "hpccsqlgram.cpp"
     break;
 
   case 55: /* literal_value: FALSE_SYM  */
-#line 254 "hpccsqlgram.y"
+#line 255 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(FALSE_SYM, "FALSE"); }
-#line 1696 "hpccsqlgram.cpp"
+#line 1697 "hpccsqlgram.cpp"
     break;
 
   case 56: /* literal_value: NULL_SYM  */
-#line 255 "hpccsqlgram.y"
+#line 256 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(NULL_SYM, "NULL"); }
-#line 1702 "hpccsqlgram.cpp"
+#line 1703 "hpccsqlgram.cpp"
     break;
 
   case 57: /* call_statement: CALL_SYM ID LPAREN RPAREN  */
-#line 259 "hpccsqlgram.y"
+#line 260 "hpccsqlgram.y"
                                    { (yyval.node) = createASTNode(TOKEN_CALL_STATEMENT, NULL);
                                      ASTNode* proc = createASTNode(TOKEN_PROC_NAME, (yyvsp[-2].strval));
                                      addChild((yyval.node), proc); }
-#line 1710 "hpccsqlgram.cpp"
+#line 1711 "hpccsqlgram.cpp"
     break;
 
   case 58: /* create_load_table_statement: CREATE_SYM TABLE_SYM ID  */
-#line 265 "hpccsqlgram.y"
+#line 266 "hpccsqlgram.y"
                                     { (yyval.node) = createASTNode(TOKEN_CREATE_LOAD_TABLE_STATEMENT, NULL);
                                      ASTNode* table = createASTNode(TOKEN_CREATE_TABLE, (yyvsp[0].strval));
                                      addChild((yyval.node), table); }
-#line 1718 "hpccsqlgram.cpp"
+#line 1719 "hpccsqlgram.cpp"
     break;
 
 
-#line 1722 "hpccsqlgram.cpp"
+#line 1723 "hpccsqlgram.cpp"
 
       default: break;
     }
@@ -1911,7 +1912,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 270 "hpccsqlgram.y"
+#line 271 "hpccsqlgram.y"
 
 
 void yyerror(yyscan_t scanner, HPCCSQLTreeWalker* context, const char* msg) {

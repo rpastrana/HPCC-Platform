@@ -828,9 +828,9 @@ limitations under the License.
 #line 26 "hpccsqllex.l"
 // Include the generated parser header for token definitions
 // This will be available after Bison generates it
-#include "hpccsqlgram.h"
+#include "hpccsqlgram.hpp"
 
-#define YY_DECL int hpccsqllex(HPCCSQLSTYPE * yylval, yyscan_t yyscanner)
+#define YY_DECL int hpccsqllex(YYSTYPE * yylval, yyscan_t yyscanner)
 
 #line 836 "hpccsqllex.cpp"
 /* Character fragments - case insensitive */
@@ -2859,5 +2859,5 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 
 /* User code section */
 void hpccsql_scan_string(const char* str, yyscan_t scanner) {
-    yy_scan_string(str, scanner);
+    (void)hpccsql_scan_bytes(str, strlen(str), scanner);
 }

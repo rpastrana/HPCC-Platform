@@ -1146,7 +1146,7 @@ HPCCSQLTreeWalker::HPCCSQLTreeWalker(IEspContext &context, bool attemptParameter
 
     tmpHPCCFileCache.setown(HPCCFileCache::createFileCache(username.str(), password.str()));
     
-    // AST will be set by parser via setAST()
+    // AST will be set by parser via setAST(), then processed via explicit sqlTreeWalker() call
 }
 
 HPCCSQLTreeWalker::HPCCSQLTreeWalker(pANTLR3_BASE_TREE ast, IEspContext &context, bool attemptParameterization) :

@@ -25,9 +25,9 @@ limitations under the License.
 %{
 // Include the generated parser header for token definitions
 // This will be available after Bison generates it
-#include "hpccsqlgram.h"
+#include "hpccsqlgram.hpp"
 
-#define YY_DECL int hpccsqllex(HPCCSQLSTYPE * yylval, yyscan_t yyscanner)
+#define YY_DECL int hpccsqllex(YYSTYPE * yylval, yyscan_t yyscanner)
 
 %}
 
@@ -187,6 +187,6 @@ HEX_DIGIT       [0-9a-fA-F]
 %%
 
 /* User code section */
-void hpccsql_scan_string(const char* str, yyscan_t scanner) {
-    yy_scan_string(str, scanner);
+YY_BUFFER_STATE hpcc_scan_string_buffer(const char* str, yyscan_t scanner) {
+    return hpccsql_scan_string(str, scanner);
 }

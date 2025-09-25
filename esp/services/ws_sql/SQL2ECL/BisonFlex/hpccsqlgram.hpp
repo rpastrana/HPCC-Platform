@@ -191,7 +191,7 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 54 "hpccsqlgram.y"
+#line 23 "hpccsqlgram.y"
 
     char* strval;
     int intval;
