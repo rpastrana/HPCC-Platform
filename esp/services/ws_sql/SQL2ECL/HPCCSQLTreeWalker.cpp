@@ -64,115 +64,6 @@ void HPCCSQLTreeWalker::limitTreeWalker(pANTLR3_BASE_TREE limitAST)
     }
 }
 
-void HPCCSQLTreeWalker::fromTreeWalker(pANTLR3_BASE_TREE fromsqlAST)
-{
-    char *  tablename = NULL;
-    char *  tablealias = NULL;
-
-    if ( fromsqlAST != NULL )
-    {
-        int childrenCount = fromsqlAST->getChildCount(fromsqlAST);
-
-        for ( int i = 0; i < childrenCount; i++ )
-        {
-            Owned<SQLTable> temptable = SQLTable::createSQLTable();
-
-            pANTLR3_BASE_TREE ithchild = (pANTLR3_BASE_TREE)(fromsqlAST->getChild(fromsqlAST, i));
-            ANTLR3_UINT32 tokenType = ithchild->getType(ithchild);
-
-            pANTLR3_BASE_TREE onclausenode = NULL;
-
-            SQLJoinType jointype = SQLJoinTypeUnknown;
-            if (tokenType == TOKEN_OUTTER_JOIN || tokenType == TOKEN_INNER_JOIN)
-            {
-                if (tokenType == TOKEN_OUTTER_JOIN)
-                    jointype = SQLJoinTypeOuter;
-                else if (tokenType == TOKEN_INNER_JOIN)
-                    jointype = SQLJoinTypeInner;
-
-                int joinNodeChildcount = ithchild->getChildCount(ithchild);
-                if (joinNodeChildcount < 2 )
-                    throw MakeStringException(-1, "Join statement appears to be incomplete");
-
-                onclausenode = (pANTLR3_BASE_TREE) ithchild->getFirstChildWithType(ithchild, ON);
-
-                ithchild = (pANTLR3_BASE_TREE)(ithchild->getChild(ithchild, 0));
-                tokenType = ithchild->getType(ithchild);
-            }
-
-            if (tokenType == ID || tokenType == ABSOLUTE_FILE_ID)
-            {
-                tablename = (char *)ithchild->toString(ithchild)->chars;
-
-                int tablechildcount = ithchild->getChildCount(ithchild);
-
-                for ( int tabchildidx = 0; tabchildidx < tablechildcount; tabchildidx++ )
-                {
-
-                   pANTLR3_BASE_TREE tablechild = (pANTLR3_BASE_TREE)ithchild->getChild(ithchild, tabchildidx);
-                   ANTLR3_UINT32 childType = tablechild->getType(tablechild);
-
-                    if (childType == TOKEN_ALIAS)
-                    {
-                       pANTLR3_BASE_TREE alias = (pANTLR3_BASE_TREE)tablechild->getChild(tablechild, 0);
-                       tablealias = (char *)alias->toString(alias)->chars;
-                       temptable->setAlias(tablealias);
-                    }
-                    else if ( childType == TOKEN_INDEX_HINT)
-                    {
-                        pANTLR3_BASE_TREE indexhint = (pANTLR3_BASE_TREE)tablechild->getChild(tablechild, 0);
-                        tablealias = (char *)indexhint->toString(indexhint)->chars;
-
-                        const char * fullindexhintname = tmpHPCCFileCache->cacheHpccFileByName(tablealias);
-                        if (!fullindexhintname || !*fullindexhintname)
-                            IERRLOG("Invalid index hint found: %s\n", tablealias);
-                        else
-                            temptable->setIndexhint(fullindexhintname);
-                    }
-                    else if ( childType == TOKEN_AVOID_INDEX)
-                    {
-                        temptable->setIndexhint("0");
-                    }
-                    else if ( childType == TOKEN_TABLE_SCHEMA && tablechild->getChildCount(tablechild) == 1)
-                    {
-                        pANTLR3_BASE_TREE schema = (pANTLR3_BASE_TREE)tablechild->getChild(tablechild, 0);
-                        UWARNLOG("Table schema detected but ignored: %s\n", (char *)schema->toString(schema)->chars);
-                    }
-                    else
-                    {
-                        UERRLOG("Invalid node found in table node: %s\n", (char *)tablechild->toString(tablechild)->chars);
-                    }
-                }
-
-                const char * fullTableName = tmpHPCCFileCache->cacheHpccFileByName(tablename);
-                if (!fullTableName || !*fullTableName)
-                    throw MakeStringException(-1, "Invalid table name or file type not supported: %s\n", tablename);
-                else
-                    temptable->setName(fullTableName);
-
-                tableList.append(*temptable.getLink());
-
-                if (jointype == -1 && i > 0) //multiple tables
-                {
-                    temptable->setNewJoin(SQLJoinTypeImplicit);
-                }
-
-                if (jointype != SQLJoinTypeUnknown)
-                {
-                    Owned<SQLJoin> join = SQLJoin::creatSQLJoin(jointype);
-
-                    if (onclausenode)
-                        join->setOnClause(expressionTreeWalker((pANTLR3_BASE_TREE)onclausenode->getChild(onclausenode, 0), NULL));
-                    else
-                        throw MakeStringException(-1, "Join statement appears to be missing on clause");
-
-                    temptable->setJoin(join.getLink());
-                }
-            }
-        }
-    }
-}
-
 ISQLExpression * HPCCSQLTreeWalker::expressionTreeWalker(pANTLR3_BASE_TREE exprAST, pANTLR3_BASE_TREE parent)
 {
     Owned<ISQLExpression>  tmpexp;
@@ -1637,8 +1528,124 @@ ISQLExpression* HPCCSQLTreeWalker::expressionTreeWalker(ASTNode* exprAST, ASTNod
 
 void HPCCSQLTreeWalker::fromTreeWalker(ASTNode* fromsqlAST)
 {
-    // Stub implementation - TODO: implement FROM clause parsing
-    fprintf(stderr, "HPCCSQLTreeWalker: FROM clause parsing not yet implemented for ASTNode parser\n");
+    char *  tablename = NULL;
+    char *  tablealias = NULL;
+
+    if ( fromsqlAST != NULL )
+    {
+        int childrenCount = fromsqlAST->childCount;
+
+        for ( int i = 0; i < childrenCount; i++ )
+        {
+            Owned<SQLTable> temptable = SQLTable::createSQLTable();
+
+            ASTNode* ithchild = fromsqlAST->children[i];
+            int tokenType = ithchild->nodeType;
+
+            ASTNode* onclausenode = NULL;
+
+            SQLJoinType jointype = SQLJoinTypeUnknown;
+            if (tokenType == TOKEN_OUTTER_JOIN || tokenType == TOKEN_INNER_JOIN)
+            {
+                if (tokenType == TOKEN_OUTTER_JOIN)
+                    jointype = SQLJoinTypeOuter;
+                else if (tokenType == TOKEN_INNER_JOIN)
+                    jointype = SQLJoinTypeInner;
+
+                int joinNodeChildcount = ithchild->childCount;
+                if (joinNodeChildcount < 2 )
+                    throw MakeStringException(-1, "Join statement appears to be incomplete");
+
+                // Find ON clause node
+                for (int j = 0; j < joinNodeChildcount; j++)
+                {
+                    if (ithchild->children[j]->nodeType == ON)
+                    {
+                        onclausenode = ithchild->children[j];
+                        break;
+                    }
+                }
+
+                ithchild = ithchild->children[0];
+                tokenType = ithchild->nodeType;
+            }
+
+            if (tokenType == ID || tokenType == ABSOLUTE_FILE_ID)
+            {
+                tablename = ithchild->value;
+
+                int tablechildcount = ithchild->childCount;
+
+                for ( int tabchildidx = 0; tabchildidx < tablechildcount; tabchildidx++ )
+                {
+                   ASTNode* tablechild = ithchild->children[tabchildidx];
+                   int childType = tablechild->nodeType;
+
+                    if (childType == TOKEN_ALIAS)
+                    {
+                       if (tablechild->childCount > 0)
+                       {
+                           ASTNode* alias = tablechild->children[0];
+                           tablealias = alias->value;
+                           temptable->setAlias(tablealias);
+                       }
+                    }
+                    else if ( childType == TOKEN_INDEX_HINT)
+                    {
+                        if (tablechild->childCount > 0)
+                        {
+                            ASTNode* indexhint = tablechild->children[0];
+                            tablealias = indexhint->value;
+
+                            const char * fullindexhintname = tmpHPCCFileCache->cacheHpccFileByName(tablealias);
+                            if (!fullindexhintname || !*fullindexhintname)
+                                IERRLOG("Invalid index hint found: %s\n", tablealias);
+                            else
+                                temptable->setIndexhint(fullindexhintname);
+                        }
+                    }
+                    else if ( childType == TOKEN_AVOID_INDEX)
+                    {
+                        temptable->setIndexhint("0");
+                    }
+                    else if ( childType == TOKEN_TABLE_SCHEMA && tablechild->childCount == 1)
+                    {
+                        ASTNode* schema = tablechild->children[0];
+                        UWARNLOG("Table schema detected but ignored: %s\n", schema->value ? schema->value : "");
+                    }
+                    else
+                    {
+                        UERRLOG("Invalid node found in table node: %s\n", tablechild->value ? tablechild->value : "unknown");
+                    }
+                }
+
+                const char * fullTableName = tmpHPCCFileCache->cacheHpccFileByName(tablename);
+                if (!fullTableName || !*fullTableName)
+                    throw MakeStringException(-1, "Invalid table name or file type not supported: %s\n", tablename);
+                else
+                    temptable->setName(fullTableName);
+
+                tableList.append(*temptable.getLink());
+
+                if (jointype == -1 && i > 0) //multiple tables
+                {
+                    temptable->setNewJoin(SQLJoinTypeImplicit);
+                }
+
+                if (jointype != SQLJoinTypeUnknown)
+                {
+                    Owned<SQLJoin> join = SQLJoin::creatSQLJoin(jointype);
+
+                    if (onclausenode && onclausenode->childCount > 0)
+                        join->setOnClause(expressionTreeWalker(onclausenode->children[0], NULL));
+                    else
+                        throw MakeStringException(-1, "Join statement appears to be missing on clause");
+
+                    temptable->setJoin(join.getLink());
+                }
+            }
+        }
+    }
 }
 
 void HPCCSQLTreeWalker::limitTreeWalker(ASTNode* limitAST)
