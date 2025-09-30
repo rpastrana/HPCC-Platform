@@ -2013,7 +2013,7 @@ ConditionalSpanScope::~ConditionalSpanScope()
     endTime.setNow();
     
     // Calculate elapsed time in nanoseconds
-    auto elapsedNs = endTime.steadyClockTime.count() - startTime.steadyClockTime.count();
+    auto elapsedNs = static_cast<stat_type>(endTime.steadyClockTime.count() - startTime.steadyClockTime.count());
     
     // Report span if it exceeded threshold OR if we were explicitly asked to
     if (forceReport || elapsedNs >= thresholdNs)

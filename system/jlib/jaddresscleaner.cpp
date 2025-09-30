@@ -20,17 +20,41 @@
 #include "jstring.hpp"
 #include "eclrtl.hpp"
 #include <regex>
+#include <cstdlib>
 
 // Default threshold: 1 millisecond (1,000,000 nanoseconds)
 static stat_type addressCleanerThresholdNs = 1000000;
 
+// Initialize threshold from environment variable if available
+static bool thresholdInitialized = false;
+
+static void initializeThreshold()
+{
+    if (!thresholdInitialized)
+    {
+        const char* envThreshold = getenv("ADDRESSCLEANER_THRESHOLD_NS");
+        if (envThreshold)
+        {
+            char* end;
+            stat_type threshold = strtoull(envThreshold, &end, 10);
+            if (*end == '\0' && threshold > 0)
+            {
+                addressCleanerThresholdNs = threshold;
+            }
+        }
+        thresholdInitialized = true;
+    }
+}
+
 void setAddressCleanerThresholdNs(stat_type thresholdNs)
 {
     addressCleanerThresholdNs = thresholdNs;
+    thresholdInitialized = true;
 }
 
 stat_type getAddressCleanerThresholdNs()
 {
+    initializeThreshold();
     return addressCleanerThresholdNs;
 }
 
