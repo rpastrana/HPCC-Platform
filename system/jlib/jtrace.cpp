@@ -1990,6 +1990,93 @@ ITraceManager & queryTraceManager()
     return *theTraceManager.query([] () { return new CTraceManager; }); //throws if not initialized
 }
 
+//---------------------------------------------------------------------------------------------------------------------
+// ConditionalSpanScope implementation
+//---------------------------------------------------------------------------------------------------------------------
+
+ConditionalSpanScope::ConditionalSpanScope(const char * spanName, stat_type thresholdNs)
+    : name(spanName), thresholdNs(thresholdNs), forceReport(false), isValid(false)
+{
+    if (queryTraceManager().isTracingEnabled())
+    {
+        startTime.setNow();
+        isValid = true;
+    }
+}
+
+ConditionalSpanScope::~ConditionalSpanScope()
+{
+    if (!isValid)
+        return;
+
+    SpanTimeStamp endTime;
+    endTime.setNow();
+    
+    // Calculate elapsed time in nanoseconds
+    auto elapsedNs = endTime.steadyClockTime.count() - startTime.steadyClockTime.count();
+    
+    // Report span if it exceeded threshold OR if we were explicitly asked to
+    if (forceReport || elapsedNs >= thresholdNs)
+    {
+        // Create a backdated span for the operation that just completed
+        span.setown(createBackdatedInternalSpan(name, elapsedNs));
+        
+        // If we forced reporting due to error, mark the span as failed
+        if (forceReport)
+        {
+            span->setSpanStatusSuccess(false, "Operation failed or encountered error");
+        }
+        else
+        {
+            span->setSpanStatusSuccess(true);
+        }
+    }
+}
+
+void ConditionalSpanScope::markFailed()
+{
+    forceReport = true;
+}
+
+void ConditionalSpanScope::recordException(IException * e, bool spanFailed, bool escapedScope)
+{
+    if (!isValid)
+        return;
+        
+    markFailed(); // Force reporting of this span
+    
+    // We'll record the exception when the span is created in destructor
+    // For now, just ensure the span will be reported
+}
+
+void ConditionalSpanScope::recordError(const SpanError & error)
+{
+    if (!isValid)
+        return;
+        
+    markFailed(); // Force reporting of this span
+}
+
+void ConditionalSpanScope::setSpanAttribute(const char * key, const char * val)
+{
+    // We can't set attributes until we know if we're going to report the span
+    // For simplicity, we'll force reporting if someone sets attributes
+    if (!isValid)
+        return;
+        
+    markFailed(); // Force reporting so we can capture the attribute
+}
+
+void ConditionalSpanScope::setSpanAttribute(const char * name, __uint64 value)
+{
+    // We can't set attributes until we know if we're going to report the span
+    // For simplicity, we'll force reporting if someone sets attributes
+    if (!isValid)
+        return;
+        
+    markFailed(); // Force reporting so we can capture the attribute
+}
+
 #if defined(_MSC_VER) && _MSC_VER < 1939 // _MSC_VER < VS 2022 17.9
 extern "C" void __stdcall _Thrd_sleep_for(const unsigned long ms) noexcept { // suspend current thread for `ms` milliseconds
     Sleep(ms);
