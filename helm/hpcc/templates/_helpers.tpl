@@ -695,8 +695,13 @@ Returns "true" if postrun sidecar will be added, empty string otherwise
 {{- define "hpcc.hasPostRunSidecar" -}}
 {{- $meExpert := .me.expert | default dict -}}
 {{- $globalExpert := .root.Values.global.expert | default dict -}}
-{{- $postRun := (hasKey $meExpert "postRunSidecar") | ternary $meExpert.postRunSidecar ((hasKey $globalExpert "postRunSidecar") | ternary $globalExpert.postRunSidecar true) }}
-{{- if $postRun }}
+{{- $postRun := true -}}
+{{- if hasKey $meExpert "postRunSidecar" -}}
+ {{- $postRun = $meExpert.postRunSidecar -}}
+{{- else if hasKey $globalExpert "postRunSidecar" -}}
+ {{- $postRun = $globalExpert.postRunSidecar -}}
+{{- end -}}
+{{- if $postRun -}}
  {{- if (include "hpcc.hasPlaneForCategory" (dict "root" .root "category" "debug")) -}}
 true
  {{- end -}}
