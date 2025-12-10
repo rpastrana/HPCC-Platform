@@ -1,0 +1,10 @@
+==> Linting /home/runner/work/HPCC-Platform/HPCC-Platform/testing/helm/../../helm/hpcc
+[ERROR] values.yaml: - at '/storage/planes/0': 'allOf' failed
+  - at '/storage/planes/0/category': value must be one of 'data', 'lz', 'dali', 'sasha', 'dll', 'spill', 'temp', 'git', 'remote', 'debug'
+
+[ERROR] templates/: values don't meet the specifications of the schema(s) in the following chart(s):
+hpcc:
+- at '/storage/planes/0': 'allOf' failed
+  - at '/storage/planes/0/category': value must be one of 'data', 'lz', 'dali', 'sasha', 'dll', 'spill', 'temp', 'git', 'remote', 'debug'
+
+
