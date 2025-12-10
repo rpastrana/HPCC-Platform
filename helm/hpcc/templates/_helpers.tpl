@@ -688,38 +688,12 @@ Pass in dict with root and secretsCategories
 {{- end -}}
 
 {{/*
-Check if a postrun sidecar will be added
-Pass in dict with root and me
-Returns "true" if postrun sidecar will be added, empty string otherwise
-*/}}
-{{- define "hpcc.hasPostRunSidecar" -}}
-{{- $meExpert := .me.expert | default dict -}}
-{{- $globalExpert := .root.Values.global.expert | default dict -}}
-{{- $postRun := true -}}
-{{- if hasKey $meExpert "postRunSidecar" -}}
- {{- $postRun = $meExpert.postRunSidecar -}}
-{{- else if hasKey $globalExpert "postRunSidecar" -}}
- {{- $postRun = $globalExpert.postRunSidecar -}}
-{{- end -}}
-{{- if $postRun -}}
- {{- if (include "hpcc.hasPlaneForCategory" (dict "root" .root "category" "debug")) -}}
-true
- {{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
 Generate Prometheus scrape annotations
 Enables selfdiscovery of metrics service on configured path/port
 Requires sinks[type=prometheus]
-Pass in dict with sinks, and optionally root and me to check for postrun sidecars
+Pass in dict with sinks
 */}}
 {{- define "hpcc.addPrometheusScrapeAnnotations" -}}
-{{- $hasPostRun := "" -}}
-{{- if and (hasKey . "root") (hasKey . "me") -}}
- {{- $hasPostRun = include "hpcc.hasPostRunSidecar" . -}}
-{{- end -}}
-{{- if not $hasPostRun -}}
 {{- if hasKey . "sinks" }}
  {{ range $sink := .sinks -}}
   {{- if eq (get $sink "type") "prometheus" }}
@@ -735,7 +709,6 @@ prometheus.io/port: {{ $sink.settings.port | default 8767 | quote }}
   {{ end }}
  {{ end}}
 {{ end}}
-{{- end -}}
 {{- end -}}
 
 {{/*
