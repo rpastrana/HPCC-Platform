@@ -148,12 +148,84 @@ jobs:
 
           chart_name() { awk 'tolower($1)=="name:" {print $2; exit}' "$1" 2>/dev/null || true; }
 
+          #Check for dependencies in all possible files
+          check_for_dependencies()
+          {
+            local chart="$1"
+            local dependency_files=("${chart}/Chart.yaml" "${chart}/Chart.lock" "${chart}/requirements.yaml" "${chart}/requirements.lock")
+
+            # Add values files that might contain repository references
+            dependency_files+=("${chart}/values.yaml")
+            # Check for environment-specific values files
+            shopt -s nullglob
+            dependency_files+=("${chart}/values-"*.yaml)
+            dependency_files+=("${chart}/values/"*.yaml)
+            dependency_files+=("${chart}/repositories.yaml")
+            shopt -u nullglob
+
+            # Check charts/ subdirectory for vendored dependencies
+            local charts_dir="${chart}/charts"
+            if [[ -d "$charts_dir" ]]; then
+              shopt -s nullglob
+              dependency_files+=("${charts_dir}"/*/Chart.yaml)
+              # Check for .tgz files (packaged charts indicate dependencies)
+              if ls "${charts_dir}"/*.tgz >/dev/null 2>&1; then
+                return 0  # Packaged dependencies present
+              fi
+              shopt -u nullglob
+            fi
+
+            for file in "${dependency_files[@]}"; do
+              [[ -f "$file" ]] || continue
+              # Enhanced regex for multiple URL schemes and contexts
+              if grep -Eqi '(repository|url):[[:space:]]*["\047]?(https?://|oci://|git(\+https?|\+ssh)?://|file://)[^[:space:]"\047]+["\047]?' "$file"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          # Extract all repository URLs from dependency files
+          extract_all_repos()
+          {
+            local chart="$1"
+            local dependency_files=("${chart}/Chart.yaml" "${chart}/Chart.lock" "${chart}/requirements.yaml" "${chart}/requirements.lock")
+
+            # Add values files and other potential sources
+            dependency_files+=("${chart}/values.yaml")
+            shopt -s nullglob
+            dependency_files+=("${chart}/values-"*.yaml)
+            dependency_files+=("${chart}/values/"*.yaml)
+            dependency_files+=("${chart}/repositories.yaml")
+
+            # Include vendored chart dependencies
+            local charts_dir="${chart}/charts"
+            if [[ -d "$charts_dir" ]]; then
+              dependency_files+=("${charts_dir}"/*/Chart.yaml)
+            fi
+            shopt -u nullglob
+
+            local temp_repos="$(mktemp)"
+
+            for file in "${dependency_files[@]}"; do
+              [[ -f "$file" ]] || continue
+              # Extract URLs for multiple schemes, handling both quoted and unquoted formats
+              grep -Ehio '(repository|url):[[:space:]]*["\047]?(https?://|oci://|git(\+https?|\+ssh)?://|file://)[^[:space:]"\047]+["\047]?' "$file" 2>/dev/null | \
+                sed -E 's/^(repository|url):[[:space:]]*["\047]?//; s/["\047]?$//' >> "$temp_repos" || true
+            done
+
+            if [[ -s "$temp_repos" ]]; then
+              sort -u "$temp_repos"
+            fi
+            rm -f "$temp_repos"
+          }
+
           for chart in ${CHARTS}; do
             echo "::group::Template chart: ${chart}"
 
             # Build dependencies if the chart has them and all repos are allowlisted
-            if grep -Eqi '(^|\s)repository:\s*https?://[^ ]+' "${chart}/Chart.yaml" "${chart}/Chart.lock" 2>/dev/null; then
-              ALL_REPOS=$(grep -Ehio 'https?://[^ ]+' "${chart}/Chart.yaml" "${chart}/Chart.lock" 2>/dev/null | sort -u || true)
+            if check_for_dependencies "${chart}"; then
+              ALL_REPOS=$(extract_all_repos "${chart}")
               NON_ALLOWLISTED=$(printf "%s\n" "${ALL_REPOS}" | grep -Eiv "${ALLOWLIST_DOMAINS_REGEX}" || true)
 
               if [[ -n "${NON_ALLOWLISTED}" ]]; then
@@ -183,16 +255,36 @@ jobs:
               rel_name="eck-apm"
             fi
 
-            # Render manifest and extract image references
-            while IFS= read -r img; do
-              # normalize quotes occasionally introduced by templating
-              img="${img%\"}"; img="${img#\"}"; img="${img%\'}"; img="${img#\'}"
-              [[ -z "$img" ]] && continue
-              echo "$img" >> "${TMP_IMAGES}"
-              printf "%s,%s\n" "$img" "$chart" >> "${MAP_FILE}"
-            done < <(
-              ( helm template "${rel_name}" "${chart}" | grep -hoE 'image:\s*[^[:space:]]+' || true ) | awk '{print $2}'
-            )
+            # Render manifest and extract image references with proper error handling
+            echo "Rendering chart ${chart} with release name: ${rel_name}"
+
+            # Capture helm template output and exit code separately
+            helm_output_file="$(mktemp)"
+            if helm template "${rel_name}" "${chart}" > "${helm_output_file}" 2>&1; then
+              echo "Successfully rendered chart ${chart}"
+
+              # Extract image references from successful template output
+              image_count=0
+              while IFS= read -r img; do
+                # normalize quotes occasionally introduced by templating
+                img="${img%\"}"; img="${img#\"}"; img="${img%\'}"; img="${img#\'}"
+                [[ -z "$img" ]] && continue
+                echo "$img" >> "${TMP_IMAGES}"
+                printf "%s,%s\n" "$img" "$chart" >> "${MAP_FILE}"
+                ((image_count++))
+              done < <(grep -hoE 'image:\s*[^[:space:]]+' "${helm_output_file}" 2>/dev/null | awk '{print $2}' || true)
+
+              if [[ ${image_count} -eq 0 ]]; then
+                echo "::notice file=${chart}/Chart.yaml::Chart ${chart} rendered successfully but contains no container images to scan"
+              else
+                echo "Found ${image_count} image(s) in chart ${chart}"
+              fi
+            else
+              echo "::warning file=${chart}/Chart.yaml::Failed to render chart ${chart}. Template output: $(head -n 5 "${helm_output_file}" | tr '\n' ' ; ')..."
+              echo "Chart ${chart} will be skipped from vulnerability scanning due to template failure"
+            fi
+
+            rm -f "${helm_output_file}"
             echo "::endgroup::"
           done
 
