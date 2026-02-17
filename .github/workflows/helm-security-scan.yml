@@ -1,0 +1,245 @@
+name: Helm Security Scan (CVEs only)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-security-scan.yml'
+
+permissions:
+  contents: read
+  security-events: write   # required for upload-sarif
+
+jobs:
+  trivy-helm-cves:
+    name: Per-chart CVE scan of images (with dependency visibility) → single-run SARIF
+    runs-on: ubuntu-latest
+
+    env:
+      TRIVY_VERSION: v0.51.2
+      HELM_VERSION: v3.14.4
+
+      # Root that contains one or more charts in subfolders
+      HELM_ROOT: helm
+
+      # Directory that contains the ECK observability chart's Chart.yaml (requires release name 'eck-apm')
+      ECK_OBS_DIR: helm/managed/observability/eck
+
+      # Directories to skip during discovery (regex OR)
+      SKIP_DIR_REGEX: '(^|/)examples/efs(/|$)|(^|/)examples/filestore(/|$)'
+
+      # CVE scan behavior
+      SARIF_EXIT_CODE: "0"        # keep 0 so job always uploads SARIF; gate elsewhere if desired
+      SEVERITY: HIGH,CRITICAL
+      TIMEOUT: 5m
+
+      # Outputs
+      RENDER_ROOT: /tmp/rendered
+      SARIF_DIR: /tmp/sarif
+      SARIF_FILE: trivy-helm-results.sarif
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install Trivy (pinned)
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin ${TRIVY_VERSION}
+          trivy --version
+
+      - name: Install docker CLI tools (manifest inspect) and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq   # docker CLI is preinstalled on ubuntu-latest
+
+      # ---------- (Optional) Authenticate to a private registry ----------
+      # - name: Trivy registry login (optional)
+      #   run: |
+      #     echo "${{ secrets.TRIVY_REGISTRY_PASSWORD }}" | \
+      #       trivy registry login --username "${{ secrets.TRIVY_REGISTRY_USERNAME }}" --password-stdin ghcr.io
+
+      # ---------- Iterate charts; print deps; render; extract images; scan ----------
+      - name: Scan charts (per-chart rendering and CVEs-only image scans)
+        shell: bash
+        run: |
+          set -u
+
+          mkdir -p "$RENDER_ROOT" "$SARIF_DIR"
+
+          # Find all chart directories under HELM_ROOT that contain Chart.yaml (filter out skipped dirs)
+          mapfile -t CHART_DIRS < <(find "${HELM_ROOT}" -type f -name Chart.yaml -print \
+                                    | grep -Ev "${SKIP_DIR_REGEX}" || true)
+
+          if [[ ${#CHART_DIRS[@]} -eq 0 ]]; then
+            echo "::warning ::No Chart.yaml files found under ${HELM_ROOT} (after skip filters)."
+          fi
+
+          total_images_scanned=0
+          total_images_skipped=0
+          total_charts=0
+          failed_renders=0
+
+          for chart_yaml in "${CHART_DIRS[@]:-}"; do
+            chart_dir="$(dirname "$chart_yaml")"
+            chart_name="$(basename "$chart_dir")"
+            total_charts=$((total_charts+1))
+
+            echo ""
+            echo "============================================================"
+            echo "CHART: $chart_name"
+            echo "PATH : $chart_dir"
+
+            echo "::group::Dependencies ($chart_name)"
+            # Print dependencies for visibility (without failing the job if not resolvable)
+            # helm dependency build may populate charts/; we do a list to show what's declared/locked
+            helm dependency list "$chart_dir" || echo "(dependency list unavailable)"
+            echo "::endgroup::"
+
+            # Render this chart alone (subcharts are included by Helm)
+            out_file="$RENDER_ROOT/$(echo "$chart_dir" | sed 's|/|__|g').yaml"
+
+            echo "::group::Render ($chart_name)"
+            if [[ "$chart_dir" == "${ECK_OBS_DIR}" ]]; then
+              if ! helm template eck-apm "$chart_dir" --dependency-update > "$out_file"; then
+                echo "::warning ::Render failed (ECK chart). Consider checking required values/path: ${chart_dir}"
+                failed_renders=$((failed_renders+1))
+                echo "::endgroup::"
+                continue
+              fi
+            else
+              if ! helm template "$chart_name" "$chart_dir" --dependency-update > "$out_file"; then
+                echo "::warning ::Render failed (values likely required): ${chart_dir}"
+                failed_renders=$((failed_renders+1))
+                echo "::endgroup::"
+                continue
+              fi
+            fi
+            echo "Rendered manifest: $out_file"
+            echo "::endgroup::"
+
+            # Extract images for THIS chart and dedupe within the chart
+            : > "$out_file.images"
+            if [[ -s "$out_file" ]]; then
+              grep -hoE 'image:\s*["'\''"]?[^"'\''\s]+' "$out_file" \
+                | sed -E 's/image:\s*["'\''"]?//' \
+                | sed -E 's/["'\''"]$//' \
+                | sort -u > "$out_file.images" || true
+            fi
+
+            if [[ ! -s "$out_file.images" ]]; then
+              echo "::notice ::No images discovered for chart: $chart_dir"
+              continue
+            fi
+
+            echo "::group::Images discovered in $chart_name"
+            cat "$out_file.images"
+            echo "::endgroup::"
+
+            # Scan images (CVEs only) with preflight checks, printing source and skip reasons
+            while IFS= read -r IMG; do
+              [[ -z "$IMG" ]] && continue
+              echo ""
+              echo "------------------------------------------------------------"
+              echo "IMAGE (from chart): $IMG"
+              echo "  Source chart: $chart_dir"
+
+              # Skip: bare hostname (contains dot but no slash -> not a pullable image)
+              if [[ "$IMG" == *.* && "$IMG" != */* ]]; then
+                echo "::warning ::Skipping (invalid image reference: bare hostname with no repository path)"
+                total_images_skipped=$((total_images_skipped+1))
+                continue
+              fi
+
+              # Preflight registry metadata check (do not pull)
+              if ! docker manifest inspect "$IMG" >/dev/null 2>&1; then
+                echo "::warning ::Skipping (non-pullable image; registry metadata not found or auth required)"
+                total_images_skipped=$((total_images_skipped+1))
+                continue
+              fi
+
+              # Scan ONE image per invocation (trivy image requires a single target)
+              OUT="$SARIF_DIR/$(printf '%s' "$chart_name" | sed 's|[^A-Za-z0-9._-]|_|g')_${total_images_scanned}.sarif"
+              echo "::group::Trivy scan (CVEs only): $IMG"
+              trivy image "$IMG" \
+                --timeout "${TIMEOUT}" \
+                --severity "${SEVERITY}" \
+                --ignore-unfixed \
+                --scanners vuln \
+                --format sarif \
+                --output "$OUT" \
+                --exit-code 0 || true
+              echo "::endgroup::"
+              total_images_scanned=$((total_images_scanned+1))
+            done < "$out_file.images"
+
+          done
+
+          echo ""
+          echo "========================= SUMMARY =========================="
+          echo "Charts processed      : $total_charts"
+          echo "Charts failed to render: $failed_renders"
+          echo "Images scanned        : $total_images_scanned"
+          echo "Images skipped        : $total_images_skipped"
+          echo "SARIF fragments       : $(ls -1 "$SARIF_DIR"/*.sarif 2>/dev/null | wc -l || true)"
+
+      # ---------- Merge per-image SARIFs into a SINGLE SARIF RUN ----------
+      - name: Merge SARIF into a single run
+        shell: bash
+        run: |
+          set -u
+          # If no per-image SARIFs exist, write a minimal SARIF and finish.
+          if ! ls "${SARIF_DIR}"/*.sarif >/dev/null 2>&1; then
+            printf '%s\n' \
+              '{' \
+              '  "$schema": "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json",' \
+              '  "version": "2.1.0",' \
+              '  "runs": []' \
+              '}' > "${SARIF_FILE}"
+            echo "::notice ::No per-image SARIFs were produced; created a minimal SARIF."
+            exit 0
+          fi
+
+          mapfile -t FILES < <(ls -1 "${SARIF_DIR}"/*.sarif)
+          jq -s '
+            def as_array(x): (x // []) | (if type=="array" then . else [.] end);
+            def rules_of(r): as_array(r.tool.driver.rules);
+            def results_of(r): as_array(r.results);
+
+            . as $docs
+            | $docs[0] as $base
+            | ($docs | map(.runs[0])) as $runs
+            | {
+                "$schema": $base["$schema"],
+                "version": $base["version"],
+                "runs": [
+                  {
+                    "tool": {
+                      "driver": {
+                        "name": ($runs[0].tool.driver.name // "trivy"),
+                        "version": ($runs[0].tool.driver.version // null),
+                        "rules": ($runs | map(rules_of(.)) | add | unique_by(.id))
+                      }
+                    },
+                    "results": ($runs | map(results_of(.)) | add)
+                  }
+                ]
+              }
+          ' "${FILES[@]}" > "${SARIF_FILE}"
+
+          echo "Merged single-run SARIF written to ${SARIF_FILE}"
+
+      # ---------- Upload SARIF to GitHub code scanning (CodeQL Action v4) ----------
+      - name: Upload Trivy SARIF to code scanning
+        if: hashFiles(env.SARIF_FILE) != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ env.SARIF_FILE }}
