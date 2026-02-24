@@ -29,37 +29,32 @@ jobs:
     # Default is "false" which will surface a WARNING instead (visible in the run log/annotations).
     env:
       FAIL_ON_FORK_SKIP: "false"
+      # Allowlist: approve only these Helm repo hostnames (tighten per org policy as needed)
+      ALLOWLIST_DOMAINS_REGEX: '(hpcc-systems\.github\.io|helm\.elastic\.co|open-telemetry\.github\.io|grafana\.github\.io|prometheus-community\.github\.io|kubernetes\.github\.io)'
 
     steps:
       # -----------------------------------------------------------------------
-      # CHECKOUT — pin to full SHA (immutable)
-      # Rationale: Tags can be retargeted; pinning mitigates supply-chain risk.  (See notes)
-      # actions/checkout@v6.0.2 → de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      # CHECKOUT — using stable semantic version for maintainability
       # -----------------------------------------------------------------------
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@v4
         with:
           # fetch-depth 0 enables diffing and commit lookups across PR base/head
           fetch-depth: 0
 
       # -----------------------------------------------------------------------
-      # HELM — pin the action. NOTE: release page lists short SHA `1a275c3` for v4.3.1.
-      # If your org enforces 40-char SHAs, resolve it once via:
-      # gh api repos/Azure/setup-helm/git/refs/tags/v4.3.1 --jq '.object.sha'
-      # and paste the returned full SHA in place of `1a275c3`.
+      # HELM — using stable semantic version for maintainability
       # -----------------------------------------------------------------------
       - name: Set up Helm
-        uses: Azure/setup-helm@1a275c3
+        uses: Azure/setup-helm@v4
 
       # -----------------------------------------------------------------------
-      # TRIVY — explicit commit SHA recommended in the action’s own README (immutable)
+      # TRIVY — using stable semantic version for maintainability
       # -----------------------------------------------------------------------
       - name: Set up Trivy (CLI)
-        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        uses: aquasecurity/setup-trivy@v0.2.5
         with:
           cache: true
-          # Optionally pin the Trivy CLI itself for strict reproducibility, e.g.:
-          # version: v0.69.1
 
       # Utility: jq for JSON summarization
       - name: Ensure jq is available
@@ -138,8 +133,7 @@ jobs:
       # -----------------------------------------------------------------------
       # RENDER & COLLECT IMAGES, WITH HELM REPO ALLOWLIST
       # - We avoid untrusted egress in forked PRs: skip `helm dependency build`.
-      # - **New behavior**: skipping on forks emits a WARNING by default, or FAILS
-      #   the job if FAIL_ON_FORK_SKIP=true (policy toggle above).
+      # - Skipping on forks emits a WARNING by default, or FAILS if FAIL_ON_FORK_SKIP=true.
       # -----------------------------------------------------------------------
       - name: Render charts and collect images + mapping (with repo allowlist)
         id: collect
@@ -154,10 +148,6 @@ jobs:
           TMP_IMAGES="$(mktemp)"
           MAP_FILE="image_chart_map.csv"
           : > "${MAP_FILE}"
-
-          # ---- Allowlist: approve only these Helm repo hostnames ----
-          # Tighten per org policy as needed.
-          ALLOWLIST_DOMAINS_REGEX='(hpcc-systems\.github\.io|helm\.elastic\.co|open-telemetry\.github\.io|grafana\.github\.io|prometheus-community\.github\.io|kubernetes\.github\.io)'
 
           chart_name() { awk 'tolower($1)=="name:" {print $2; exit}' "$1" 2>/dev/null || true; }
 
@@ -223,6 +213,7 @@ jobs:
 
       # -----------------------------------------------------------------------
       # TRIVY SCAN — Gate on CRITICAL; report HIGH as informational
+      # - Annotations show CRIT count and Top-3 IDs (full details in Step Summary)
       # -----------------------------------------------------------------------
       - name: Scan images for CVEs (CRITICAL-gated; HIGH informational)
         if: steps.collect.outputs.images != ''
@@ -265,9 +256,12 @@ jobs:
             PRIMARY_CHART=$(awk -F',' -v img="$image" '$1==img {print $2}' "${MAP_FILE}" | sort -u | head -n 1)
             ANN_FILE="${PRIMARY_CHART}/Chart.yaml"; [[ -f "${ANN_FILE}" ]] || ANN_FILE="${PRIMARY_CHART}"
 
+            # ---- CRITICAL handling: fail + annotate with count and Top-3 IDs ----
             CRIT_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "${REPORT}" 2>/dev/null || echo "0")
             if [[ "${CRIT_COUNT}" -gt 0 ]]; then
               EXIT=1
+
+              # Step Summary (full details)
               {
                 echo "### Image: \`${image}\`"
                 echo "- **Source chart(s):** ${CHARTS}"
@@ -282,10 +276,23 @@ jobs:
                 echo ""
               } >> "${CRIT_TMP}"
 
-              TOP_CVE=$(jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL") | .VulnerabilityID' "${REPORT}" 2>/dev/null | head -n 1 || echo "UNKNOWN")
-              echo "::error file=${ANN_FILE}::CRITICAL CVEs (${CRIT_COUNT}) in ${image} from chart(s): ${CHARTS}. Example: ${TOP_CVE}. Details: ${RUN_URL}"
+              # Short Top-3 for the annotation
+              TOP3_CVES=$(
+                jq -r '
+                  .Results[]?.Vulnerabilities[]?
+                  | select(.Severity=="CRITICAL")
+                  | .VulnerabilityID
+                ' "${REPORT}" 2>/dev/null | head -n 3 | paste -sd',' -
+              )
+
+              if [[ -n "${TOP3_CVES}" ]]; then
+                echo "::error file=${ANN_FILE}::CRITICAL CVEs (${CRIT_COUNT}) found in ${image} from chart(s): ${CHARTS}. Top IDs: ${TOP3_CVES}. See run summary: ${RUN_URL}"
+              else
+                echo "::error file=${ANN_FILE}::CRITICAL CVEs (${CRIT_COUNT}) found in ${image} from chart(s): ${CHARTS}. See run summary: ${RUN_URL}"
+              fi
             fi
 
+            # ---- HIGH handling: informational only; capture in summary ----
             HIGH_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "${REPORT}" 2>/dev/null || echo "0")
             if [[ "${HIGH_COUNT}" -gt 0 ]]; then
               {
@@ -327,12 +334,12 @@ jobs:
           fi
 
       # -----------------------------------------------------------------------
-      # ARTIFACTS — Upload summary (GH dotcom v4 is fine; GHES requires v3)
-      # If you run GHES, swap to actions/upload-artifact@v3.* (v4 isn’t supported on GHES).
+      # ARTIFACTS — Upload summary using stable semantic version
+      # If you run GHES, swap to actions/upload-artifact@v3.* (v4 isn't supported on GHES).
       # -----------------------------------------------------------------------
       - name: Upload Trivy summary (artifact)
         if: always()
-        uses: actions/upload-artifact@v4.3.3
+        uses: actions/upload-artifact@v4
         with:
           name: trivy-summary
           path: trivy-summary.md
