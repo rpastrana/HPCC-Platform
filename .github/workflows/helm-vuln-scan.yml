@@ -81,46 +81,42 @@ jobs:
           declare -a CHART_DIRS=()
 
           if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            # Scan all charts for workflow_dispatch
             while IFS= read -r -d '' d; do
               CHART_DIRS+=("$d")
             done < <(find helm -type f -name Chart.yaml -printf '%h\0' | sort -zu)
           else
+            # For PRs, find charts containing any changed files
+            # Since workflow only triggers on helm/** changes, we know files changed
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            BASE_REF="${{ github.base_ref }}"
-
-            # Ensure the base ref/SHA are available for diff operations
-            git fetch --no-tags --prune --depth=2 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
-            git fetch --no-tags --prune --depth=1 origin "${BASE_SHA}:${BASE_SHA}" || true
-
-            declare -a CHANGED=()
-            while IFS= read -r -d '' f; do
-              CHANGED+=("$f")
-            done < <(git diff -z --diff-filter=AM --name-only "${BASE_SHA}...HEAD" -- 'helm/**' || true)
-
-            if [[ ${#CHANGED[@]} -eq 0 ]]; then
-              echo "charts=" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            # Walk each changed path upward until we find a Chart.yaml boundary
-            declare -A CHART_SET=()
-            for f in "${CHANGED[@]}"; do
-              dir="$(dirname "$f")"
+            
+            echo "Checking for changed files since ${BASE_SHA}..."
+            
+            # Simple approach: get chart dirs for all changed helm files
+            while IFS= read -r file; do
+              [[ -n "$file" ]] || continue
+              echo "Processing changed file: $file"
+              dir="$(dirname "$file")"
               while [[ "$dir" != "." && "$dir" != "/" ]]; do
                 if [[ -f "$dir/Chart.yaml" ]]; then
-                  CHART_SET["$dir"]=1
+                  echo "Found chart directory: $dir"
+                  CHART_DIRS+=("$dir")
                   break
                 fi
                 dir="$(dirname "$dir")"
               done
-            done
-
-            if [[ ${#CHART_SET[@]} -eq 0 ]]; then
-              echo "charts=" >> "$GITHUB_OUTPUT"
-              exit 0
+            done < <(git diff --name-only "${BASE_SHA}...HEAD" -- 'helm/**' 2>/dev/null || true)
+            
+            # Remove duplicates safely
+            if [[ ${#CHART_DIRS[@]} -gt 0 ]]; then
+              readarray -t CHART_DIRS < <(printf '%s\n' "${CHART_DIRS[@]}" | sort -u)
             fi
+          fi
 
-            while IFS= read -r d; do CHART_DIRS+=("$d"); done < <(printf "%s\n" "${!CHART_SET[@]}" | sort -u)
+          if [[ ${#CHART_DIRS[@]} -eq 0 ]]; then
+            echo "No charts found to scan."
+            echo "charts=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           printf "Changed/added charts to scan:\n"
@@ -158,6 +154,8 @@ jobs:
           for chart in ${CHARTS}; do
             echo "::group::Template chart: ${chart}"
 
+            SKIP_CHART=false
+
             if [[ "${IS_FORK}" != "true" ]]; then
               # FIRST-PARTY PRs:
               # Only fetch deps if all repos in Chart.yaml/Chart.lock are allowlisted
@@ -171,6 +169,7 @@ jobs:
                     exit 1
                   else
                     echo "Skipping 'helm dependency build' due to non-allowlisted repo in ${chart}: ${NON_ALLOWLISTED//$'\n'/, }"
+                    SKIP_CHART=true
                   fi
                 else
                   helm dependency build "${chart}" || true
@@ -179,13 +178,26 @@ jobs:
             else
               # FORKED PRs (untrusted):
               # We deliberately avoid network fetches from contributor-supplied content.
-              # Report this explicitly: default WARNING; optional FAIL on policy toggle.
-              if [[ "${FAIL_ON_FORK_SKIP}" == "true" ]]; then
-                echo "::error file=${chart}/Chart.yaml::Forked PR: skipping 'helm dependency build' for ${chart} (policy set to fail)"
-                exit 1
-              else
-                echo "::warning file=${chart}/Chart.yaml::Forked PR: skipping 'helm dependency build' for ${chart}"
+              # Check if chart has dependencies that would prevent templating
+              if [[ -f "${chart}/Chart.yaml" ]]; then
+                DEPS=$(grep -E '^\s*dependencies:' "${chart}/Chart.yaml" || true)
+                if [[ -n "${DEPS}" ]] && [[ ! -d "${chart}/charts" || -z "$(find "${chart}/charts" -name "*.tgz" -o -name "Chart.yaml" 2>/dev/null)" ]]; then
+                  if [[ "${FAIL_ON_FORK_SKIP}" == "true" ]]; then
+                    echo "::error file=${chart}/Chart.yaml::Forked PR: chart ${chart} has dependencies but 'helm dependency build' was skipped (policy set to fail)"
+                    exit 1
+                  else
+                    echo "::warning file=${chart}/Chart.yaml::Forked PR: skipping chart ${chart} due to missing dependencies (cannot template safely)"
+                    SKIP_CHART=true
+                  fi
+                else
+                  echo "::warning file=${chart}/Chart.yaml::Forked PR: scanning chart ${chart} (no external dependencies detected)"
+                fi
               fi
+            fi
+
+            if [[ "${SKIP_CHART}" == "true" ]]; then
+              echo "::endgroup::"
+              continue
             fi
 
             # Some charts require a deterministic .Release.Name during template
