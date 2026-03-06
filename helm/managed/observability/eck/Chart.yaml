@@ -19,5 +19,5 @@ dependencies:
   version: 0.122.5
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
 - name: eck-stack 
-  version: 0.15.0
+  version: 0.16.0
   repository: https://helm.elastic.co
