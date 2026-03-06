@@ -52,7 +52,7 @@ jobs:
       # TRIVY — using stable semantic version for maintainability
       # -----------------------------------------------------------------------
       - name: Set up Trivy (CLI)
-        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        uses: aquasecurity/setup-trivy@6e04e9767b17bc12ade3e0dcef5b424533b0e4c8
         with:
           cache: true
           version: 'v0.69.2'
