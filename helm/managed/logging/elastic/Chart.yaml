@@ -16,7 +16,7 @@ appVersion: 7.17.1
 # > helm install myelastic ./ —-dependency-update
 dependencies:
 - name: filebeat
-  version: 7.17.1
+  version: 7.17.2
   repository: https://helm.elastic.co
 - name: elasticsearch
   version: 7.17.1
