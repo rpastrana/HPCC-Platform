@@ -19,6 +19,13 @@ limitations under the License.
 #include "exception_util.hpp"
 #include "jconfig.hpp"
 
+// Forward declarations for lexer functions 
+typedef void* yyscan_t;
+extern int hpccsqllex_init(yyscan_t* scanner);
+extern int hpccsqllex_destroy(yyscan_t scanner);
+extern void hpccsql_scan_string(const char* str, yyscan_t scanner);
+extern int hpccsqlparse(yyscan_t scanner, HPCCSQLTreeWalker* context);
+
 void CwssqlEx::init(IPropertyTree *_cfg, const char *_process, const char *_service)
 {
     cfg = _cfg;
@@ -595,58 +602,51 @@ void myDisplayRecognitionError (pANTLR3_BASE_RECOGNIZER recognizer,pANTLR3_UINT8
 
 HPCCSQLTreeWalker * CwssqlEx::parseSQL(IEspContext &context, StringBuffer & sqltext, bool attemptParameterization)
 {
-    int limit = -1;
-    pHPCCSQLLexer hpccSqlLexer = NULL;
-    pANTLR3_COMMON_TOKEN_STREAM sqlTokens = NULL;
-    pHPCCSQLParser hpccSqlParser = NULL;
-    pANTLR3_BASE_TREE sqlAST  = NULL;
-    pANTLR3_INPUT_STREAM sqlInputStream = NULL;
     Owned<HPCCSQLTreeWalker> hpccSqlTreeWalker;
+    yyscan_t scanner;
+    ASTNode* sqlAST = NULL;
 
     try
     {
         if (sqltext.length() <= 0)
             throw MakeStringException(-1, "Empty SQL String detected.");
 
-        pANTLR3_UINT8 input_string = (pANTLR3_UINT8)sqltext.str();
-        pANTLR3_INPUT_STREAM sqlinputstream = antlr3StringStreamNew(input_string,
-                                                                ANTLR3_ENC_8BIT,
-                                                                sqltext.length(),
-                                                                (pANTLR3_UINT8)"SQL INPUT");
+        // Initialize lexer
+        if (hpccsqllex_init(&scanner))
+            throw MakeStringException(-1, "Failed to initialize SQL lexer.");
 
-        pHPCCSQLLexer hpccsqllexer = HPCCSQLLexerNew(sqlinputstream);
-        //hpccSqlLexer->pLexer->rec->displayRecognitionError = myDisplayRecognitionError;
+        // Set input string for lexer
+        hpccsql_scan_string(sqltext.str(), scanner);
 
-        //ANTLR3_UINT32  lexerrors = hpccsqllexer->pLexer->rec->getNumberOfSyntaxErrors(hpccsqllexer->pLexer->rec);
-        //if (lexerrors > 0)
-        //     throw MakeStringException(-1, "HPCCSQL Lexer reported %d error(s), request aborted.", lexerrors);
+        // Create TreeWalker context
+        hpccSqlTreeWalker.setown(new HPCCSQLTreeWalker(context, attemptParameterization));
 
-        pANTLR3_COMMON_TOKEN_STREAM sqltokens = antlr3CommonTokenStreamSourceNew(ANTLR3_SIZE_HINT, TOKENSOURCE(hpccsqllexer));
-        if (sqltokens == NULL)
+        // Parse the SQL
+        int parseResult = hpccsqlparse(scanner, hpccSqlTreeWalker.get());
+        
+        if (parseResult != 0)
+            throw MakeStringException(-1, "HPCCSQL Parser reported errors, request aborted.");
+
+        // The AST will have been set in the TreeWalker via setAST() during parsing
+        // Now process it by calling the tree walker on the stored AST
+        if (hpccSqlTreeWalker->rootAST)
         {
-            throw MakeStringException(-1, "Out of memory trying to allocate ANTLR HPCCSQLParser token stream.");
+            hpccSqlTreeWalker->sqlTreeWalker(hpccSqlTreeWalker->rootAST);
+            
+            if (hpccSqlTreeWalker->getSqlType() == SQLTypeSelect)
+            {
+                hpccSqlTreeWalker->assignParameterIndexes();
+                hpccSqlTreeWalker->expandWildCardColumn();
+                hpccSqlTreeWalker->verifyColAndDisambiguateName();
+            }
+            else if (hpccSqlTreeWalker->getSqlType() == SQLTypeCall)
+            {
+                hpccSqlTreeWalker->assignParameterIndexes();
+            }
         }
 
-        pHPCCSQLParser hpccsqlparser = HPCCSQLParserNew(sqltokens);
-//#if not defined(_DEBUG)
-        hpccsqlparser->pParser->rec->displayRecognitionError = myDisplayRecognitionError;
-//#endif
-        pANTLR3_BASE_TREE sqlAST  = (hpccsqlparser->root_statement(hpccsqlparser)).tree;
-
-        ANTLR3_UINT32 parserrors = hpccsqlparser->pParser->rec->getNumberOfSyntaxErrors(hpccsqlparser->pParser->rec);
-        if (parserrors > 0)
-            throw MakeStringException(-1, "HPCCSQL Parser reported %d error(s), request aborted.", parserrors);
-
-#if defined(_DEBUG)
-printTree(sqlAST, 0);
-#endif
-
-        hpccSqlTreeWalker.setown(new HPCCSQLTreeWalker(sqlAST, context, attemptParameterization));
-
-        hpccsqlparser->free(hpccsqlparser);
-        sqltokens->free(sqltokens);
-        hpccsqllexer->free(hpccsqllexer);
-        sqlinputstream->free(sqlinputstream);
+        // Clean up lexer
+        hpccsqllex_destroy(scanner);
     }
     catch(IException* e)
     {

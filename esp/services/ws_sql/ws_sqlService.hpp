@@ -33,7 +33,6 @@ limitations under the License.
 #include "ECLEngine.hpp"
 #include "SQLTable.hpp"
 
-#include "HPCCSQLLexer.h"
 #include "HPCCSQLParser.h"
 
 #include "HPCCSQLTreeWalker.hpp"

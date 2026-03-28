@@ -23,18 +23,29 @@
 project(ws_sql)
 
 if(WSSQL_SERVICE)
-    find_package(Java REQUIRED)
-    find_package(ANTLR REQUIRED)
+    find_package(BISON REQUIRED)
+    find_package(FLEX REQUIRED)
 
     include(${HPCC_SOURCE_DIR}/esp/scm/additional.cmake)
     include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
     include(${HPCC_SOURCE_DIR}/esp/scm/espscm.cmake)
 
-    antlr_target(sql2ecl
-        GRAMMAR_PREFIX HPCCSQL
-        DESTINATION "${CMAKE_CURRENT_BINARY_DIR}"
-        GRAMMAR_FILES "${CMAKE_CURRENT_SOURCE_DIR}/SQL2ECL/ANTLR3c/HPCCSQL.g"
+    # Generate Bison parser
+    bison_target(HPCCSQLParser
+        ${CMAKE_CURRENT_SOURCE_DIR}/SQL2ECL/BisonFlex/hpccsqlgram.y
+        ${CMAKE_CURRENT_BINARY_DIR}/hpccsqlgram.cpp
+        DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/hpccsqlgram.h
     )
+
+    # Generate Flex lexer
+    flex_target(HPCCSQLLexer
+        ${CMAKE_CURRENT_SOURCE_DIR}/SQL2ECL/BisonFlex/hpccsqllex.l
+        ${CMAKE_CURRENT_BINARY_DIR}/hpccsqllex.cpp
+        DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/hpccsqllex.h
+    )
+
+    # Make parser depend on lexer
+    add_flex_bison_dependency(HPCCSQLLexer HPCCSQLParser)
 
     set(SRCS
         ${CMAKE_CURRENT_SOURCE_DIR}/ws_sqlPlugin.cpp
@@ -56,7 +67,8 @@ if(WSSQL_SERVICE)
         SQL2ECL/SQLExpression.cpp
         SQL2ECL/SQLJoin.cpp
         SQL2ECL/HPCCSQLTreeWalker.cpp
-        ${ANTLR_sql2ecl_SOURCES}
+        ${BISON_HPCCSQLParser_OUTPUTS}
+        ${FLEX_HPCCSQLLexer_OUTPUTS}
         )
 
     include_directories(
@@ -64,6 +76,7 @@ if(WSSQL_SERVICE)
         ${CMAKE_BINARY_DIR}
         ##added for build-config.h
         ${CMAKE_BINARY_DIR}/oss
+        ${CMAKE_CURRENT_BINARY_DIR}  # for generated parser files
         ${HPCC_WSSQL_SOURCE_DIR}/esp/services/ws_sql/SQL2ECL
         ${HPCC_SOURCE_DIR}/esp/bindings
         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
@@ -103,12 +116,13 @@ if(WSSQL_SERVICE)
         )
 
     if (CMAKE_COMPILER_IS_CLANG)
-      set_source_files_properties(${ANTLR_sql2ecl_SOURCES} PROPERTIES COMPILE_FLAGS -Wno-parentheses-equality)
+      set_source_files_properties(${BISON_HPCCSQLParser_OUTPUTS} PROPERTIES COMPILE_FLAGS -Wno-parentheses-equality)
+      set_source_files_properties(${FLEX_HPCCSQLLexer_OUTPUTS} PROPERTIES COMPILE_FLAGS "-Wno-unused-function -Wno-sign-compare")
     endif()
 
     add_definitions(-D_USRDLL -Dwssql_API_LOCAL -DESP_SERVICE_wssql)
     HPCC_ADD_LIBRARY(ws_sql SHARED ${SRCS})
-    add_dependencies(ws_sql espscm sql2ecl)
+    add_dependencies(ws_sql espscm)
     target_link_libraries(
         ws_sql
         ws_workunits
@@ -117,12 +131,11 @@ if(WSSQL_SERVICE)
         xmllib
         esphttp
         dalibase
-        ${ANTLR_LIB}
         wuwebview
         ${COMMON_ESP_SERVICE_LIBS}
         )
 
-    SET_DIRECTORY_PROPERTIES(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES "antlr3c")
+    SET_DIRECTORY_PROPERTIES(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES "bisonflex")
 
 IF (USE_OPENSSL)
     target_link_libraries ( ws_sql

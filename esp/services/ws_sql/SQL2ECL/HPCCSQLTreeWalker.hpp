@@ -20,18 +20,6 @@ limitations under the License.
 #include <stdlib.h>
 #include "ws_sql.hpp"
 
-/* undef SOCKET definitions to avoid collision in Antlrdefs.h*/
-#ifdef INVALID_SOCKET
-    //#pragma message("UNDEFINING INVALID_SOCKET - Will be redefined by ANTLRDEFS.h" )
-    #undef INVALID_SOCKET
-#endif
-#ifdef SOCKET
-    //#pragma message( "UNDEFINING SOCKET - Will be redefined by ANTLRDEFS.h" )
-    #undef SOCKET
-#endif
-/* undef SOCKET definitions to avoid collision in Antlrdefs.h*/
-
-#include "HPCCSQLLexer.h"
 #include "HPCCSQLParser.h"
 
 
@@ -85,14 +73,14 @@ private:
     StringBuffer landingZonePath;
     StringBuffer recordDefinition;
 
-    void sqlTreeWalker(pANTLR3_BASE_TREE sqlAST);
-    void selectStatementTreeWalker(pANTLR3_BASE_TREE selectsqlAST);
-    void callStatementTreeWalker(pANTLR3_BASE_TREE callsqlAST);
-    void createAndLoadStatementTreeWalker(pANTLR3_BASE_TREE clsqlAST);
-    void columnListTreeWalker(pANTLR3_BASE_TREE columnsAST, IArrayOf<SQLColumn>& collist);
-    ISQLExpression* expressionTreeWalker(pANTLR3_BASE_TREE exprAST, pANTLR3_BASE_TREE parent);
-    void fromTreeWalker(pANTLR3_BASE_TREE fromsqlAST);
-    void limitTreeWalker(pANTLR3_BASE_TREE limitAST);
+    void sqlTreeWalker(ASTNode* sqlAST);
+    void selectStatementTreeWalker(ASTNode* selectsqlAST);
+    void callStatementTreeWalker(ASTNode* callsqlAST);
+    void createAndLoadStatementTreeWalker(ASTNode* clsqlAST);
+    void columnListTreeWalker(ASTNode* columnsAST, IArrayOf<SQLColumn>& collist);
+    ISQLExpression* expressionTreeWalker(ASTNode* exprAST, ASTNode* parent);
+    void fromTreeWalker(ASTNode* fromsqlAST);
+    void limitTreeWalker(ASTNode* limitAST);
     void processAllColumns(HpccFiles *  availableFiles);
     void verifyColumn(SQLFieldValueExpression * col );
     void verifyColAndDisambiguateName();
@@ -103,7 +91,10 @@ private:
     StringBuffer normalizedSQL;
     bool parameterizeStaticValues;
 
+    ASTNode* rootAST;  // Store parsed AST
+    
 public:
+    void setAST(ASTNode* ast) { rootAST = ast; }
 
     bool isParameterizedCall();
     void setQuerySetName(const char * qsname)
@@ -137,7 +128,8 @@ public:
 
     void expandWildCardColumn();
     HPCCSQLTreeWalker();
-    HPCCSQLTreeWalker(pANTLR3_BASE_TREE t, IEspContext &context, bool attemptParameterization = true);
+    HPCCSQLTreeWalker(IEspContext &context, bool attemptParameterization = true);
+    HPCCSQLTreeWalker(ASTNode* t, IEspContext &context, bool attemptParameterization = true);
 
     virtual ~HPCCSQLTreeWalker();
 
