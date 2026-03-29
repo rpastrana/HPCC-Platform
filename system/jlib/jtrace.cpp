@@ -858,6 +858,16 @@ public:
             span->SetAttribute(name, (int64_t)value); // (uint64_t) would be even better but comments in attribute_value.h indicate that it is not supported by the standard.
     }
 
+    void setSpanAttribute(const char *name, timestamp_type value) override
+    {
+        if (span && !isEmptyString(name))
+        {
+            // Convert nanoseconds to a system_clock::time_point
+            auto timestamp = std::chrono::system_clock::time_point(std::chrono::nanoseconds(value));
+            span->SetAttribute(name, timestamp);
+        }
+    }
+
     void addSpanEvent(const char * eventName, IProperties * attributes) override 
     {
         if (span && !isEmptyString(eventName))
@@ -1151,6 +1161,7 @@ public:
 
     virtual void setSpanAttribute(const char * key, const char * val) override {}
     virtual void setSpanAttribute(const char *name, __uint64 value) override {}
+    virtual void setSpanAttribute(const char *name, timestamp_type value) override {}
     virtual void setSpanAttributes(const IProperties * attributes) override {}
     virtual void addSpanEvent(const char * eventName) override {}
     virtual void addSpanEvent(const char * eventName, IProperties * attributes) override {};

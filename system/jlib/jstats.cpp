@@ -2901,13 +2901,21 @@ void CRuntimeStatisticCollection::exportToSpan(ISpan * span, StringBuffer & pref
         }
         if (value)
         {
-            //Convert timestamp to nanoseconds so it is reported consistently.
-            if (queryMeasure(serialKind) == SMeasureTimestampUs)
-                value = normalizeTimestampToNs(value);
-
             const char * name = queryStatisticName(serialKind);
             getSnakeCase(prefix, name);
-            span->setSpanAttribute(prefix, value);
+            
+            //If this is a timestamp, use the timestamp version of setSpanAttribute
+            if (queryMeasure(serialKind) == SMeasureTimestampUs)
+            {
+                //Convert timestamp to nanoseconds so it is reported consistently.
+                timestamp_type timestampNs = normalizeTimestampToNs(value);
+                span->setSpanAttribute(prefix, timestampNs);
+            }
+            else
+            {
+                span->setSpanAttribute(prefix, value);
+            }
+            
             prefix.setLength(lenPrefix);
         }
     }
