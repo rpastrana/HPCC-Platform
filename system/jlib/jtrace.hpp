@@ -281,6 +281,30 @@ extern jlib_decl ISpan * getNullSpan();
 extern jlib_decl void initTraceManager(const char * componentName, const IPropertyTree * componentConfig, const IPropertyTree * globalConfig);
 extern jlib_decl ITraceManager & queryTraceManager();
 
+//------------------------------------------------------------------------------
+// ConditionalSpanScope - Only reports spans if they exceed threshold or fail
+//------------------------------------------------------------------------------
+class jlib_decl ConditionalSpanScope
+{
+public:
+    ConditionalSpanScope(const char * spanName, stat_type thresholdNs = 0);
+    ~ConditionalSpanScope();
+
+    void markFailed(); // Force the span to be reported even if under threshold
+    void recordException(IException * e, bool spanFailed = true, bool escapedScope = true);
+    void recordError(const SpanError & error = SpanError());
+    void setSpanAttribute(const char * key, const char * val);
+    void setSpanAttribute(const char * name, __uint64 value);
+
+private:
+    const char * name;
+    stat_type thresholdNs;
+    SpanTimeStamp startTime;
+    bool forceReport;
+    bool isValid;
+    Owned<ISpan> span; // Will be null until we decide to report
+};
+
 /*
 Temporarily disabled due to build issues in certain environments
 #ifdef _USE_CPPUNIT

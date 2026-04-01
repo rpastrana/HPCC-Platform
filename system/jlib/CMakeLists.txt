@@ -110,6 +110,7 @@ set (    SRCS
          junicode.cpp
          jutil.cpp
          jtrace.cpp
+         jaddresscleaner.cpp
          jzstd.cpp
          ${HPCC_SOURCE_DIR}/system/globalid/lnuid.cpp
          ${HPCC_SOURCE_DIR}/system/codesigner/codesigner.cpp
@@ -198,6 +199,7 @@ set (    INCLUDES
         junicode.hpp
         jutil.hpp
         jtrace.hpp
+        jaddresscleaner.hpp
         jzstd.hpp
         ${HPCC_SOURCE_DIR}/system/httplib/httplib.h
         ${HPCC_SOURCE_DIR}/system/security/shared/opensslcommon.hpp
