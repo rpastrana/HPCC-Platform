@@ -73,6 +73,7 @@
 
 #include "ftslavelib.hpp"
 #include "filecopy.hpp"
+#include "jmetrics.hpp"
 
 
 using namespace cryptohelper;
@@ -679,6 +680,14 @@ inline void appendErr(MemoryBuffer &reply, unsigned e)
 static unsigned ClientCount = 0;
 static unsigned MaxClientCount = 0;
 static CriticalSection ClientCountSect;
+
+static std::shared_ptr<hpccMetrics::GaugeMetric> pActiveClientConnections;
+
+MODULE_INIT(INIT_PRIORITY_STANDARD)
+{
+    pActiveClientConnections = hpccMetrics::registerGaugeMetric("dafilesrv.connections.active", "Number of active DAFILESrv client connections", SMeasureCount);
+    return true;
+}
 
 #define DEFAULT_THROTTLOG_LOG_INTERVAL_SECS 60 // log total throttled delay period
 
@@ -3056,6 +3065,8 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
                 CriticalBlock block(ClientCountSect);
                 if (++ClientCount>MaxClientCount)
                     MaxClientCount = ClientCount;
+                if (pActiveClientConnections)
+                    pActiveClientConnections->adjust(1);
                 if (TF_TRACE_CLIENT_CONN)
                 {
                     StringBuffer s;
@@ -3074,6 +3085,8 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
             {
                 CriticalBlock block(ClientCountSect);
                 ClientCount--;
+                if (pActiveClientConnections)
+                    pActiveClientConnections->adjust(-1);
                 if (TF_TRACE_CLIENT_CONN) {
                     PROGLOG("Disconnecting(%p) [%d,%d] ",this,ClientCount,MaxClientCount);
                 }
